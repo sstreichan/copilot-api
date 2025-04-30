@@ -15,6 +15,8 @@ RUN bun install --frozen-lockfile --production --ignore-scripts --no-cache
 
 COPY --from=builder /app/dist ./dist
 
+ENV NODE_ENV=production
+
 EXPOSE 4141
 
-CMD ["bun", "run", "dist/main.js"]
+CMD ["bun", "dist/main.js", "start"]
