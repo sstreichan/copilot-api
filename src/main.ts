@@ -1,5 +1,11 @@
 #!/usr/bin/env node
 
+// Disable TLS certificate validation only in development mode
+if (process.env.NODE_ENV !== "production") {
+  process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0"
+  console.log("⚠️  TLS certificate validation disabled (development mode)")
+}
+
 import { defineCommand, runMain } from "citty"
 import consola from "consola"
 import { serve, type ServerHandler } from "srvx"
