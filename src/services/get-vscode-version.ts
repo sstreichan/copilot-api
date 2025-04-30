@@ -9,9 +9,8 @@ export async function getVSCodeVersion() {
     const pkgverRegex = /pkgver=([0-9.]+)/
     const match = pkgbuild.match(pkgverRegex)
 
-    if (match) return match[1]    
-  }
-  catch (error) {
+    if (match) return match[1]
+  } catch {
     return FALLBACK
   }
 }
