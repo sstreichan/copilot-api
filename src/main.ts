@@ -11,6 +11,7 @@ import consola from "consola"
 import { serve, type ServerHandler } from "srvx"
 
 import { auth } from "./auth"
+import { cacheCopilotChatVersion } from "./lib/copilotChat-version"
 import { cacheModels } from "./lib/models"
 import { ensurePaths } from "./lib/paths"
 import { state } from "./lib/state"
@@ -45,6 +46,7 @@ export async function runServer(options: RunServerOptions): Promise<void> {
 
   await ensurePaths()
   await cacheVSCodeVersion()
+  await cacheCopilotChatVersion()
 
   if (options.githubToken) {
     state.githubToken = options.githubToken
