@@ -12,6 +12,7 @@ server.use(logger())
 server.use(cors())
 
 server.get("/", (c) => c.text("Server running"))
+server.get("/health", (c) => c.json({ status: "ok" }))
 
 server.route("/chat/completions", completionRoutes)
 server.route("/models", modelRoutes)
