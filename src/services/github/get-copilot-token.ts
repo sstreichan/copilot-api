@@ -6,7 +6,7 @@ export const getCopilotToken = async () => {
   const response = await fetch(
     `${GITHUB_API_BASE_URL}/copilot_internal/v2/token`,
     {
-      headers: githubHeaders(state),
+      headers: githubHeaders(state, "token"),
     },
   )
 

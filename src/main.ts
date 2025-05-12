@@ -143,4 +143,6 @@ const main = defineCommand({
   subCommands: { auth, start },
 })
 
-await runMain(main)
+void (async () => {
+  await runMain(main)
+})()
