@@ -14,5 +14,3 @@ export async function getVSCodeVersion() {
     return FALLBACK
   }
 }
-
-await getVSCodeVersion()

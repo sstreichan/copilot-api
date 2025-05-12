@@ -4,7 +4,7 @@ import { state } from "~/lib/state"
 
 export const getModels = async () => {
   const response = await fetch(`${copilotBaseUrl(state)}/models`, {
-    headers: copilotHeaders(state),
+    headers: copilotHeaders(state, "model-access"),
   })
 
   if (!response.ok) throw new HTTPError("Failed to get models", response)
