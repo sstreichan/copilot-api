@@ -22,14 +22,17 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsup",
-    "dev": "bun run --watch ./src/main.ts",
+    "build": "bun build ./src/main.ts",
+    "build:linux": "NODE_ENV=production bun build ./src/main.ts --outfile copilot-api --sourcemap --compile --target=bun-linux-x64",
+    "build:win": "NODE_ENV=production bun build ./src/main.ts --outfile copilot-api.exe --sourcemap --compile --target=bun-windows-x64-modern",
+    "check": "bunx eslint . && bunx tsc --noEmit",
+    "dev": "bun run --watch ./src/main.ts start",
     "knip": "knip-bun",
     "lint": "eslint .",
     "prepack": "bun run build",
     "prepare": "simple-git-hooks",
     "release": "bumpp && bun publish --access public",
-    "start": "NODE_ENV=production bun run ./src/main.ts"
+    "start": "NODE_ENV=production bun run ./src/main.ts start"
   },
   "simple-git-hooks": {
     "pre-commit": "bunx lint-staged"
