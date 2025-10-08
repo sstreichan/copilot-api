@@ -21,10 +21,6 @@ export interface MockRateLimitModule {
   checkRateLimit: (payload: unknown) => void
 }
 
-export interface MockTokenCountModule {
-  getTokenCount: () => { input: number; output: number }
-}
-
 // Common test data types
 export interface CapturedPayload extends Record<string, unknown> {
   messages?: Array<{

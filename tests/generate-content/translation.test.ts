@@ -1,12 +1,8 @@
-import { afterEach, expect, test, mock } from "bun:test"
+import { expect, test, mock } from "bun:test"
 
 import type { CapturedPayload } from "./test-types"
 
 import { makeRequest } from "./_test-utils"
-
-afterEach(() => {
-  mock.restore()
-})
 
 test("processes toolConfig AUTO/ANY/NONE mapping end-to-end", async () => {
   let capturedPayload: CapturedPayload = {} as CapturedPayload
@@ -180,45 +176,6 @@ test("handles same-role message merging behavior", async () => {
   expect(userMessages.length).toBe(1)
   expect(userMessages[0]?.content).toContain("Hello.")
   expect(userMessages[0]?.content).toContain("How are you?")
-})
-
-test("handles incomplete tool calls cleanup", async () => {
-  let capturedPayload: CapturedPayload = {} as CapturedPayload
-  await mock.module("~/services/copilot/create-chat-completions", () => ({
-    createChatCompletions: (payload: CapturedPayload) => {
-      capturedPayload = payload
-      return {
-        id: "x",
-        choices: [
-          {
-            index: 0,
-            message: { role: "assistant", content: "ok" },
-            finish_reason: "stop",
-          },
-        ],
-        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
-      }
-    },
-  }))
-
-  const res = await makeRequest("/v1beta/models/gemini-pro:generateContent", {
-    contents: [
-      { role: "user", parts: [{ text: "Search for cats." }] },
-      {
-        role: "model",
-        parts: [{ functionCall: { name: "search", args: { query: "cats" } } }],
-      },
-      { role: "user", parts: [{ text: "Show me results." }] },
-    ],
-  })
-
-  expect(res.status).toBe(200)
-  const assistantMessages =
-    capturedPayload.messages?.filter((m) => m.role === "assistant") ?? []
-  expect(assistantMessages.length).toBe(0)
-  const userMessages =
-    capturedPayload.messages?.filter((m) => m.role === "user") ?? []
-  expect(userMessages.length).toBeGreaterThan(0)
 })
 
 test("handles system instruction in contents", async () => {

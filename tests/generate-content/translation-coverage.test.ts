@@ -1,31 +1,16 @@
-import { afterEach, expect, test, mock } from "bun:test"
+import { expect, test, mock } from "bun:test"
 
 import type { CapturedPayload } from "./test-types"
 
-import { makeRequest } from "./_test-utils"
-
-afterEach(() => {
-  mock.restore()
-})
+import {
+  makeRequest,
+  createMockNonStreamingWithCapture,
+  buildNonStreamingResponse,
+} from "./_test-utils"
 
 test("processes function response arrays with tool call matching", async () => {
-  let capturedPayload: CapturedPayload = {} as CapturedPayload
-  await mock.module("~/services/copilot/create-chat-completions", () => ({
-    createChatCompletions: (payload: CapturedPayload) => {
-      capturedPayload = payload
-      return {
-        id: "x",
-        choices: [
-          {
-            index: 0,
-            message: { role: "assistant", content: "ok" },
-            finish_reason: "stop",
-          },
-        ],
-        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
-      }
-    },
-  }))
+  const { capturedPayload } =
+    await createMockNonStreamingWithCapture<CapturedPayload>()
 
   // Should correctly process nested function response arrays
   const res = await makeRequest("/v1beta/models/gemini-pro:generateContent", {
@@ -57,7 +42,7 @@ test("processes function response arrays with tool call matching", async () => {
 
   expect(res.status).toBe(200)
   // Verify nested array structure is processed correctly
-  const messages = capturedPayload.messages ?? []
+  const messages = capturedPayload.current?.messages ?? []
   expect(messages.length).toBeGreaterThan(0)
 
   // Should successfully parse and process nested function response arrays
@@ -68,23 +53,8 @@ test("processes function response arrays with tool call matching", async () => {
 })
 
 test("handles function response without matching tool call", async () => {
-  let capturedPayload: CapturedPayload = {} as CapturedPayload
-  await mock.module("~/services/copilot/create-chat-completions", () => ({
-    createChatCompletions: (payload: CapturedPayload) => {
-      capturedPayload = payload
-      return {
-        id: "x",
-        choices: [
-          {
-            index: 0,
-            message: { role: "assistant", content: "ok" },
-            finish_reason: "stop",
-          },
-        ],
-        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
-      }
-    },
-  }))
+  const { capturedPayload } =
+    await createMockNonStreamingWithCapture<CapturedPayload>()
 
   // Should skip function responses without matching tool calls
   const res = await makeRequest("/v1beta/models/gemini-pro:generateContent", {
@@ -106,34 +76,19 @@ test("handles function response without matching tool call", async () => {
 
   expect(res.status).toBe(200)
   const toolMessages =
-    capturedPayload.messages?.filter((m) => m.role === "tool") ?? []
+    capturedPayload.current?.messages?.filter((m) => m.role === "tool") ?? []
   expect(toolMessages.length).toBe(0)
 
   // Verify user messages are still processed
   const userMessages =
-    capturedPayload.messages?.filter((m) => m.role === "user") ?? []
+    capturedPayload.current?.messages?.filter((m) => m.role === "user") ?? []
   expect(userMessages.length).toBeGreaterThan(0)
   expect(userMessages[0]?.content).toContain("Call function")
 })
 
 test("handles empty content merging fallback", async () => {
-  let capturedPayload: CapturedPayload = {} as CapturedPayload
-  await mock.module("~/services/copilot/create-chat-completions", () => ({
-    createChatCompletions: (payload: CapturedPayload) => {
-      capturedPayload = payload
-      return {
-        id: "x",
-        choices: [
-          {
-            index: 0,
-            message: { role: "assistant", content: "ok" },
-            finish_reason: "stop",
-          },
-        ],
-        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
-      }
-    },
-  }))
+  const { capturedPayload } =
+    await createMockNonStreamingWithCapture<CapturedPayload>()
 
   // Should merge empty and whitespace-only content correctly
   const res = await makeRequest("/v1beta/models/gemini-pro:generateContent", {
@@ -146,7 +101,7 @@ test("handles empty content merging fallback", async () => {
 
   expect(res.status).toBe(200)
   const userMessages =
-    capturedPayload.messages?.filter((m) => m.role === "user") ?? []
+    capturedPayload.current?.messages?.filter((m) => m.role === "user") ?? []
   expect(userMessages.length).toBe(1)
   expect(userMessages[0]?.content).toContain("actual question")
   // Ensure empty/whitespace content doesn't appear in merged message
@@ -154,23 +109,8 @@ test("handles empty content merging fallback", async () => {
 })
 
 test("handles complex content that cannot be merged", async () => {
-  let capturedPayload: CapturedPayload = {} as CapturedPayload
-  await mock.module("~/services/copilot/create-chat-completions", () => ({
-    createChatCompletions: (payload: CapturedPayload) => {
-      capturedPayload = payload
-      return {
-        id: "x",
-        choices: [
-          {
-            index: 0,
-            message: { role: "assistant", content: "ok" },
-            finish_reason: "stop",
-          },
-        ],
-        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
-      }
-    },
-  }))
+  const { capturedPayload } =
+    await createMockNonStreamingWithCapture<CapturedPayload>()
 
   // Should handle complex content mixing text and function responses
   const res = await makeRequest("/v1beta/models/gemini-pro:generateContent", {
@@ -192,7 +132,7 @@ test("handles complex content that cannot be merged", async () => {
   })
 
   expect(res.status).toBe(200)
-  const messages = capturedPayload.messages ?? []
+  const messages = capturedPayload.current?.messages ?? []
   expect(messages.length).toBeGreaterThan(0)
 
   // Verify text messages are merged but function responses are handled separately
@@ -203,86 +143,38 @@ test("handles complex content that cannot be merged", async () => {
   expect(mergedContent).toContain("Second message")
 })
 
-test("maps unsupported Gemini model names to supported ones", async () => {
-  let capturedPayload: CapturedPayload = {} as CapturedPayload
-  await mock.module("~/services/copilot/create-chat-completions", () => ({
-    createChatCompletions: (payload: CapturedPayload) => {
-      capturedPayload = payload
-      return {
-        id: "x",
-        choices: [
-          {
-            index: 0,
-            message: { role: "assistant", content: "ok" },
-            finish_reason: "stop",
-          },
-        ],
-        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
-      }
-    },
-  }))
+test.each([
+  {
+    modelInput: "gemini-2.5-flash",
+    expectedModel: "gemini-2.0-flash-001",
+    description: "maps unsupported to supported",
+  },
+  {
+    modelInput: "gemini-1.5-pro",
+    expectedModel: "gemini-1.5-pro",
+    description: "preserves supported names",
+  },
+])(
+  "$description: $modelInput -> $expectedModel",
+  async ({ modelInput, expectedModel }) => {
+    const { capturedPayload } =
+      await createMockNonStreamingWithCapture<CapturedPayload>()
 
-  // Should map unsupported model names to supported equivalents
-  const res = await makeRequest(
-    "/v1beta/models/gemini-2.5-flash:generateContent",
-    {
-      contents: [{ role: "user", parts: [{ text: "hi" }] }],
-    },
-  )
+    const res = await makeRequest(
+      `/v1beta/models/${modelInput}:generateContent`,
+      {
+        contents: [{ role: "user", parts: [{ text: "hi" }] }],
+      },
+    )
 
-  expect(res.status).toBe(200)
-  expect(capturedPayload.model).toBe("gemini-2.0-flash-001")
-})
-
-test("preserves supported model names without mapping", async () => {
-  let capturedPayload: CapturedPayload = {} as CapturedPayload
-  await mock.module("~/services/copilot/create-chat-completions", () => ({
-    createChatCompletions: (payload: CapturedPayload) => {
-      capturedPayload = payload
-      return {
-        id: "x",
-        choices: [
-          {
-            index: 0,
-            message: { role: "assistant", content: "ok" },
-            finish_reason: "stop",
-          },
-        ],
-        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
-      }
-    },
-  }))
-
-  // Should preserve already supported model names
-  const res = await makeRequest(
-    "/v1beta/models/gemini-1.5-pro:generateContent",
-    {
-      contents: [{ role: "user", parts: [{ text: "hi" }] }],
-    },
-  )
-
-  expect(res.status).toBe(200)
-  expect(capturedPayload.model).toBe("gemini-1.5-pro")
-})
+    expect(res.status).toBe(200)
+    expect(capturedPayload.current?.model).toBe(expectedModel)
+  },
+)
 
 test("handles tool call cleanup with incomplete tool calls", async () => {
-  let capturedPayload: CapturedPayload = {} as CapturedPayload
-  await mock.module("~/services/copilot/create-chat-completions", () => ({
-    createChatCompletions: (payload: CapturedPayload) => {
-      capturedPayload = payload
-      return {
-        id: "x",
-        choices: [
-          {
-            index: 0,
-            message: { role: "assistant", content: "ok" },
-            finish_reason: "stop",
-          },
-        ],
-        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
-      }
-    },
-  }))
+  const { capturedPayload } =
+    await createMockNonStreamingWithCapture<CapturedPayload>()
 
   // Should clean up incomplete tool calls (tool_calls without responses)
   const res = await makeRequest("/v1beta/models/gemini-pro:generateContent", {
@@ -297,35 +189,29 @@ test("handles tool call cleanup with incomplete tool calls", async () => {
   })
 
   expect(res.status).toBe(200)
+
+  const messages = capturedPayload.current?.messages ?? []
+
   // Incomplete tool calls should be removed
-  const assistantMessages =
-    capturedPayload.messages?.filter((m) => m.role === "assistant") ?? []
+  const assistantMessages = messages.filter((m) => m.role === "assistant")
   expect(assistantMessages.length).toBe(0)
 
-  // User messages should still be present
-  const userMessages =
-    capturedPayload.messages?.filter((m) => m.role === "user") ?? []
-  expect(userMessages.length).toBeGreaterThan(0)
+  // Tool role messages should not exist
+  const toolMessages = messages.filter((m) => m.role === "tool")
+  expect(toolMessages.length).toBe(0)
+
+  // User messages should still be present (merged into one message)
+  const userMessages = messages.filter((m) => m.role === "user")
+  expect(userMessages.length).toBe(1)
+
+  // Original tool call should be completely removed
+  const payload = JSON.stringify(messages)
+  expect(payload).not.toContain("search")
 })
 
 test("processes inline data with inlineData field", async () => {
-  let capturedPayload: CapturedPayload = {} as CapturedPayload
-  await mock.module("~/services/copilot/create-chat-completions", () => ({
-    createChatCompletions: (payload: CapturedPayload) => {
-      capturedPayload = payload
-      return {
-        id: "x",
-        choices: [
-          {
-            index: 0,
-            message: { role: "assistant", content: "ok" },
-            finish_reason: "stop",
-          },
-        ],
-        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
-      }
-    },
-  }))
+  const { capturedPayload } =
+    await createMockNonStreamingWithCapture<CapturedPayload>()
 
   // Should process inline data (base64-encoded images) correctly
   const res = await makeRequest("/v1beta/models/gemini-pro:generateContent", {
@@ -346,9 +232,9 @@ test("processes inline data with inlineData field", async () => {
   })
 
   expect(res.status).toBe(200)
-  expect(capturedPayload.messages?.length).toBe(1)
+  expect(capturedPayload.current?.messages?.length).toBe(1)
 
-  const userMessage = capturedPayload.messages?.[0]
+  const userMessage = capturedPayload.current?.messages?.[0]
   expect(userMessage?.role).toBe("user")
   // Content should include both text and image data
   const content = userMessage?.content
@@ -356,75 +242,9 @@ test("processes inline data with inlineData field", async () => {
   expect(typeof content === "string" || Array.isArray(content)).toBe(true)
 })
 
-test("handles streaming tool calls with incomplete arguments", async () => {
-  await mock.module("~/services/copilot/create-chat-completions", () => ({
-    createChatCompletions: () => {
-      return {
-        id: "x",
-        choices: [
-          {
-            index: 0,
-            message: { role: "assistant", content: "ok" },
-            finish_reason: "stop",
-          },
-        ],
-        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
-      }
-    },
-  }))
-
-  // This tests the streaming tool call processing logic
-  const res = await makeRequest("/v1beta/models/gemini-pro:generateContent", {
-    contents: [{ role: "user", parts: [{ text: "Do a search" }] }],
-  })
-
-  expect(res.status).toBe(200)
-})
-
-test("accumulates streaming tool call arguments correctly", async () => {
-  await mock.module("~/services/copilot/create-chat-completions", () => ({
-    createChatCompletions: () => {
-      return {
-        id: "x",
-        choices: [
-          {
-            index: 0,
-            message: { role: "assistant", content: "ok" },
-            finish_reason: "stop",
-          },
-        ],
-        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
-      }
-    },
-  }))
-
-  // Should handle streaming arguments accumulation correctly
-  const res = await makeRequest("/v1beta/models/gemini-pro:generateContent", {
-    contents: [{ role: "user", parts: [{ text: "Search for something" }] }],
-  })
-
-  expect(res.status).toBe(200)
-  // The request should process successfully even with complex tool call scenarios
-})
-
 test("handles Google Search tool processing", async () => {
-  let capturedPayload: CapturedPayload = {} as CapturedPayload
-  await mock.module("~/services/copilot/create-chat-completions", () => ({
-    createChatCompletions: (payload: CapturedPayload) => {
-      capturedPayload = payload
-      return {
-        id: "x",
-        choices: [
-          {
-            index: 0,
-            message: { role: "assistant", content: "ok" },
-            finish_reason: "stop",
-          },
-        ],
-        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
-      }
-    },
-  }))
+  const { capturedPayload } =
+    await createMockNonStreamingWithCapture<CapturedPayload>()
 
   // Should handle Google Search tool configuration and processing
   const res = await makeRequest("/v1beta/models/gemini-pro:generateContent", {
@@ -442,16 +262,16 @@ test("handles Google Search tool processing", async () => {
   })
 
   expect(res.status).toBe(200)
-  expect(capturedPayload.messages?.length).toBe(1)
+  expect(capturedPayload.current?.messages?.length).toBe(1)
 
-  const userMessage = capturedPayload.messages?.[0]
+  const userMessage = capturedPayload.current?.messages?.[0]
   expect(userMessage?.role).toBe("user")
   expect(userMessage?.content).toContain("latest news")
 
   // Google Search tool is Gemini-specific and gets translated
   // It may or may not appear in the tools array depending on translation logic
   // The key is that the request succeeds
-  expect(capturedPayload.messages).toBeDefined()
+  expect(capturedPayload.current?.messages).toBeDefined()
 })
 
 test("handles translation errors gracefully", async () => {
@@ -472,22 +292,9 @@ test("handles translation errors gracefully", async () => {
 
 test("handles malformed tool calls in content processing", async () => {
   await mock.module("~/services/copilot/create-chat-completions", () => ({
-    createChatCompletions: () => {
-      return {
-        id: "x",
-        choices: [
-          {
-            index: 0,
-            message: { role: "assistant", content: "ok" },
-            finish_reason: "stop",
-          },
-        ],
-        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
-      }
-    },
+    createChatCompletions: () => buildNonStreamingResponse({ content: "ok" }),
   }))
 
-  // Test malformed function call handling
   const res = await makeRequest("/v1beta/models/gemini-pro:generateContent", {
     contents: [
       { role: "user", parts: [{ text: "Process this" }] },
@@ -496,7 +303,7 @@ test("handles malformed tool calls in content processing", async () => {
         parts: [
           {
             functionCall: {
-              name: "", // Empty name should trigger error handling
+              name: "",
               args: {},
             },
           },
@@ -506,29 +313,13 @@ test("handles malformed tool calls in content processing", async () => {
   })
 
   expect(res.status).toBe(200)
-  // Should handle malformed calls gracefully
 })
 
 // Real scenario tests for multi-turn tool calls and deduplication
 
 test("handles multi-turn tool call conversation correctly", async () => {
-  let capturedPayload: CapturedPayload = {} as CapturedPayload
-  await mock.module("~/services/copilot/create-chat-completions", () => ({
-    createChatCompletions: (payload: CapturedPayload) => {
-      capturedPayload = payload
-      return {
-        id: "x",
-        choices: [
-          {
-            index: 0,
-            message: { role: "assistant", content: "Result processed" },
-            finish_reason: "stop",
-          },
-        ],
-        usage: { prompt_tokens: 50, completion_tokens: 10, total_tokens: 60 },
-      }
-    },
-  }))
+  const { capturedPayload } =
+    await createMockNonStreamingWithCapture<CapturedPayload>()
 
   const res = await makeRequest("/v1beta/models/gemini-pro:generateContent", {
     contents: [
@@ -578,7 +369,7 @@ test("handles multi-turn tool call conversation correctly", async () => {
   expect(res.status).toBe(200)
 
   // Verify message structure: user, assistant+tool_call, tool, assistant, user, assistant+tool_call, tool
-  const messages = capturedPayload.messages ?? []
+  const messages = capturedPayload.current?.messages ?? []
   expect(messages.length).toBeGreaterThanOrEqual(5)
 
   // Verify tool call ID consistency
@@ -598,23 +389,8 @@ test("handles multi-turn tool call conversation correctly", async () => {
 })
 
 test("handles duplicate tool responses by deduplication", async () => {
-  let capturedPayload: CapturedPayload = {} as CapturedPayload
-  await mock.module("~/services/copilot/create-chat-completions", () => ({
-    createChatCompletions: (payload: CapturedPayload) => {
-      capturedPayload = payload
-      return {
-        id: "x",
-        choices: [
-          {
-            index: 0,
-            message: { role: "assistant", content: "Processed" },
-            finish_reason: "stop",
-          },
-        ],
-        usage: { prompt_tokens: 20, completion_tokens: 5, total_tokens: 25 },
-      }
-    },
-  }))
+  const { capturedPayload } =
+    await createMockNonStreamingWithCapture<CapturedPayload>()
 
   const res = await makeRequest("/v1beta/models/gemini-pro:generateContent", {
     contents: [
@@ -656,7 +432,7 @@ test("handles duplicate tool responses by deduplication", async () => {
   expect(res.status).toBe(200)
 
   // Verify deduplication: should have exactly 2 tool messages (not 3)
-  const messages = capturedPayload.messages ?? []
+  const messages = capturedPayload.current?.messages ?? []
   const toolMessages = messages.filter((m) => m.role === "tool")
 
   // Count unique tool_call_ids
@@ -667,23 +443,8 @@ test("handles duplicate tool responses by deduplication", async () => {
 })
 
 test("verifies tool_call_id length constraint (≤40 characters)", async () => {
-  let capturedPayload: CapturedPayload = {} as CapturedPayload
-  await mock.module("~/services/copilot/create-chat-completions", () => ({
-    createChatCompletions: (payload: CapturedPayload) => {
-      capturedPayload = payload
-      return {
-        id: "x",
-        choices: [
-          {
-            index: 0,
-            message: { role: "assistant", content: "ok" },
-            finish_reason: "stop",
-          },
-        ],
-        usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
-      }
-    },
-  }))
+  const { capturedPayload } =
+    await createMockNonStreamingWithCapture<CapturedPayload>()
 
   const res = await makeRequest("/v1beta/models/gemini-pro:generateContent", {
     contents: [
@@ -715,7 +476,7 @@ test("verifies tool_call_id length constraint (≤40 characters)", async () => {
 
   expect(res.status).toBe(200)
 
-  const messages = capturedPayload.messages ?? []
+  const messages = capturedPayload.current?.messages ?? []
   const assistantWithTools = messages.filter(
     (m) => m.role === "assistant" && m.tool_calls,
   )

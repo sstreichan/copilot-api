@@ -1,14 +1,10 @@
-import { afterEach, expect, test, mock } from "bun:test"
+import { expect, test, mock } from "bun:test"
 
 import {
   asyncIterableFrom,
   createMockRateLimit,
   makeRequest,
 } from "./_test-utils"
-
-afterEach(() => {
-  mock.restore()
-})
 
 test("forwards generic errors as HTTP 500", async () => {
   await mock.module("~/services/copilot/create-chat-completions", () => ({
@@ -34,43 +30,13 @@ test("forwards generic errors as HTTP 500", async () => {
   expect(json).toEqual({ error: { message: "Internal issue", type: "error" } })
 })
 
-test("requires model in URL for non-stream endpoint", async () => {
+test.each([
+  { endpoint: ":generateContent", operation: "generateContent" },
+  { endpoint: ":streamGenerateContent", operation: "streamGenerateContent" },
+  { endpoint: ":countTokens", operation: "countTokens" },
+])("requires model in URL for $operation endpoint", async ({ endpoint }) => {
   const { server } = await import("~/server")
-  const res = await server.request("/v1beta/models/:generateContent", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      contents: [{ role: "user", parts: [{ text: "hi" }] }],
-    }),
-  })
-
-  expect(res.status).toBe(500)
-  const json = await res.json()
-  expect(json).toEqual({
-    error: { message: "Model name is required in URL path", type: "error" },
-  })
-})
-
-test("requires model in URL for stream endpoint", async () => {
-  const { server } = await import("~/server")
-  const res = await server.request("/v1beta/models/:streamGenerateContent", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      contents: [{ role: "user", parts: [{ text: "hi" }] }],
-    }),
-  })
-
-  expect(res.status).toBe(500)
-  const json = await res.json()
-  expect(json).toEqual({
-    error: { message: "Model name is required in URL path", type: "error" },
-  })
-})
-
-test("requires model in URL for countTokens endpoint", async () => {
-  const { server } = await import("~/server")
-  const res = await server.request("/v1beta/models/:countTokens", {
+  const res = await server.request(`/v1beta/models/${endpoint}`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
@@ -168,25 +134,6 @@ test("non-stream endpoint rejects streaming response with 500", async () => {
       type: "error",
     },
   })
-})
-
-test("routes fallthrough when URL doesn't match any generate-content patterns", async () => {
-  await createMockRateLimit()
-
-  const { server } = await import("~/server?route-fallthrough")
-
-  const res = await server.request(
-    "/v1beta/models/gemini-pro:unknownOperation",
-    {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        contents: [{ role: "user", parts: [{ text: "test" }] }],
-      }),
-    },
-  )
-
-  expect(res.status).toBe(404)
 })
 
 test("handles HTTP errors with proper error codes", async () => {

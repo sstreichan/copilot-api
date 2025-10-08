@@ -1,4 +1,4 @@
-import { afterEach, expect, test, mock } from "bun:test"
+import { expect, test, mock } from "bun:test"
 
 import type { TestServer } from "./test-types"
 
@@ -6,25 +6,17 @@ import {
   asyncIterableFrom,
   createMockChatCompletions,
   createMockRateLimit,
+  buildNonStreamingResponse,
+  buildStreamEvents,
 } from "./_test-utils"
-
-afterEach(() => {
-  mock.restore()
-})
 
 test("falls back to streaming when downstream returns non-stream JSON", async () => {
   await mock.module("~/services/copilot/create-chat-completions", () => ({
-    createChatCompletions: (_: unknown) => ({
-      id: "res-3",
-      choices: [
-        {
-          index: 0,
-          message: { role: "assistant", content: "stream me" },
-          finish_reason: "stop",
-        },
-      ],
-      usage: { prompt_tokens: 2, completion_tokens: 3, total_tokens: 5 },
-    }),
+    createChatCompletions: (_: unknown) =>
+      buildNonStreamingResponse({
+        content: "stream me",
+        usage: { prompt_tokens: 2, completion_tokens: 3, total_tokens: 5 },
+      }),
   }))
 
   await createMockRateLimit()
@@ -110,25 +102,7 @@ test("accumulates and parses partial JSON chunks", async () => {
 })
 
 test("includes usageMetadata only on final chunk and injects empty part when only finish_reason", async () => {
-  await createMockChatCompletions([
-    {
-      data: JSON.stringify({
-        id: "c1",
-        choices: [
-          { index: 0, delta: { content: "hello" }, finish_reason: null },
-        ],
-        usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
-      }),
-    },
-    {
-      data: JSON.stringify({
-        id: "c1",
-        choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
-        usage: { prompt_tokens: 1, completion_tokens: 2, total_tokens: 3 },
-      }),
-    },
-    { data: "[DONE]" },
-  ])
+  await createMockChatCompletions(buildStreamEvents({ content: "hello" }))
 
   await createMockRateLimit()
   const { server } = (await import(
@@ -192,7 +166,7 @@ test("[Stream] skips tool_calls with partial JSON arguments until complete", asy
                 {
                   index: 0,
                   type: "function",
-                  function: { name: "f", arguments: '{"a":1}' },
+                  function: { arguments: "1}" },
                 },
               ],
             },

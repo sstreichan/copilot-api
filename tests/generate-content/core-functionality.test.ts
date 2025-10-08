@@ -1,12 +1,8 @@
-import { afterEach, expect, test, mock } from "bun:test"
+import { expect, test, mock } from "bun:test"
 
 import type { TestServer } from "./test-types"
 
 import { createMockChatCompletions } from "./_test-utils"
-
-afterEach(() => {
-  mock.restore()
-})
 
 test("translates request and uses local tokenizer without downstream call", async () => {
   let downstreamCalled = false
@@ -152,82 +148,77 @@ test("optional manual approval gate triggers before downstream call", async () =
   expect(calls).toEqual(["approve", "create"])
 })
 
-test("enforces rate limit before processing (non-stream)", async () => {
-  await mock.module("~/lib/rate-limit", () => ({
-    checkRateLimit: () => {
-      throw new Error("Rate limited")
-    },
-  }))
-  await mock.module("~/services/copilot/create-chat-completions", () => ({
-    createChatCompletions: () => {
-      return {
-        id: "x",
-        choices: [
-          {
-            index: 0,
-            message: { role: "assistant", content: "ok" },
-            finish_reason: "stop",
-          },
-        ],
-        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+test.each([
+  {
+    endpoint: "generateContent",
+    errorMessage: "Rate limited",
+    isStream: false,
+  },
+  {
+    endpoint: "streamGenerateContent",
+    errorMessage: "Rate limited stream",
+    isStream: true,
+  },
+])(
+  "enforces rate limit before $endpoint",
+  async ({ endpoint, errorMessage, isStream }) => {
+    await mock.module("~/lib/rate-limit", () => ({
+      checkRateLimit: () => {
+        throw new Error(errorMessage)
+      },
+    }))
+
+    await (isStream ?
+      createMockChatCompletions([
+        {
+          data: JSON.stringify({
+            id: "c1",
+            choices: [
+              { index: 0, delta: { content: "x" }, finish_reason: null },
+            ],
+          }),
+        },
+        {
+          data: JSON.stringify({
+            id: "c1",
+            choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+          }),
+        },
+        { data: "[DONE]" },
+      ])
+    : mock.module("~/services/copilot/create-chat-completions", () => ({
+        createChatCompletions: () => ({
+          id: "x",
+          choices: [
+            {
+              index: 0,
+              message: { role: "assistant", content: "ok" },
+              finish_reason: "stop",
+            },
+          ],
+          usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+        }),
+      })))
+
+    const { server } = (await import("~/server")) as { server: TestServer }
+    const res = await server.request(`/v1beta/models/gemini-pro:${endpoint}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ role: "user", parts: [{ text: "hi" }] }],
+      }),
+    })
+
+    expect(res.status).toBe(500)
+
+    if (isStream) {
+      const txt = await res.text()
+      expect(txt.includes(errorMessage)).toBe(true)
+    } else {
+      const json = (await res.json()) as {
+        error: { message: string; type: string }
       }
-    },
-  }))
-
-  const { server } = (await import("~/server")) as { server: TestServer }
-  const res = await server.request(
-    "/v1beta/models/gemini-pro:generateContent",
-    {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        contents: [{ role: "user", parts: [{ text: "hi" }] }],
-      }),
-    },
-  )
-
-  expect(res.status).toBe(500)
-  const json = (await res.json()) as {
-    error: { message: string; type: string }
-  }
-  expect(json).toEqual({ error: { message: "Rate limited", type: "error" } })
-})
-
-test("enforces rate limit before stream", async () => {
-  await mock.module("~/lib/rate-limit", () => ({
-    checkRateLimit: () => {
-      throw new Error("Rate limited stream")
-    },
-  }))
-  await createMockChatCompletions([
-    {
-      data: JSON.stringify({
-        id: "c1",
-        choices: [{ index: 0, delta: { content: "x" }, finish_reason: null }],
-      }),
-    },
-    {
-      data: JSON.stringify({
-        id: "c1",
-        choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
-      }),
-    },
-    { data: "[DONE]" },
-  ])
-
-  const { server } = (await import("~/server")) as { server: TestServer }
-  const res = await server.request(
-    "/v1beta/models/gemini-pro:streamGenerateContent",
-    {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        contents: [{ role: "user", parts: [{ text: "hi" }] }],
-      }),
-    },
-  )
-
-  expect(res.status).toBe(500)
-  const txt = await res.text()
-  expect(txt.includes("Rate limited stream")).toBe(true)
-})
+      expect(json).toEqual({ error: { message: errorMessage, type: "error" } })
+    }
+  },
+)

@@ -98,78 +98,92 @@ test("routes to countTokens endpoint based on URL keyword", async () => {
   expect(json).toEqual({ totalTokens: 5 })
 })
 
-test("routes to non-stream endpoint with path exclusivity", async () => {
-  await mock.module("~/services/copilot/create-chat-completions", () => ({
-    createChatCompletions: (_: unknown) => ({
-      id: "res-2",
-      choices: [
-        {
-          index: 0,
-          message: { role: "assistant", content: "ok" },
-          finish_reason: "stop",
-        },
-      ],
-      usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
-    }),
-  }))
-  await mock.module("~/lib/rate-limit", () => ({
-    checkRateLimit: () => {},
-  }))
-  const { server } = await import("~/server?route-routing")
-  const res = await server.request(
-    "/v1beta/models/gemini-pro:generateContent",
-    {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        contents: [{ role: "user", parts: [{ text: "hi" }] }],
-      }),
-    },
-  )
-  expect(res.status).toBe(200)
-  const ct = res.headers.get("content-type") || ""
-  expect(ct.includes("application/json")).toBe(true)
-  const json =
-    (await res.json()) as import("~/routes/generate-content/types").GeminiResponse
-  expect(Array.isArray(json.candidates)).toBe(true)
-})
+test.each([
+  {
+    description: "routes to non-stream endpoint",
+    operation: "generateContent",
+    expectedStatus: 200,
+    expectedContentType: "application/json",
+    isStreaming: false,
+  },
+  {
+    description: "routes to stream endpoint with compound path",
+    operation: "generateContent:streamGenerateContent",
+    expectedStatus: 200,
+    expectedContentType: "text/event-stream",
+    isStreaming: true,
+  },
+  {
+    description: "returns 404 for unknown operation",
+    operation: "unknownOperation",
+    expectedStatus: 404,
+    expectedContentType: null,
+    isStreaming: false,
+  },
+])(
+  "$description",
+  async ({ operation, expectedStatus, expectedContentType, isStreaming }) => {
+    if (isStreaming) {
+      await mock.module("~/services/copilot/create-chat-completions", () => ({
+        createChatCompletions: (_: unknown) =>
+          asyncIterableFrom([
+            {
+              data: JSON.stringify({
+                id: "c1",
+                choices: [
+                  { index: 0, delta: { content: "x" }, finish_reason: null },
+                ],
+              }),
+            },
+            {
+              data: JSON.stringify({
+                id: "c1",
+                choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+              }),
+            },
+            { data: "[DONE]" },
+          ]),
+      }))
+    } else if (expectedStatus === 200) {
+      await mock.module("~/services/copilot/create-chat-completions", () => ({
+        createChatCompletions: (_: unknown) => ({
+          id: "res-2",
+          choices: [
+            {
+              index: 0,
+              message: { role: "assistant", content: "ok" },
+              finish_reason: "stop",
+            },
+          ],
+          usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+        }),
+      }))
+    }
 
-test("does NOT mis-route to non-stream endpoint", async () => {
-  await mock.module("~/services/copilot/create-chat-completions", () => ({
-    createChatCompletions: (_: unknown) =>
-      asyncIterableFrom([
-        {
-          data: JSON.stringify({
-            id: "c1",
-            choices: [
-              { index: 0, delta: { content: "x" }, finish_reason: null },
-            ],
-          }),
-        },
-        {
-          data: JSON.stringify({
-            id: "c1",
-            choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
-          }),
-        },
-        { data: "[DONE]" },
-      ]),
-  }))
-  await mock.module("~/lib/rate-limit", () => ({
-    checkRateLimit: () => {},
-  }))
-  const { server } = await import("~/server?route-routing")
-  const res = await server.request(
-    "/v1beta/models/gemini-pro:generateContent:streamGenerateContent",
-    {
+    await mock.module("~/lib/rate-limit", () => ({
+      checkRateLimit: () => {},
+    }))
+
+    const { server } = await import("~/server?route-routing-parameterized")
+    const res = await server.request(`/v1beta/models/gemini-pro:${operation}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         contents: [{ role: "user", parts: [{ text: "hi" }] }],
       }),
-    },
-  )
-  expect(res.status).toBe(200)
-  const ct = res.headers.get("content-type") || ""
-  expect(ct.includes("text/event-stream")).toBe(true)
-})
+    })
+
+    expect(res.status).toBe(expectedStatus)
+
+    if (expectedContentType) {
+      const ct = res.headers.get("content-type") || ""
+      expect(ct.includes(expectedContentType)).toBe(true)
+
+      if (expectedContentType === "application/json") {
+        const json =
+          (await res.json()) as import("~/routes/generate-content/types").GeminiResponse
+        expect(Array.isArray(json.candidates)).toBe(true)
+      }
+    }
+  },
+)
