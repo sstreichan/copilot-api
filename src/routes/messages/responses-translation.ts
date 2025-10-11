@@ -1,5 +1,6 @@
 import consola from "consola"
 
+import { getExtraPromptForModel } from "~/lib/config"
 import {
   type ResponsesPayload,
   type ResponseInputContent,
@@ -18,6 +19,9 @@ import {
   type ResponseOutputText,
   type ResponseFunctionToolCallItem,
   type ResponseFunctionCallOutputItem,
+  type Tool,
+  type ToolChoiceFunction,
+  type ToolChoiceOptions,
 } from "~/services/copilot/create-responses"
 
 import {
@@ -57,7 +61,7 @@ export const translateAnthropicMessagesToResponsesPayload = (
   const responsesPayload: ResponsesPayload = {
     model: payload.model,
     input,
-    instructions: translateSystemPrompt(payload.system),
+    instructions: translateSystemPrompt(payload.system, payload.model),
     temperature: payload.temperature ?? null,
     top_p: payload.top_p ?? null,
     max_output_tokens: payload.max_tokens,
@@ -69,7 +73,7 @@ export const translateAnthropicMessagesToResponsesPayload = (
     stream: payload.stream ?? null,
     store: false,
     parallel_tool_calls: true,
-    reasoning: { effort: "high", summary: "auto" },
+    reasoning: { effort: "high", summary: "detailed" },
     include: ["reasoning.encrypted_content"],
   }
 
@@ -139,7 +143,11 @@ const translateAssistantMessage = (
       continue
     }
 
-    if (block.type === "thinking") {
+    if (
+      block.type === "thinking"
+      && block.signature
+      && block.signature.includes("@")
+    ) {
       flushPendingContent("assistant", pendingContent, items)
       items.push(createReasoningContent(block))
       continue
@@ -194,10 +202,7 @@ const flushPendingContent = (
     return
   }
 
-  const messageContent =
-    pendingContent.length === 1 && isPlainText(pendingContent[0]) ?
-      pendingContent[0].text
-    : [...pendingContent]
+  const messageContent = [...pendingContent]
 
   target.push(createMessage(role, messageContent))
   pendingContent.length = 0
@@ -227,20 +232,30 @@ const createImageContent = (
 ): ResponseInputImage => ({
   type: "input_image",
   image_url: `data:${block.source.media_type};base64,${block.source.data}`,
+  detail: "auto",
 })
 
 const createReasoningContent = (
   block: AnthropicThinkingBlock,
-): ResponseInputReasoning => ({
-  type: "reasoning",
-  summary: [
-    {
-      type: "summary_text",
-      text: block.thinking,
-    },
-  ],
-  encrypted_content: block.signature,
-})
+): ResponseInputReasoning => {
+  // align with vscode-copilot-chat extractThinkingData, should add id, otherwise it will cause miss cache occasionally —— the usage input cached tokens to be 0
+  // https://github.com/microsoft/vscode-copilot-chat/blob/main/src/platform/endpoint/node/responsesApi.ts#L162
+  // when use in codex cli, reasoning id is empty, so it will cause miss cache occasionally
+  const array = block.signature.split("@")
+  const signature = array[0]
+  const id = array[1]
+  return {
+    id,
+    type: "reasoning",
+    summary: [
+      {
+        type: "summary_text",
+        text: block.thinking,
+      },
+    ],
+    encrypted_content: signature,
+  }
+}
 
 const createFunctionToolCall = (
   block: AnthropicToolUseBlock,
@@ -263,34 +278,22 @@ const createFunctionCallOutput = (
 
 const translateSystemPrompt = (
   system: string | Array<AnthropicTextBlock> | undefined,
+  model: string,
 ): string | null => {
   if (!system) {
     return null
   }
 
-  const toolUsePrompt = `
-## Tool use
-- You have access to many tools. If a tool exists to perform a specific task, you MUST use that tool instead of running a terminal command to perform that task.
-### Bash tool
-When using the Bash tool, follow these rules:
-- always run_in_background set to false, unless you are running a long-running command (e.g., a server or a watch command).
-### BashOutput tool
-When using the BashOutput tool, follow these rules:
-- Only Bash Tool run_in_background set to true, Use BashOutput to read the output later
-### TodoWrite tool
-When using the TodoWrite tool, follow these rules:
-- Skip using the TodoWrite tool for simple or straightforward tasks (roughly the easiest 25%).
-- Do not make single-step todo lists.
-- When you made a todo, update it after having performed one of the sub-tasks that you shared on the todo list.`
+  const extraPrompt = getExtraPromptForModel(model)
 
   if (typeof system === "string") {
-    return system + toolUsePrompt
+    return system + extraPrompt
   }
 
   const text = system
     .map((block, index) => {
       if (index === 0) {
-        return block.text + toolUsePrompt
+        return block.text + extraPrompt
       }
       return block.text
     })
@@ -300,7 +303,7 @@ When using the TodoWrite tool, follow these rules:
 
 const convertAnthropicTools = (
   tools: Array<AnthropicTool> | undefined,
-): Array<Record<string, unknown>> | null => {
+): Array<Tool> | null => {
   if (!tools || tools.length === 0) {
     return null
   }
@@ -316,9 +319,9 @@ const convertAnthropicTools = (
 
 const convertAnthropicToolChoice = (
   choice: AnthropicMessagesPayload["tool_choice"],
-): unknown => {
+): ToolChoiceOptions | ToolChoiceFunction => {
   if (!choice) {
-    return undefined
+    return "auto"
   }
 
   switch (choice.type) {
@@ -329,29 +332,15 @@ const convertAnthropicToolChoice = (
       return "required"
     }
     case "tool": {
-      return choice.name ? { type: "function", name: choice.name } : undefined
+      return choice.name ? { type: "function", name: choice.name } : "auto"
     }
     case "none": {
       return "none"
     }
     default: {
-      return undefined
+      return "auto"
     }
   }
-}
-
-const isPlainText = (
-  content: ResponseInputContent,
-): content is ResponseInputText | { text: string } => {
-  if (typeof content !== "object") {
-    return false
-  }
-
-  return (
-    "text" in content
-    && typeof (content as ResponseInputText).text === "string"
-    && !("image_url" in content)
-  )
 }
 
 export const translateResponsesResultToAnthropic = (
@@ -391,7 +380,7 @@ const mapOutputToAnthropicContent = (
           contentBlocks.push({
             type: "thinking",
             thinking: thinkingText,
-            signature: item.encrypted_content ?? "",
+            signature: (item.encrypted_content ?? "") + "@" + item.id,
           })
         }
         break
@@ -483,7 +472,7 @@ const extractReasoningText = (item: ResponseOutputReasoning): string => {
 const createToolUseContentBlock = (
   call: ResponseOutputFunctionCall,
 ): AnthropicToolUseBlock | null => {
-  const toolId = call.call_id ?? call.id
+  const toolId = call.call_id
   if (!call.name || !toolId) {
     return null
   }
@@ -546,6 +535,9 @@ const mapResponsesStopReason = (
   const { status, incomplete_details: incompleteDetails } = response
 
   if (status === "completed") {
+    if (response.output.some((item) => item.type === "function_call")) {
+      return "tool_use"
+    }
     return "end_turn"
   }
 
@@ -555,9 +547,6 @@ const mapResponsesStopReason = (
     }
     if (incompleteDetails?.reason === "content_filter") {
       return "end_turn"
-    }
-    if (incompleteDetails?.reason === "tool_use") {
-      return "tool_use"
     }
   }
 
