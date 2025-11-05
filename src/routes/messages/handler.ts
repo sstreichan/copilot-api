@@ -1,13 +1,15 @@
 import type { Context } from "hono"
 
-import consola from "consola"
 import { streamSSE } from "hono/streaming"
 
 import { awaitApproval } from "~/lib/approval"
+import { getSmallModel } from "~/lib/config"
+import { createHandlerLogger } from "~/lib/logger"
 import { checkRateLimit } from "~/lib/rate-limit"
 import { state } from "~/lib/state"
 import { setupPingInterval } from "~/lib/utils"
 import {
+  buildErrorEvent,
   createResponsesStreamState,
   translateResponsesStreamEvent,
 } from "~/routes/messages/responses-stream-translation"
@@ -37,11 +39,18 @@ import {
 } from "./non-stream-translation"
 import { translateChunkToAnthropicEvents } from "./stream-translation"
 
+const logger = createHandlerLogger("messages-handler")
+
 export async function handleCompletion(c: Context) {
   await checkRateLimit(state)
 
   const anthropicPayload = await c.req.json<AnthropicMessagesPayload>()
-  consola.debug("Anthropic request payload:", JSON.stringify(anthropicPayload))
+  logger.debug("Anthropic request payload:", JSON.stringify(anthropicPayload))
+
+  // fix claude code 2.0.28 warmup request consume premium request, forcing small model if no tools are used
+  if (!anthropicPayload.tools || anthropicPayload.tools.length === 0) {
+    anthropicPayload.model = getSmallModel()
+  }
 
   const useResponsesApi = shouldUseResponsesApi(anthropicPayload.model)
 
@@ -63,7 +72,7 @@ const handleWithChatCompletions = async (
   anthropicPayload: AnthropicMessagesPayload,
 ) => {
   const openAIPayload = translateToOpenAI(anthropicPayload)
-  consola.debug(
+  logger.debug(
     "Translated OpenAI request payload:",
     JSON.stringify(openAIPayload),
   )
@@ -71,19 +80,19 @@ const handleWithChatCompletions = async (
   const response = await createChatCompletions(openAIPayload)
 
   if (isNonStreaming(response)) {
-    consola.debug(
+    logger.debug(
       "Non-streaming response from Copilot:",
       JSON.stringify(response).slice(-400),
     )
     const anthropicResponse = translateToAnthropic(response)
-    consola.debug(
+    logger.debug(
       "Translated Anthropic response:",
       JSON.stringify(anthropicResponse),
     )
     return c.json(anthropicResponse)
   }
 
-  consola.debug("Streaming response from Copilot")
+  logger.debug("Streaming response from Copilot")
   return streamSSE(c, async (stream) => {
     const pingInterval = setupPingInterval(stream)
 
@@ -96,7 +105,7 @@ const handleWithChatCompletions = async (
 
     try {
       for await (const rawEvent of response) {
-        consola.debug("Copilot raw stream event:", JSON.stringify(rawEvent))
+        logger.debug("Copilot raw stream event:", JSON.stringify(rawEvent))
         if (rawEvent.data === "[DONE]") {
           break
         }
@@ -109,7 +118,7 @@ const handleWithChatCompletions = async (
         const events = translateChunkToAnthropicEvents(chunk, streamState)
 
         for (const event of events) {
-          consola.debug("Translated Anthropic event:", JSON.stringify(event))
+          logger.debug("Translated Anthropic event:", JSON.stringify(event))
           await stream.writeSSE({
             event: event.type,
             data: JSON.stringify(event),
@@ -128,7 +137,7 @@ const handleWithResponsesApi = async (
 ) => {
   const responsesPayload =
     translateAnthropicMessagesToResponsesPayload(anthropicPayload)
-  consola.debug(
+  logger.debug(
     "Translated Responses payload:",
     JSON.stringify(responsesPayload),
   )
@@ -140,7 +149,7 @@ const handleWithResponsesApi = async (
   })
 
   if (responsesPayload.stream && isAsyncIterable(response)) {
-    consola.debug("Streaming response from Copilot (Responses API)")
+    logger.debug("Streaming response from Copilot (Responses API)")
     return streamSSE(c, async (stream) => {
       const pingInterval = setupPingInterval(stream)
 
@@ -159,7 +168,7 @@ const handleWithResponsesApi = async (
             continue
           }
 
-          consola.debug("Responses raw stream event:", data)
+          logger.debug("Responses raw stream event:", data)
 
           const events = translateResponsesStreamEvent(
             JSON.parse(data) as ResponseStreamEvent,
@@ -167,22 +176,29 @@ const handleWithResponsesApi = async (
           )
           for (const event of events) {
             const eventData = JSON.stringify(event)
-            consola.debug("Translated Anthropic event:", eventData)
+            logger.debug("Translated Anthropic event:", eventData)
             await stream.writeSSE({
               event: event.type,
               data: eventData,
             })
           }
+
+          if (streamState.messageCompleted) {
+            logger.debug("Message completed, ending stream")
+            break
+          }
         }
 
         if (!streamState.messageCompleted) {
-          consola.warn(
-            "Responses stream ended without completion; sending fallback message_stop",
+          logger.warn(
+            "Responses stream ended without completion; sending error event",
           )
-          const fallback = { type: "message_stop" as const }
+          const errorEvent = buildErrorEvent(
+            "Responses stream ended without completion",
+          )
           await stream.writeSSE({
-            event: fallback.type,
-            data: JSON.stringify(fallback),
+            event: errorEvent.type,
+            data: JSON.stringify(errorEvent),
           })
         }
       } finally {
@@ -191,14 +207,14 @@ const handleWithResponsesApi = async (
     })
   }
 
-  consola.debug(
+  logger.debug(
     "Non-streaming Responses result:",
     JSON.stringify(response).slice(-400),
   )
   const anthropicResponse = translateResponsesResultToAnthropic(
     response as ResponsesResult,
   )
-  consola.debug(
+  logger.debug(
     "Translated Anthropic response:",
     JSON.stringify(anthropicResponse),
   )

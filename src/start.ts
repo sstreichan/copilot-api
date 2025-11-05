@@ -7,11 +7,11 @@ import { serve, type ServerHandler } from "srvx"
 import invariant from "tiny-invariant"
 
 import { ensurePaths } from "./lib/paths"
+import { initProxyFromEnv } from "./lib/proxy"
 import { generateEnvScript } from "./lib/shell"
 import { state } from "./lib/state"
 import { setupCopilotToken, setupGitHubToken } from "./lib/token"
 import { cacheModels, cacheVSCodeVersion } from "./lib/utils"
-import { server } from "./server"
 
 interface RunServerOptions {
   port: number
@@ -23,9 +23,15 @@ interface RunServerOptions {
   githubToken?: string
   claudeCode: boolean
   showToken: boolean
+  proxyEnv: boolean
 }
 
 export async function runServer(options: RunServerOptions): Promise<void> {
+  if (options.proxyEnv) {
+    initProxyFromEnv()
+  }
+
+  state.verbose = options.verbose
   if (options.verbose) {
     consola.level = 5
     consola.info("Verbose logging enabled")
@@ -107,11 +113,13 @@ export async function runServer(options: RunServerOptions): Promise<void> {
   consola.box(
     `🌐 Usage Viewer: https://ericc-ch.github.io/copilot-api?endpoint=${serverUrl}/usage`,
   )
+
+  const { server } = await import("./server")
   serve({
     fetch: server.fetch as ServerHandler,
     port: options.port,
     bun: {
-      idleTimeout: 255, // gemini timeout
+      idleTimeout: 0,
     },
   })
 }
@@ -175,6 +183,11 @@ export const start = defineCommand({
       default: false,
       description: "Show GitHub and Copilot tokens on fetch and refresh",
     },
+    "proxy-env": {
+      type: "boolean",
+      default: false,
+      description: "Initialize proxy from environment variables",
+    },
   },
   run({ args }) {
     const rateLimitRaw = args["rate-limit"]
@@ -192,6 +205,7 @@ export const start = defineCommand({
       githubToken: args["github-token"],
       claudeCode: args["claude-code"],
       showToken: args["show-token"],
+      proxyEnv: args["proxy-env"],
     })
   },
 })

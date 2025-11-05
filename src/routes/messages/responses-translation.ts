@@ -1,6 +1,9 @@
 import consola from "consola"
 
-import { getExtraPromptForModel } from "~/lib/config"
+import {
+  getExtraPromptForModel,
+  getReasoningEffortForModel,
+} from "~/lib/config"
 import {
   type ResponsesPayload,
   type ResponseInputContent,
@@ -62,9 +65,9 @@ export const translateAnthropicMessagesToResponsesPayload = (
     model: payload.model,
     input,
     instructions: translateSystemPrompt(payload.system, payload.model),
-    temperature: payload.temperature ?? null,
+    temperature: 1, // reasoning high temperature fixed to 1
     top_p: payload.top_p ?? null,
-    max_output_tokens: payload.max_tokens,
+    max_output_tokens: Math.max(payload.max_tokens, 12800),
     tools: translatedTools,
     tool_choice: toolChoice,
     metadata: payload.metadata ? { ...payload.metadata } : null,
@@ -73,7 +76,10 @@ export const translateAnthropicMessagesToResponsesPayload = (
     stream: payload.stream ?? null,
     store: false,
     parallel_tool_calls: true,
-    reasoning: { effort: "high", summary: "detailed" },
+    reasoning: {
+      effort: getReasoningEffortForModel(payload.model),
+      summary: "detailed",
+    },
     include: ["reasoning.encrypted_content"],
   }
 
