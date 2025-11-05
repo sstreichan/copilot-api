@@ -1,5 +1,6 @@
 import type { Context } from "hono"
 
+import consola from "consola"
 import { streamSSE } from "hono/streaming"
 
 import { awaitApproval } from "~/lib/approval"
@@ -72,6 +73,7 @@ const handleWithChatCompletions = async (
   anthropicPayload: AnthropicMessagesPayload,
 ) => {
   const openAIPayload = translateToOpenAI(anthropicPayload)
+  consola.info(`[/v1/messages] Model requested: ${openAIPayload.model}`)
   logger.debug(
     "Translated OpenAI request payload:",
     JSON.stringify(openAIPayload),
