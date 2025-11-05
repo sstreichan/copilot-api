@@ -1,12 +1,11 @@
 import type { Context } from "hono"
 
-import consola from "consola"
 import { streamSSE } from "hono/streaming"
 
 import { awaitApproval } from "~/lib/approval"
+import { createHandlerLogger } from "~/lib/logger"
 import { checkRateLimit } from "~/lib/rate-limit"
 import { state } from "~/lib/state"
-import { setupPingInterval } from "~/lib/utils"
 import {
   createResponses,
   type ResponsesPayload,
@@ -15,13 +14,15 @@ import {
 
 import { getResponsesRequestOptions } from "./utils"
 
+const logger = createHandlerLogger("responses-handler")
+
 const RESPONSES_ENDPOINT = "/responses"
 
 export const handleResponses = async (c: Context) => {
   await checkRateLimit(state)
 
   const payload = await c.req.json<ResponsesPayload>()
-  consola.debug("Responses request payload:", JSON.stringify(payload))
+  logger.debug("Responses request payload:", JSON.stringify(payload))
 
   const selectedModel = state.models?.data.find(
     (model) => model.id === payload.model,
@@ -51,26 +52,20 @@ export const handleResponses = async (c: Context) => {
   const response = await createResponses(payload, { vision, initiator })
 
   if (isStreamingRequested(payload) && isAsyncIterable(response)) {
-    consola.debug("Forwarding native Responses stream")
+    logger.debug("Forwarding native Responses stream")
     return streamSSE(c, async (stream) => {
-      const pingInterval = setupPingInterval(stream)
-
-      try {
-        for await (const chunk of response) {
-          consola.debug("Responses stream chunk:", JSON.stringify(chunk))
-          await stream.writeSSE({
-            id: (chunk as { id?: string }).id,
-            event: (chunk as { event?: string }).event,
-            data: (chunk as { data?: string }).data ?? "",
-          })
-        }
-      } finally {
-        clearInterval(pingInterval)
+      for await (const chunk of response) {
+        logger.debug("Responses stream chunk:", JSON.stringify(chunk))
+        await stream.writeSSE({
+          id: (chunk as { id?: string }).id,
+          event: (chunk as { event?: string }).event,
+          data: (chunk as { data?: string }).data ?? "",
+        })
       }
     })
   }
 
-  consola.debug(
+  logger.debug(
     "Forwarding native Responses result:",
     JSON.stringify(response).slice(-400),
   )
