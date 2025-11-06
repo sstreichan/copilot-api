@@ -441,11 +441,15 @@ export async function handleGeminiCountTokens(c: Context) {
 
   const openAIPayload = translateGeminiCountTokensToOpenAI(geminiPayload, model)
 
-  // Find the full Model object from state
-  const selectedModel = state.models?.data.find((m) => m.id === model)
+  // Use the mapped model name (from openAIPayload) to find the model in state
+  const mappedModelName = openAIPayload.model
+  const selectedModel = state.models?.data.find((m) => m.id === mappedModelName)
 
   if (!selectedModel) {
     // Fallback: return minimal token count if model not found
+    consola.warn(
+      `[GEMINI_COUNT_TOKENS] Model not found in state: ${mappedModelName} (original: ${model})`,
+    )
     const geminiResponse = translateTokenCountToGemini(10)
     return c.json(geminiResponse)
   }
