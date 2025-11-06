@@ -53,7 +53,7 @@ function translateModelName(model: string): string {
   } else if (model.startsWith("claude-opus-")) {
     return model.replace(/^claude-opus-4-.*/, "claude-opus-4")
   } else if (model.startsWith("claude-haiku")) {
-    return "claude-haiku-4.5"
+    return "gpt-5-mini"
   }
   return model
 }

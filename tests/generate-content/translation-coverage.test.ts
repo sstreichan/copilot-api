@@ -146,7 +146,7 @@ test("handles complex content that cannot be merged", async () => {
 test.each([
   {
     modelInput: "gemini-2.5-flash",
-    expectedModel: "gemini-2.0-flash-001",
+    expectedModel: "gpt-5-mini",
     description: "maps unsupported to supported",
   },
   {

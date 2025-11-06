@@ -1,3 +1,6 @@
+import consola from "consola"
+
+import { getExtraPromptForModel } from "~/lib/config"
 import { DebugLogger } from "~/lib/debug-logger"
 import {
   translateGeminiToolsToOpenAI,
@@ -34,11 +37,12 @@ import {
 import { mapOpenAIFinishReasonToGemini } from "./utils"
 
 // Model mapping for Gemini models - only map unsupported variants to supported ones
-function mapGeminiModelToCopilot(geminiModel: string): string {
+export function mapGeminiModelToCopilot(geminiModel: string): string {
   const modelMap: Record<string, string> = {
     "gemini-2.5-flash": "gpt-5-mini", // Map to supported Gemini model
     "gemini-2.0-flash": "gpt-5-mini", // Map to full model name
     "gemini-2.5-flash-lite": "gpt-5-mini", // Map to full model name
+    "gemini-2.5-codex": "gpt-5-codex", // Codex model mapping
   }
 
   return modelMap[geminiModel] || geminiModel // Return original if supported
@@ -66,13 +70,42 @@ export function translateGeminiToOpenAI(
   model: string,
   stream: boolean,
 ): ChatCompletionsPayload {
+  const mappedModel = mapGeminiModelToCopilot(model)
+  const messages = translateGeminiContentsToOpenAI(
+    payload.contents,
+    payload.systemInstruction,
+  )
+
+  // Inject extra prompt for codex model (with marker to prevent duplicates)
+  const extraPrompt = getExtraPromptForModel(mappedModel)
+  if (extraPrompt) {
+    const MARKER = "<!-- CODEX_EXTRA_PROMPT_INJECTED -->"
+
+    if (messages.length > 0 && messages[0].role === "system") {
+      // Append to existing system message
+      const content =
+        typeof messages[0].content === "string" ? messages[0].content : ""
+
+      if (!content.includes(MARKER)) {
+        messages[0].content = `${content}\n\n${extraPrompt}\n${MARKER}`
+        consola.debug(
+          "[codex-gemini] injected extra prompt to existing system message",
+        )
+      }
+    } else {
+      // Create new system message
+      messages.unshift({
+        role: "system",
+        content: `${extraPrompt}\n${MARKER}`,
+      })
+      consola.debug("[codex-gemini] created system message with extra prompt")
+    }
+  }
+
   const tools = selectTools(payload.tools, payload.contents)
   const result = {
-    model: mapGeminiModelToCopilot(model),
-    messages: translateGeminiContentsToOpenAI(
-      payload.contents,
-      payload.systemInstruction,
-    ),
+    model: mappedModel,
+    messages,
     max_tokens: (payload.generationConfig?.maxOutputTokens as number) || 4096,
     stop: payload.generationConfig?.stopSequences as Array<string> | undefined,
     stream,
@@ -437,7 +470,7 @@ export function translateOpenAIToGemini(
       context: "Non-Stream Response Translation",
       filePrefix: "debug-nonstream-comparison",
     }).catch((error: unknown) => {
-      console.error(
+      consola.error(
         "[DEBUG] Failed to log non-stream response comparison:",
         error,
       )
@@ -690,7 +723,7 @@ export function translateOpenAIChunkToGemini(
       context: "Streaming Chunk Translation",
       filePrefix: "debug-stream-comparison",
     }).catch((error: unknown) => {
-      console.error("[DEBUG] Failed to log streaming chunk comparison:", error)
+      consola.error("[DEBUG] Failed to log streaming chunk comparison:", error)
     })
   }
 
@@ -703,13 +736,44 @@ export function translateGeminiCountTokensToOpenAI(
   request: GeminiCountTokensRequest,
   model: string,
 ): ChatCompletionsPayload {
+  const mappedModel = mapGeminiModelToCopilot(model)
+  const messages = translateGeminiContentsToOpenAI(
+    request.contents,
+    request.systemInstruction,
+  )
+
+  // Inject extra prompt (keep consistent with generation)
+  const extraPrompt = getExtraPromptForModel(mappedModel)
+  if (extraPrompt) {
+    const MARKER = "<!-- CODEX_EXTRA_PROMPT_INJECTED -->"
+
+    if (messages.length > 0 && messages[0].role === "system") {
+      // Append to existing system message
+      const content =
+        typeof messages[0].content === "string" ? messages[0].content : ""
+
+      if (!content.includes(MARKER)) {
+        messages[0].content = `${content}\n\n${extraPrompt}\n${MARKER}`
+        consola.debug(
+          "[codex-gemini-countTokens] injected extra prompt to existing system message",
+        )
+      }
+    } else {
+      // Create new system message
+      messages.unshift({
+        role: "system",
+        content: `${extraPrompt}\n${MARKER}`,
+      })
+      consola.debug(
+        "[codex-gemini-countTokens] created system message with extra prompt",
+      )
+    }
+  }
+
   const tools = selectTools(request.tools, request.contents)
   return {
-    model: mapGeminiModelToCopilot(model),
-    messages: translateGeminiContentsToOpenAI(
-      request.contents,
-      request.systemInstruction,
-    ),
+    model: mappedModel,
+    messages,
     max_tokens: 1,
     tools,
   }

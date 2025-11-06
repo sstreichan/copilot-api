@@ -1,6 +1,7 @@
 import type { Context } from "hono"
 import type { SSEStreamingApi } from "hono/streaming"
 
+import consola from "consola"
 import { streamSSE } from "hono/streaming"
 
 import { awaitApproval } from "~/lib/approval"
@@ -15,6 +16,7 @@ import {
 } from "~/services/copilot/create-chat-completions"
 
 // Helper function to extract model from URL path
+
 function extractModelFromUrl(url: string): string {
   const match = url.match(/\/v1beta\/models\/([^:]+):/)
   if (!match) {
@@ -24,13 +26,29 @@ function extractModelFromUrl(url: string): string {
 }
 
 import { ToolCallAccumulator } from "~/lib/tool-call-utils"
+import {
+  createResponses,
+  type ResponsesResult,
+  type ResponsesStream,
+  type ResponseStreamEvent,
+} from "~/services/copilot/create-responses"
 
+import {
+  createGeminiResponsesStreamState,
+  translateResponsesStreamEventToGemini,
+  FunctionCallArgumentsValidationError,
+} from "./responses-stream-translation"
+import {
+  translateGeminiToResponses,
+  translateResponsesResultToGemini,
+} from "./responses-translation"
 import {
   translateGeminiToOpenAI,
   translateOpenAIToGemini,
   translateGeminiCountTokensToOpenAI,
   translateTokenCountToGemini,
   translateOpenAIChunkToGemini,
+  mapGeminiModelToCopilot,
 } from "./translation"
 import {
   type GeminiRequest,
@@ -40,6 +58,10 @@ import {
 } from "./types"
 
 // Unified generation handler following Claude's two-branch pattern
+function shouldUseResponsesApi(model: string): boolean {
+  return /codex/i.test(model)
+}
+
 export async function handleGeminiGeneration(
   c: Context,
   stream: boolean = false,
@@ -53,13 +75,47 @@ export async function handleGeminiGeneration(
   await checkRateLimit(state)
 
   const geminiPayload = await c.req.json<GeminiRequest>()
+
+  // Phase 2: Streaming + non-streaming codex requests route through Responses API
+  if (shouldUseResponsesApi(model)) {
+    const mappedModel = mapGeminiModelToCopilot(model)
+    const vision = geminiPayload.contents.some((content) =>
+      content.parts.some((part) => "inlineData" in part),
+    )
+    const initiator =
+      geminiPayload.contents.some((content) => content.role === "model") ?
+        "agent"
+      : "user"
+    const responsesPayload = translateGeminiToResponses(
+      geminiPayload,
+      mappedModel,
+    )
+    responsesPayload.stream = stream ? true : null
+
+    const responsesResult = await createResponses(responsesPayload, {
+      vision,
+      initiator,
+    })
+
+    // Non-streaming Responses path
+    if (!stream) {
+      const geminiResponse = translateResponsesResultToGemini(
+        responsesResult as ResponsesResult,
+      )
+      return c.json(geminiResponse)
+    }
+
+    // Streaming Responses path
+    return handleResponsesStreaming(c, responsesResult as ResponsesStream)
+  }
+
   const openAIPayload = translateGeminiToOpenAI(geminiPayload, model, stream)
 
   // Log request for debugging (async, non-blocking) - only if debug logging is enabled
   if (process.env.DEBUG_GEMINI_REQUESTS === "true") {
     DebugLogger.logGeminiRequest(geminiPayload, openAIPayload).catch(
       (error: unknown) => {
-        console.error("[DEBUG] Failed to log request:", error)
+        consola.error("[DEBUG] Failed to log request:", error)
       },
     )
   }
@@ -107,12 +163,12 @@ function handleNonStreamingToStreaming(
       // Add a small delay to ensure all data is flushed
       await new Promise((resolve) => setTimeout(resolve, 50))
     } catch (error) {
-      console.error("[GEMINI_STREAM] Error in non-streaming conversion", error)
+      consola.error("[GEMINI_STREAM] Error in non-streaming conversion", error)
     } finally {
       try {
         await stream.close()
       } catch (closeError) {
-        console.error(
+        consola.error(
           "[GEMINI_STREAM] Error closing non-streaming conversion stream",
           closeError,
         )
@@ -259,7 +315,7 @@ function handleStreamingResponse(
             })
           }
         } catch (parseError) {
-          console.error("[GEMINI_STREAM] Error parsing chunk", parseError)
+          consola.error("[GEMINI_STREAM] Error parsing chunk", parseError)
           continue
         }
       }
@@ -270,14 +326,99 @@ function handleStreamingResponse(
       // Add a small delay to ensure all data is flushed
       await new Promise((resolve) => setTimeout(resolve, 50))
     } catch (error) {
-      console.error("[GEMINI_STREAM] Error in streaming processing", error)
+      consola.error("[GEMINI_STREAM] Error in streaming processing", error)
       // Ensure we don't leave the stream hanging
     } finally {
       // Always close the stream, but with proper cleanup
       try {
         await stream.close()
       } catch (closeError) {
-        console.error("[GEMINI_STREAM] Error closing stream", closeError)
+        consola.error("[GEMINI_STREAM] Error closing stream", closeError)
+      }
+    }
+  })
+}
+
+// Helper function to handle Responses API streaming
+function handleResponsesStreaming(
+  c: Context,
+  responsesStream: ResponsesStream,
+) {
+  return streamSSE(c, async (stream) => {
+    const streamState = createGeminiResponsesStreamState()
+    let lastWritePromise: Promise<void> = Promise.resolve()
+
+    try {
+      for await (const rawEvent of responsesStream) {
+        if (!rawEvent.data) continue
+
+        try {
+          const event = JSON.parse(rawEvent.data) as ResponseStreamEvent
+          const geminiChunk = translateResponsesStreamEventToGemini(
+            event,
+            streamState,
+          )
+          if (geminiChunk) {
+            await lastWritePromise
+            lastWritePromise = stream.writeSSE({
+              data: JSON.stringify(geminiChunk),
+            })
+          }
+        } catch (parseError) {
+          // Check if this is a validation error that requires termination
+          if (parseError instanceof FunctionCallArgumentsValidationError) {
+            consola.error(
+              "[GEMINI_RESPONSES_STREAM] Function call validation failed, terminating stream",
+              parseError,
+            )
+
+            // Send termination event to client
+            await lastWritePromise
+            await stream.writeSSE({
+              data: JSON.stringify({
+                candidates: [
+                  {
+                    content: {
+                      parts: [],
+                      role: "model",
+                    },
+                    finishReason: "OTHER",
+                    index: 0,
+                  },
+                ],
+                usageMetadata: {
+                  promptTokenCount: 0,
+                  candidatesTokenCount: 0,
+                  totalTokenCount: 0,
+                },
+              }),
+            })
+            break // Terminate the stream
+          } else {
+            consola.error(
+              "[GEMINI_RESPONSES_STREAM] Error parsing event",
+              parseError,
+            )
+            continue
+          }
+        }
+      }
+
+      // Wait for all writes to complete
+      await lastWritePromise
+
+      // Add flush delay
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    } catch (error) {
+      consola.error("[GEMINI_RESPONSES_STREAM] Error in streaming", error)
+    } finally {
+      try {
+        await stream.close()
+      } catch (closeError) {
+        consola.error(
+          "[GEMINI_RESPONSES_STREAM] Error closing stream",
+          closeError,
+        )
       }
     }
   })
