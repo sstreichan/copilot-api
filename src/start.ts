@@ -25,6 +25,7 @@ interface RunServerOptions {
   claudeCode: boolean
   showToken: boolean
   proxyEnv: boolean
+  apiKeys?: Array<string>
 }
 
 export async function runServer(options: RunServerOptions): Promise<void> {
@@ -46,6 +47,13 @@ export async function runServer(options: RunServerOptions): Promise<void> {
   state.rateLimitSeconds = options.rateLimit
   state.rateLimitWait = options.rateLimitWait
   state.showToken = options.showToken
+  state.apiKeys = options.apiKeys
+
+  if (state.apiKeys && state.apiKeys.length > 0) {
+    consola.info(
+      `API key authentication enabled with ${state.apiKeys.length} key(s)`,
+    )
+  }
 
   await ensurePaths()
   await cacheVSCodeVersion()
@@ -184,12 +192,23 @@ export const start = defineCommand({
       default: false,
       description: "Initialize proxy from environment variables",
     },
+    "api-key": {
+      type: "string",
+      description: "API keys for authentication",
+    },
   },
   run({ args }) {
     const rateLimitRaw = args["rate-limit"]
     const rateLimit =
       // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
       rateLimitRaw === undefined ? undefined : Number.parseInt(rateLimitRaw, 10)
+
+    // Handle multiple API keys - citty may pass a string or array
+    const apiKeyRaw = args["api-key"]
+    let apiKeys: Array<string> | undefined
+    if (apiKeyRaw) {
+      apiKeys = Array.isArray(apiKeyRaw) ? apiKeyRaw : [apiKeyRaw]
+    }
 
     return runServer({
       port: Number.parseInt(args.port, 10),
@@ -202,6 +221,7 @@ export const start = defineCommand({
       claudeCode: args["claude-code"],
       showToken: args["show-token"],
       proxyEnv: args["proxy-env"],
+      apiKeys,
     })
   },
 })

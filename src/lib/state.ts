@@ -15,6 +15,9 @@ export interface State {
   // Rate limiting configuration
   rateLimitSeconds?: number
   lastRequestTimestamp?: number
+
+  // API key validation
+  apiKeys?: Array<string>
 }
 
 export const state: State = {
