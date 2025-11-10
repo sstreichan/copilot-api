@@ -25,7 +25,7 @@
     "build": "tsdown",
     "dev": "bun run --watch ./src/main.ts",
     "knip": "knip-bun",
-    "lint": "eslint --cache --fix",
+    "lint": "bun run lint:all",
     "lint:all": "eslint --cache . --fix",
     "prepack": "bun run build",
     "prepare": "simple-git-hooks",

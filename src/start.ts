@@ -58,12 +58,16 @@ export async function runServer(options: RunServerOptions): Promise<void> {
   await ensurePaths()
   await cacheVSCodeVersion()
 
-  if (options.githubToken) {
-    state.githubToken = options.githubToken
-    consola.info("Using provided GitHub token")
-  } else {
-    await setupGitHubToken()
-  }
+  const githubToken = options.githubToken
+
+  await (async () => {
+    if (githubToken) {
+      state.githubToken = githubToken
+      consola.info("Using provided GitHub token")
+    } else {
+      await setupGitHubToken()
+    }
+  })()
 
   await setupCopilotToken()
   await cacheModels()
