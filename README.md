@@ -163,6 +163,7 @@ The following command line options are available for the `start` command:
 | --claude-code  | Generate a command to launch Claude Code with Copilot API config              | false      | -c    |
 | --show-token   | Show GitHub and Copilot tokens on fetch and refresh                           | false      | none  |
 | --proxy-env    | Initialize proxy from environment variables                                   | false      | none  |
+| --api-key      | API keys for authentication. Can be specified multiple times                  | none       | none  |
 
 ### Auth Command Options
 
@@ -209,6 +210,41 @@ New endpoints for monitoring your Copilot usage and quotas.
 | `GET /usage` | `GET`  | Get detailed Copilot usage statistics and quota information. |
 | `GET /token` | `GET`  | Get the current Copilot token being used by the API.         |
 
+## API Key Authentication
+
+The proxy supports API key authentication to restrict access to the endpoints. When API keys are configured, all API endpoints require authentication.
+
+### Authentication Methods
+
+The proxy supports both OpenAI and Anthropic authentication formats:
+
+- **OpenAI format**: Include the API key in the `Authorization` header with `Bearer` prefix:
+  ```bash
+  curl -H "Authorization: Bearer your_api_key_here" http://localhost:4141/v1/models
+  ```
+
+- **Anthropic format**: Include the API key in the `x-api-key` header:
+  ```bash
+  curl -H "x-api-key: your_api_key_here" http://localhost:4141/v1/messages
+  ```
+
+### Configuration
+
+Use the `--api-key` flag to enable API key authentication. You can specify multiple keys for different clients:
+
+```bash
+# Single API key
+npx copilot-api@latest start --api-key your_secret_key
+
+# Multiple API keys  
+npx copilot-api@latest start --api-key key1 --api-key key2 --api-key key3
+```
+
+When API keys are configured:
+- All API endpoints (`/v1/chat/completions`, `/v1/models`, `/v1/embeddings`, `/v1/messages`, `/usage`, `/token`) require authentication
+- Requests without valid API keys will receive a 401 Unauthorized response
+- The root endpoint `/` remains accessible without authentication
+
 ## Example Usage
 
 Using with npx:
@@ -237,6 +273,12 @@ npx copilot-api@latest start --rate-limit 30 --wait
 
 # Provide GitHub token directly
 npx copilot-api@latest start --github-token ghp_YOUR_TOKEN_HERE
+
+# Enable API key authentication with a single key
+npx copilot-api@latest start --api-key your_secret_key_here
+
+# Enable API key authentication with multiple keys
+npx copilot-api@latest start --api-key key1 --api-key key2 --api-key key3
 
 # Run only the auth flow
 npx copilot-api@latest auth
