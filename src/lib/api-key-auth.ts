@@ -21,6 +21,12 @@ function extractApiKey(c: Context): string | undefined {
     return anthropicKey
   }
 
+  // Fallback: query parameter, for extra compatibility of `/usage` or `/token` route
+  const queryKey = c.req.query("apiKey")
+  if (queryKey) {
+    return queryKey
+  }
+
   return undefined
 }
 
