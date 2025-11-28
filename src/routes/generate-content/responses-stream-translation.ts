@@ -133,12 +133,22 @@ export const translateResponsesStreamEventToGemini = (
 // ----------------------
 
 const handleResponseCreated = (
-  _rawEvent: ResponseCreatedEvent,
-  state: GeminiResponsesStreamState,
+  rawEvent: ResponseCreatedEvent,
+  _state: GeminiResponsesStreamState,
 ): GeminiStreamResponse | null => {
-  state.streamStarted = true
-  // No initial chunk needed for Gemini (unlike Anthropic message_start)
-  return null
+  // Extract and send usage metadata in the initial chunk
+  // This allows Gemini CLI to track token usage from the start
+  const usageMetadata = mapResponsesUsageMetadata(rawEvent.response)
+
+  return {
+    candidates: [
+      {
+        content: { parts: [], role: "model" },
+        index: 0,
+      },
+    ],
+    usageMetadata,
+  }
 }
 
 const handleOutputItemAdded = (

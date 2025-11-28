@@ -12,3 +12,8 @@ node_modules/
 
 # build output
 dist/
+tmp/bug-analysis-feature-branch-large-toolcall-failure.md
+tmp/codex-gemini-plan-v2.md
+tmp/codex-gemini-plan.md
+tmp/gpt5-review-analysis.md
+tmp/implementation-plan-simple.md
