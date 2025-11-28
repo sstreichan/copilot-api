@@ -82,9 +82,7 @@ const handleWithChatCompletions = async (
   anthropicPayload: AnthropicMessagesPayload,
 ) => {
   const openAIPayload = translateToOpenAI(anthropicPayload)
-  consola.info(
-    `[/v1/messages] IN  ${anthropicPayload.model} → ${openAIPayload.model} (ChatCompletions)`,
-  )
+  consola.info(`IN ${anthropicPayload.model} → ${openAIPayload.model}`)
   logger.debug(
     "Translated OpenAI request payload:",
     JSON.stringify(openAIPayload),
@@ -167,9 +165,7 @@ const handleWithResponsesApi = async (
 ) => {
   const responsesPayload =
     translateAnthropicMessagesToResponsesPayload(anthropicPayload)
-  consola.info(
-    `[/v1/messages] IN  ${anthropicPayload.model} → ${responsesPayload.model} (Responses)`,
-  )
+  consola.info(`IN ${anthropicPayload.model} → ${responsesPayload.model}`)
   logger.debug(
     "Translated Responses payload:",
     JSON.stringify(responsesPayload),
