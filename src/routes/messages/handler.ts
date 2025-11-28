@@ -55,6 +55,10 @@ export async function handleCompletion(c: Context) {
 
   const useResponsesApi = shouldUseResponsesApi(anthropicPayload.model)
 
+  consola.info(
+    `[/v1/messages] Original model: ${anthropicPayload.model}, API path: ${useResponsesApi ? "Responses" : "ChatCompletions"}`,
+  )
+
   if (state.manualApprove) {
     await awaitApproval()
   }
@@ -73,7 +77,7 @@ const handleWithChatCompletions = async (
   anthropicPayload: AnthropicMessagesPayload,
 ) => {
   const openAIPayload = translateToOpenAI(anthropicPayload)
-  consola.info(`[/v1/messages] Model requested: ${openAIPayload.model}`)
+  consola.info(`[/v1/messages] Translated model: ${openAIPayload.model}`)
   logger.debug(
     "Translated OpenAI request payload:",
     JSON.stringify(openAIPayload),
@@ -140,6 +144,7 @@ const handleWithResponsesApi = async (
 ) => {
   const responsesPayload =
     translateAnthropicMessagesToResponsesPayload(anthropicPayload)
+  consola.info(`[/v1/messages] Using model: ${responsesPayload.model}`)
   logger.debug(
     "Translated Responses payload:",
     JSON.stringify(responsesPayload),

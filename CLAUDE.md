@@ -2,6 +2,8 @@
 
 **提示**: 本项目使用 [bd (beads)](https://github.com/steveyegge/beads) 进行 issue 跟踪。使用 `bd` 命令代替 markdown TODO 列表。工作流程详情见 AGENTS.md。
 
+**WSL 注意事项**: 如果在 WSL 中使用 beads 遇到 SQLite WAL 锁定错误，需要删除 `.beads/` 目录（在 Windows 端先停止 `bd daemon`），然后在 WSL 中重新运行 `bd init`。这是因为 SQLite WAL 模式在 WSL 挂载的 Windows 文件系统上可能有兼容性问题。
+
 此文件为 Claude Code (claude.ai/code) 提供在处理本仓库代码时的指导。
 
 ## Quick Start Checklist
