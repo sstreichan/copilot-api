@@ -42,6 +42,15 @@ import { translateChunkToAnthropicEvents } from "./stream-translation"
 
 const logger = createHandlerLogger("messages-handler")
 
+interface OutLogOptions {
+  model: string
+  chunks: number
+  done: boolean
+}
+
+const formatOutLog = ({ model, chunks, done }: OutLogOptions): string =>
+  `\x1b[2K\r↪ ${model} ${chunks}${done ? " ✓" : ""}`
+
 export async function handleCompletion(c: Context) {
   await checkRateLimit(state)
 
@@ -54,10 +63,6 @@ export async function handleCompletion(c: Context) {
   }
 
   const useResponsesApi = shouldUseResponsesApi(anthropicPayload.model)
-
-  consola.info(
-    `[/v1/messages] Original model: ${anthropicPayload.model}, API path: ${useResponsesApi ? "Responses" : "ChatCompletions"}`,
-  )
 
   if (state.manualApprove) {
     await awaitApproval()
@@ -77,7 +82,9 @@ const handleWithChatCompletions = async (
   anthropicPayload: AnthropicMessagesPayload,
 ) => {
   const openAIPayload = translateToOpenAI(anthropicPayload)
-  consola.info(`[/v1/messages] Translated model: ${openAIPayload.model}`)
+  consola.info(
+    `[/v1/messages] IN  ${anthropicPayload.model} → ${openAIPayload.model} (ChatCompletions)`,
+  )
   logger.debug(
     "Translated OpenAI request payload:",
     JSON.stringify(openAIPayload),
@@ -95,6 +102,9 @@ const handleWithChatCompletions = async (
       "Translated Anthropic response:",
       JSON.stringify(anthropicResponse),
     )
+    process.stdout.write(
+      `${formatOutLog({ model: openAIPayload.model, chunks: 0, done: true })}\n`,
+    )
     return c.json(anthropicResponse)
   }
 
@@ -110,6 +120,7 @@ const handleWithChatCompletions = async (
       thinkingBlockOpen: false,
     }
 
+    let chunkCount = 0
     try {
       for await (const rawEvent of response) {
         logger.debug("Copilot raw stream event:", JSON.stringify(rawEvent))
@@ -120,6 +131,15 @@ const handleWithChatCompletions = async (
         if (!rawEvent.data) {
           continue
         }
+
+        chunkCount++
+        process.stdout.write(
+          formatOutLog({
+            model: openAIPayload.model,
+            chunks: chunkCount,
+            done: false,
+          }),
+        )
 
         const chunk = JSON.parse(rawEvent.data) as ChatCompletionChunk
         const events = translateChunkToAnthropicEvents(chunk, streamState)
@@ -134,6 +154,9 @@ const handleWithChatCompletions = async (
       }
     } finally {
       clearInterval(pingInterval)
+      process.stdout.write(
+        `${formatOutLog({ model: openAIPayload.model, chunks: chunkCount, done: true })}\n`,
+      )
     }
   })
 }
@@ -144,7 +167,9 @@ const handleWithResponsesApi = async (
 ) => {
   const responsesPayload =
     translateAnthropicMessagesToResponsesPayload(anthropicPayload)
-  consola.info(`[/v1/messages] Using model: ${responsesPayload.model}`)
+  consola.info(
+    `[/v1/messages] IN  ${anthropicPayload.model} → ${responsesPayload.model} (Responses)`,
+  )
   logger.debug(
     "Translated Responses payload:",
     JSON.stringify(responsesPayload),
@@ -163,6 +188,7 @@ const handleWithResponsesApi = async (
 
       const streamState = createResponsesStreamState()
 
+      let chunkCount = 0
       try {
         for await (const chunk of response) {
           const eventName = chunk.event
@@ -175,6 +201,15 @@ const handleWithResponsesApi = async (
           if (!data) {
             continue
           }
+
+          chunkCount++
+          process.stdout.write(
+            formatOutLog({
+              model: responsesPayload.model,
+              chunks: chunkCount,
+              done: false,
+            }),
+          )
 
           logger.debug("Responses raw stream event:", data)
 
@@ -211,6 +246,9 @@ const handleWithResponsesApi = async (
         }
       } finally {
         clearInterval(pingInterval)
+        process.stdout.write(
+          `${formatOutLog({ model: responsesPayload.model, chunks: chunkCount, done: true })}\n`,
+        )
       }
     })
   }
@@ -225,6 +263,9 @@ const handleWithResponsesApi = async (
   logger.debug(
     "Translated Anthropic response:",
     JSON.stringify(anthropicResponse),
+  )
+  process.stdout.write(
+    `${formatOutLog({ model: responsesPayload.model, chunks: 0, done: true })}\n`,
   )
   return c.json(anthropicResponse)
 }

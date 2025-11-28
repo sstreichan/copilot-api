@@ -13,7 +13,13 @@ import { usageRoute } from "./routes/usage/route"
 
 export const server = new Hono()
 
-server.use(logger())
+server.use("*", async (c, next) => {
+  // /v1/messages 有自己的 IN/OUT 日志，跳过 Hono logger
+  if (c.req.path.startsWith("/v1/messages")) {
+    return next()
+  }
+  return logger()(c, next)
+})
 server.use(cors())
 
 server.get("/", (c) => c.text("Server running"))
