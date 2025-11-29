@@ -29,6 +29,7 @@ import {
   type ResponsesResult,
   type ResponseStreamEvent,
 } from "~/services/copilot/create-responses"
+import { getCopilotUsage } from "~/services/github/get-copilot-usage"
 
 import {
   type AnthropicMessagesPayload,
@@ -46,10 +47,37 @@ interface OutLogOptions {
   model: string
   chunks: number
   done: boolean
+  premium?: { remaining: number; total: number } | null
 }
 
-const formatOutLog = ({ model, chunks, done }: OutLogOptions): string =>
-  `\x1b[2K\r↪ ${model} ${chunks}${done ? " ✓" : ""}`
+const formatOutLog = ({
+  model,
+  chunks,
+  done,
+  premium,
+}: OutLogOptions): string => {
+  const base = `\x1b[2K\r↪ ${model} ${chunks}${done ? " ✓" : ""}`
+  if (done && premium) {
+    return `${base} [${premium.remaining} left]`
+  }
+  return base
+}
+
+const getPremiumInfo = async (): Promise<{
+  remaining: number
+  total: number
+} | null> => {
+  try {
+    const usage = await getCopilotUsage()
+    const pi = usage.quota_snapshots.premium_interactions
+    if (!pi.unlimited) {
+      return { remaining: pi.remaining, total: pi.entitlement }
+    }
+  } catch {
+    // Ignore errors, don't affect main flow
+  }
+  return null
+}
 
 export async function handleCompletion(c: Context) {
   await checkRateLimit(state)
@@ -102,8 +130,9 @@ const handleWithChatCompletions = async (
       "Translated Anthropic response:",
       JSON.stringify(anthropicResponse),
     )
+    const premium = await getPremiumInfo()
     process.stdout.write(
-      `${formatOutLog({ model: openAIPayload.model, chunks: 0, done: true })}\n`,
+      `${formatOutLog({ model: openAIPayload.model, chunks: 0, done: true, premium })}\n`,
     )
     return c.json(anthropicResponse)
   }
@@ -154,8 +183,9 @@ const handleWithChatCompletions = async (
       }
     } finally {
       clearInterval(pingInterval)
+      const premium = await getPremiumInfo()
       process.stdout.write(
-        `${formatOutLog({ model: openAIPayload.model, chunks: chunkCount, done: true })}\n`,
+        `${formatOutLog({ model: openAIPayload.model, chunks: chunkCount, done: true, premium })}\n`,
       )
     }
   })
@@ -245,8 +275,9 @@ const handleWithResponsesApi = async (
         }
       } finally {
         clearInterval(pingInterval)
+        const premium = await getPremiumInfo()
         process.stdout.write(
-          `${formatOutLog({ model: responsesPayload.model, chunks: chunkCount, done: true })}\n`,
+          `${formatOutLog({ model: responsesPayload.model, chunks: chunkCount, done: true, premium })}\n`,
         )
       }
     })
@@ -263,8 +294,9 @@ const handleWithResponsesApi = async (
     "Translated Anthropic response:",
     JSON.stringify(anthropicResponse),
   )
+  const premium = await getPremiumInfo()
   process.stdout.write(
-    `${formatOutLog({ model: responsesPayload.model, chunks: 0, done: true })}\n`,
+    `${formatOutLog({ model: responsesPayload.model, chunks: 0, done: true, premium })}\n`,
   )
   return c.json(anthropicResponse)
 }
