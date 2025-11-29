@@ -58,7 +58,7 @@ export async function handleCompletion(c: Context) {
   const originalModel = anthropicPayload.model
   logger.debug("Anthropic request payload:", JSON.stringify(anthropicPayload))
 
-  // fix claude code 2.0.28 warmup request consume premium request, forcing small model if no tools are used
+  // Redirect tool-less requests (warmup, topic detection, etc.) to a cheaper model
   if (!anthropicPayload.tools || anthropicPayload.tools.length === 0) {
     anthropicPayload.model = getSmallModel()
   }
