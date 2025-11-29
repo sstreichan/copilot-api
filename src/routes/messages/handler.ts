@@ -55,6 +55,7 @@ export async function handleCompletion(c: Context) {
   await checkRateLimit(state)
 
   const anthropicPayload = await c.req.json<AnthropicMessagesPayload>()
+  const originalModel = anthropicPayload.model
   logger.debug("Anthropic request payload:", JSON.stringify(anthropicPayload))
 
   // fix claude code 2.0.28 warmup request consume premium request, forcing small model if no tools are used
@@ -69,10 +70,10 @@ export async function handleCompletion(c: Context) {
   }
 
   if (useResponsesApi) {
-    return await handleWithResponsesApi(c, anthropicPayload)
+    return await handleWithResponsesApi(c, anthropicPayload, originalModel)
   }
 
-  return await handleWithChatCompletions(c, anthropicPayload)
+  return await handleWithChatCompletions(c, anthropicPayload, originalModel)
 }
 
 const RESPONSES_ENDPOINT = "/responses"
@@ -80,9 +81,10 @@ const RESPONSES_ENDPOINT = "/responses"
 const handleWithChatCompletions = async (
   c: Context,
   anthropicPayload: AnthropicMessagesPayload,
+  originalModel: string,
 ) => {
   const openAIPayload = translateToOpenAI(anthropicPayload)
-  consola.info(`IN ${anthropicPayload.model} → ${openAIPayload.model}`)
+  consola.info(`IN ${originalModel} → ${openAIPayload.model}`)
   logger.debug(
     "Translated OpenAI request payload:",
     JSON.stringify(openAIPayload),
@@ -162,10 +164,11 @@ const handleWithChatCompletions = async (
 const handleWithResponsesApi = async (
   c: Context,
   anthropicPayload: AnthropicMessagesPayload,
+  originalModel: string,
 ) => {
   const responsesPayload =
     translateAnthropicMessagesToResponsesPayload(anthropicPayload)
-  consola.info(`IN ${anthropicPayload.model} → ${responsesPayload.model}`)
+  consola.info(`IN ${originalModel} → ${responsesPayload.model}`)
   logger.debug(
     "Translated Responses payload:",
     JSON.stringify(responsesPayload),
