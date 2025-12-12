@@ -86,8 +86,11 @@ export async function handleCompletion(c: Context) {
   const originalModel = anthropicPayload.model
   logger.debug("Anthropic request payload:", JSON.stringify(anthropicPayload))
 
-  // Redirect tool-less requests (warmup, topic detection, etc.) to a cheaper model
-  if (!anthropicPayload.tools || anthropicPayload.tools.length === 0) {
+  // fix claude code 2.0.28+ warmup request consume premium request, forcing small model if no tools are used
+  // set "CLAUDE_CODE_SUBAGENT_MODEL": "you small model" also can avoid this
+  const anthropicBeta = c.req.header("anthropic-beta")
+  const noTools = !anthropicPayload.tools || anthropicPayload.tools.length === 0
+  if (anthropicBeta && noTools) {
     anthropicPayload.model = getSmallModel()
   }
 
@@ -123,7 +126,7 @@ const handleWithChatCompletions = async (
   if (isNonStreaming(response)) {
     logger.debug(
       "Non-streaming response from Copilot:",
-      JSON.stringify(response).slice(-400),
+      JSON.stringify(response),
     )
     const anthropicResponse = translateToAnthropic(response)
     logger.debug(
