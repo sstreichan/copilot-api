@@ -1,3 +1,22 @@
+<!-- OPENSPEC:START -->
+# OpenSpec Instructions
+
+These instructions are for AI assistants working in this project.
+
+Always open `@/openspec/AGENTS.md` when the request:
+- Mentions planning or proposals (words like proposal, spec, change, plan)
+- Introduces new capabilities, breaking changes, architecture shifts, or big performance/security work
+- Sounds ambiguous and you need the authoritative spec before coding
+
+Use `@/openspec/AGENTS.md` to learn:
+- How to create and apply change proposals
+- Spec format and conventions
+- Project structure and guidelines
+
+Keep this managed block so 'openspec update' can refresh the instructions.
+
+<!-- OPENSPEC:END -->
+
 # CLAUDE.md
 
 **Note**: This project uses [bd (beads)](https://github.com/steveyegge/beads) for issue tracking. Use `bd` commands instead of markdown TODOs. See AGENTS.md for workflow details.
@@ -18,12 +37,14 @@ Before making changes:
 - ✓ Know: Streaming state machine invariants (see below)
 - ✓ Set: `LOG_LEVEL=debug` for verbose output (if needed)
 
-### Current Focus Areas (as of 11/28/2025)
+### Current Focus Areas (as of 12/13/2025)
 
 Recent work has focused on:
-- **Reasoning/Thinking support**: Added `reasoning_text` and `reasoning_opaque` fields for Copilot reasoning features
+- **Reasoning/Thinking support**: `thinking_budget` parameter, `reasoning_text` and `reasoning_opaque` fields for Copilot reasoning features
+- **Premium quota tracking**: `getCopilotUsage` integration, premium requests remaining in logs
 - **Stream translation refactoring**: Modularized handlers (`handleMessageStart`, `handleThinkingText`, `handleContent`, `handleToolCalls`, `handleFinish`)
-- **service_tier compatibility**: Responses API forces `service_tier = null` (unsupported by GitHub Copilot)
+- **API version updates**: Copilot v0.35.0, VSCode v1.107.0
+- **OpenSpec integration**: Spec-driven development workflow (see `openspec/AGENTS.md`)
 
 ## Project Overview
 
@@ -103,6 +124,22 @@ The project maintains detailed Cursor rules in `.cursor/rules/` that supplement 
 - Use them as a secondary reference for coding patterns not explicitly covered in CLAUDE.md
 - They provide Cursor-specific guidance but defer to this file for architectural decisions
 - These rules are continuously updated based on code patterns observed in recent commits
+
+## OpenSpec Workflow
+
+For complex features, breaking changes, or architecture shifts, use OpenSpec:
+
+```bash
+openspec list              # List active changes
+openspec list --specs      # List specifications
+openspec validate --strict # Validate before sharing
+```
+
+**Slash commands**: `/openspec:proposal` (create), `/openspec:apply` (implement), `/openspec:archive` (complete)
+
+**When to use**: New features, breaking changes, architecture changes. Skip for bug fixes, typos, config changes.
+
+**Full guide**: See `openspec/AGENTS.md` for complete workflow and spec format.
 
 ## Development Commands
 
@@ -545,6 +582,10 @@ Track architectural decisions and their rationale:
 
 | Date       | Change                                 | Why                                      | Rollback Strategy           |
 |:-----------|:---------------------------------------|:-----------------------------------------|:----------------------------|
+| 2025-12-13 | OpenSpec integration                   | Spec-driven development for complex features | Remove openspec/ directory  |
+| 2025-12-13 | Premium quota tracking (getCopilotUsage) | Monitor usage limits in logs             | Revert handler.ts changes   |
+| 2025-12-11 | Copilot v0.35.0, VSCode v1.107.0       | Keep API compatibility                   | Revert api-config.ts        |
+| 2025-12-03 | thinking_budget + claude thinking block | Extended reasoning support               | Revert translation files    |
 | 2025-11-28 | Merge caozhiyuan:all - reasoning support | Copilot thinking features + stream refactor | Revert stream-translation.ts |
 | 2025-11-02 | Treat tool_calls as non-terminal (skip clear) | Enable multi-round tool use; prevent accumulator clear at intermediate state | Revert translation.ts:680-687 condition |
 | 2025-11-02 | Orphan tool call cleanup (P2-B)        | Prevent orphan residuals at stream end   | Revert handler.ts:268-277   |
