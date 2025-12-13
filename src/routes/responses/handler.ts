@@ -1,5 +1,6 @@
 import type { Context } from "hono"
 
+import consola from "consola"
 import { streamSSE } from "hono/streaming"
 
 import { awaitApproval } from "~/lib/approval"
@@ -11,12 +12,49 @@ import {
   type ResponsesPayload,
   type ResponsesResult,
 } from "~/services/copilot/create-responses"
+import { getCopilotUsage } from "~/services/github/get-copilot-usage"
 
 import { getResponsesRequestOptions } from "./utils"
 
 const logger = createHandlerLogger("responses-handler")
 
 const RESPONSES_ENDPOINT = "/responses"
+
+interface OutLogOptions {
+  model: string
+  chunks: number
+  done: boolean
+  premium?: { remaining: number; total: number } | null
+}
+
+const formatOutLog = ({
+  model,
+  chunks,
+  done,
+  premium,
+}: OutLogOptions): string => {
+  const base = `\x1b[2K\r↪ ${model} ${chunks}${done ? " ✓" : ""}`
+  if (done && premium) {
+    return `${base} [${premium.remaining} left]`
+  }
+  return base
+}
+
+const getPremiumInfo = async (): Promise<{
+  remaining: number
+  total: number
+} | null> => {
+  try {
+    const usage = await getCopilotUsage()
+    const pi = usage.quota_snapshots.premium_interactions
+    if (!pi.unlimited) {
+      return { remaining: pi.remaining, total: pi.entitlement }
+    }
+  } catch {
+    // Ignore errors, don't affect main flow
+  }
+  return null
+}
 
 export const handleResponses = async (c: Context) => {
   await checkRateLimit(state)
@@ -45,6 +83,8 @@ export const handleResponses = async (c: Context) => {
 
   const { vision, initiator } = getResponsesRequestOptions(payload)
 
+  consola.info(`IN ${payload.model}`)
+
   if (state.manualApprove) {
     await awaitApproval()
   }
@@ -54,13 +94,29 @@ export const handleResponses = async (c: Context) => {
   if (isStreamingRequested(payload) && isAsyncIterable(response)) {
     logger.debug("Forwarding native Responses stream")
     return streamSSE(c, async (stream) => {
-      for await (const chunk of response) {
-        logger.debug("Responses stream chunk:", JSON.stringify(chunk))
-        await stream.writeSSE({
-          id: (chunk as { id?: string }).id,
-          event: (chunk as { event?: string }).event,
-          data: (chunk as { data?: string }).data ?? "",
-        })
+      let chunkCount = 0
+      try {
+        for await (const chunk of response) {
+          logger.debug("Responses stream chunk:", JSON.stringify(chunk))
+          chunkCount++
+          process.stdout.write(
+            formatOutLog({
+              model: payload.model,
+              chunks: chunkCount,
+              done: false,
+            }),
+          )
+          await stream.writeSSE({
+            id: (chunk as { id?: string }).id,
+            event: (chunk as { event?: string }).event,
+            data: (chunk as { data?: string }).data ?? "",
+          })
+        }
+      } finally {
+        const premium = await getPremiumInfo()
+        process.stdout.write(
+          `${formatOutLog({ model: payload.model, chunks: chunkCount, done: true, premium })}\n`,
+        )
       }
     })
   }
@@ -68,6 +124,10 @@ export const handleResponses = async (c: Context) => {
   logger.debug(
     "Forwarding native Responses result:",
     JSON.stringify(response).slice(-400),
+  )
+  const premium = await getPremiumInfo()
+  process.stdout.write(
+    `${formatOutLog({ model: payload.model, chunks: 0, done: true, premium })}\n`,
   )
   return c.json(response as ResponsesResult)
 }
