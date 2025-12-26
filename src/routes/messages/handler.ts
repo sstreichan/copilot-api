@@ -58,7 +58,15 @@ const formatOutLog = ({
 }: OutLogOptions): string => {
   const base = `\x1b[2K\r↪ ${model} ${chunks}${done ? " ✓" : ""}`
   if (done && premium) {
-    return `${base} [${premium.remaining} left]`
+    // Color based on remaining percentage: green > 50%, yellow 20-50%, red < 20%
+    const pct = premium.remaining / premium.total
+    let numColor = "\x1b[31m" // red < 20%
+    if (pct > 0.5)
+      numColor = "\x1b[32m" // green
+    else if (pct > 0.2) numColor = "\x1b[33m" // yellow
+    const reset = "\x1b[0m"
+    const dim = "\x1b[2m"
+    return `${base} [${numColor}${premium.remaining}${reset} ${dim}left${reset}]`
   }
   return base
 }
