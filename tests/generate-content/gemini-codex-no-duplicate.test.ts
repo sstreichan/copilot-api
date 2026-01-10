@@ -65,7 +65,7 @@ test("does not duplicate extra prompt when marker already exists", async () => {
   expect(toolUseCount).toBe(1)
 })
 
-test("does not inject extra prompt for non-codex models", async () => {
+test("does not inject codex-specific extra prompt for non-codex models", async () => {
   await createMockRateLimit()
   let capturedPayload: CapturedPayload = {} as CapturedPayload
   await mock.module("~/services/copilot/create-chat-completions", () => ({
@@ -108,7 +108,8 @@ test("does not inject extra prompt for non-codex models", async () => {
   // Verify original instruction is preserved
   expect(systemContent).toContain("You are a helpful assistant.")
 
-  // Verify NO extra prompt was injected (flash model doesn't get extra prompt)
+  // Verify NO codex-specific extra prompt was injected (flash model maps to gpt-5-mini, not codex)
+  // gpt-5-mini has its own exploration prompt, but not the codex tool use prompt
   expect(systemContent).not.toContain("## Tool use")
-  expect(systemContent).not.toContain("<!-- CODEX_EXTRA_PROMPT_INJECTED -->")
+  expect(systemContent).not.toContain("### Bash tool")
 })

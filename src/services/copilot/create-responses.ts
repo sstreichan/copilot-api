@@ -334,7 +334,7 @@ export const createResponses = async (
 
   const headers: Record<string, string> = {
     ...copilotHeaders(state, vision),
-    "X-Initiator": initiator,
+    "X-Initiator": state.forceAgent ? "agent" : initiator,
   }
 
   // service_tier is not supported by github copilot

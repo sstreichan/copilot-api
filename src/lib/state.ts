@@ -16,6 +16,7 @@ export interface State {
   rateLimitSeconds?: number
   lastRequestTimestamp?: number
   verbose: boolean
+  forceAgent: boolean
 }
 
 export const state: State = {
@@ -24,4 +25,5 @@ export const state: State = {
   rateLimitWait: false,
   showToken: false,
   verbose: false,
+  forceAgent: false,
 }

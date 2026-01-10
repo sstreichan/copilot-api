@@ -54,3 +54,18 @@ test("sets X-Initiator to user if only user present", async () => {
   ).headers
   expect(headers["X-Initiator"]).toBe("user")
 })
+
+test("forces X-Initiator to agent when state.forceAgent is true", async () => {
+  state.forceAgent = true
+  const payload: ChatCompletionsPayload = {
+    messages: [{ role: "user", content: "hi" }],
+    model: "gpt-test",
+  }
+  await createChatCompletions(payload)
+  const callIndex = fetchMock.mock.calls.length - 1
+  const headers = (
+    fetchMock.mock.calls[callIndex][1] as { headers: Record<string, string> }
+  ).headers
+  expect(headers["X-Initiator"]).toBe("agent")
+  state.forceAgent = false // reset
+})
