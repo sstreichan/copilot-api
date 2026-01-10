@@ -1,7 +1,7 @@
 # 任务清单
 
 - [x] `src/lib/state.ts` - 添加 `forceAgent: boolean`
-- [x] `src/start.ts` - 添加 `--force-agent` / `-fa` 标志
+- [x] `src/start.ts` - 添加 `--force-agent` / `-F` 标志
 - [x] `src/services/copilot/create-chat-completions.ts` - 检查 state 后设置 header
 - [x] `src/services/copilot/create-responses.ts` - 同上
 - [x] 更新测试

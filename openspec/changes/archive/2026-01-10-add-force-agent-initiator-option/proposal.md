@@ -6,15 +6,15 @@
 
 ## What Changes
 
-添加 `--force-agent` (`-fa`) 启动选项，强制 `X-Initiator` 头始终为 `"agent"`。
+添加 `--force-agent` (`-F`) 启动选项，强制 `X-Initiator` 头始终为 `"agent"`。
 
 ## 范围
 
-- 新增 CLI 标志 `--force-agent` (`-fa`)
+- 新增 CLI 标志 `--force-agent` (`-F`)
 - `State` 添加 `forceAgent` 属性
 - 修改 `create-chat-completions.ts` 和 `create-responses.ts`
 
 ## 成功标准
 
-- 使用 `-fa` 时所有请求为 `agent`
+- 使用 `-F` 时所有请求为 `agent`
 - 不使用时保持原始动态行为

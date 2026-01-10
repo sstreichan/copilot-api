@@ -195,7 +195,7 @@ export const start = defineCommand({
       description: "Initialize proxy from environment variables",
     },
     "force-agent": {
-      alias: "fa",
+      alias: "F",
       type: "boolean",
       default: false,
       description: "Force X-Initiator header to always be 'agent'",

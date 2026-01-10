@@ -17,6 +17,6 @@
 - Then: `X-Initiator` 头为 `"user"`
 
 #### Scenario: 短标志别名
-- Given: 用户执行 `copilot-api start -fa`
+- Given: 用户执行 `copilot-api start -F`
 - When: 发送任何请求
 - Then: 行为等同于 `--force-agent`
