@@ -18,7 +18,8 @@ server.use("*", async (c, next) => {
   if (c.req.path.startsWith("/v1/messages")) {
     return next()
   }
-  return logger()(c, next)
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any
+  return logger()(c as any, next)
 })
 server.use(cors())
 
