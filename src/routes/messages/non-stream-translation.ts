@@ -14,7 +14,6 @@ import {
 import {
   type AnthropicAssistantContentBlock,
   type AnthropicAssistantMessage,
-  type AnthropicMessage,
   type AnthropicMessagesPayload,
   type AnthropicResponse,
   type AnthropicTextBlock,
@@ -38,9 +37,9 @@ export function translateToOpenAI(
   return {
     model: modelId,
     messages: translateAnthropicMessagesToOpenAI(
-      payload.messages,
-      payload.system,
+      payload,
       modelId,
+      thinkingBudget,
     ),
     max_tokens: payload.max_tokens,
     stop: payload.stop_sequences,
@@ -86,32 +85,74 @@ function translateModelName(model: string): string {
 }
 
 function translateAnthropicMessagesToOpenAI(
-  anthropicMessages: Array<AnthropicMessage>,
-  system: string | Array<AnthropicTextBlock> | undefined,
+  payload: AnthropicMessagesPayload,
   modelId: string,
+  thinkingBudget: number | undefined,
 ): Array<Message> {
-  const systemMessages = handleSystemPrompt(system)
-
-  const otherMessages = anthropicMessages.flatMap((message) =>
+  const systemMessages = handleSystemPrompt(
+    payload.system,
+    modelId,
+    thinkingBudget,
+  )
+  const otherMessages = payload.messages.flatMap((message) =>
     message.role === "user" ?
       handleUserMessage(message)
     : handleAssistantMessage(message, modelId),
   )
-
+  if (modelId.startsWith("claude") && thinkingBudget) {
+    const reminder =
+      "<system-reminder>you MUST follow interleaved_thinking_protocol</system-reminder>"
+    const firstUserIndex = otherMessages.findIndex((m) => m.role === "user")
+    if (firstUserIndex !== -1) {
+      const userMessage = otherMessages[firstUserIndex]
+      if (typeof userMessage.content === "string") {
+        userMessage.content = reminder + "\n\n" + userMessage.content
+      } else if (Array.isArray(userMessage.content)) {
+        userMessage.content = [
+          { type: "text", text: reminder },
+          ...userMessage.content,
+        ] as Array<ContentPart>
+      }
+    }
+  }
   return [...systemMessages, ...otherMessages]
 }
 
 function handleSystemPrompt(
   system: string | Array<AnthropicTextBlock> | undefined,
+  modelId: string,
+  thinkingBudget: number | undefined,
 ): Array<Message> {
   if (!system) {
     return []
   }
 
+  let extraPrompt = ""
+  if (modelId.startsWith("claude") && thinkingBudget) {
+    extraPrompt = `
+<interleaved_thinking_protocol>
+ABSOLUTE REQUIREMENT - NON-NEGOTIABLE:
+The current thinking_mode is interleaved, Whenever you have the result of a function call, think carefully , MUST output a thinking block
+RULES:
+Tool result → thinking block (ALWAYS, no exceptions)
+This is NOT optional - it is a hard requirement
+The thinking block must contain substantive reasoning (minimum 3-5 sentences)
+Think about: what the results mean, what to do next, how to answer the user
+NEVER skip this step, even if the result seems simple or obvious
+</interleaved_thinking_protocol>`
+  }
+
   if (typeof system === "string") {
-    return [{ role: "system", content: system }]
+    return [{ role: "system", content: system + extraPrompt }]
   } else {
-    const systemText = system.map((block) => block.text).join("\n\n")
+    const systemText = system
+      .map((block, index) => {
+        if (index === 0) {
+          return block.text + extraPrompt
+        }
+        return block.text
+      })
+      .join("\n\n")
     return [{ role: "system", content: systemText }]
   }
 }
