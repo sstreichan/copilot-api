@@ -22,6 +22,10 @@ bun test tests/file.ts   # Run specific test
 bun run lint:all --fix   # Lint and fix
 bun run typecheck        # Type check
 
+# CLI Flags (start command)
+bun run dev -- -F           # Force X-Initiator: agent
+bun run dev -- -a business  # Use business account type
+
 # Issue Tracking (beads)
 bd ready                 # Find available work
 bd create --title="..." --type=task  # Create issue
@@ -41,6 +45,7 @@ bd sync                  # Sync before commit
 - `src/services/copilot/create-chat-completions.ts` - Central Copilot API caller (token refresh, headers)
 - `src/lib/state.ts` - **Single source of truth** for runtime state (tokens, models, config)
 - `src/lib/api-config.ts` - GitHub API headers (Copilot v0.35.0, VSCode v1.107.0)
+- `src/lib/config.ts` - App configuration (extraPrompts, useFunctionApplyPatch, modelReasoningEfforts)
 
 ### Key Patterns
 
@@ -65,11 +70,12 @@ bd sync                  # Sync before commit
 - **Codex**: Second opinion for architecture decisions and code review
 - **OpenSpec**: For complex features - `/openspec:proposal`, see `openspec/AGENTS.md`
 
-## Current Focus (12/2025)
+## Current Focus (01/2026)
 
+- `interleaved_thinking_protocol` - 强制 Claude 在工具调用后输出思考块
+- `useFunctionApplyPatch` - 将 custom 类型的 apply_patch 转为 function 类型
 - `thinking_budget` + reasoning support (`reasoning_text`, `reasoning_opaque`)
 - Premium quota tracking (`getCopilotUsage`)
-- OpenSpec for spec-driven development
 
 ## Testing
 
@@ -92,6 +98,7 @@ bd sync                  # Sync before commit
 
 | Date | Change | Rollback |
 |:-----|:-------|:---------|
+| 2026-01-10 | PR #20: interleaved_thinking + useFunctionApplyPatch | Revert translation files |
 | 2025-12-13 | OpenSpec integration | Remove openspec/ |
 | 2025-12-11 | Copilot v0.35.0 | Revert api-config.ts |
 | 2025-12-03 | thinking_budget support | Revert translation files |
