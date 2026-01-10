@@ -86,6 +86,7 @@ bd sync                  # Sync before commit
 | Multi-round tools fail | `finish_reason: "tool_calls"` is intermediate, don't clear |
 | Orphan tool calls | Clear on all 4 termination paths |
 | Stream hangs | Always close in finally block |
+| CLI `-fa` parsed as `-f -a` | citty 基于 mri，遵循 POSIX 短选项规则，别名**必须是单字符**（如 `-F`） |
 
 ## Decision Log (Recent)
 
