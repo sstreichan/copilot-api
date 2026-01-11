@@ -3,6 +3,8 @@ import fs from "node:fs"
 import path from "node:path"
 import util from "node:util"
 
+import { getCopilotUsage } from "~/services/github/get-copilot-usage"
+
 import { PATHS } from "./paths"
 import { state } from "./state"
 
@@ -179,4 +181,49 @@ export const createHandlerLogger = (name: string): ConsolaInstance => {
   })
 
   return instance
+}
+
+// Stream progress logging utilities
+export interface StreamLogOptions {
+  model: string
+  chunks: number
+  done: boolean
+  premium?: { remaining: number; total: number } | null
+}
+
+export const formatStreamLog = ({
+  model,
+  chunks,
+  done,
+  premium,
+}: StreamLogOptions): string => {
+  const base = `\x1b[2K\r↪ ${model} ${chunks}${done ? " ✓" : ""}`
+  if (done && premium) {
+    // Color based on remaining percentage: green > 50%, yellow 20-50%, red < 20%
+    const pct = premium.remaining / premium.total
+    let numColor = "\x1b[31m" // red < 20%
+    if (pct > 0.5)
+      numColor = "\x1b[32m" // green
+    else if (pct > 0.2) numColor = "\x1b[33m" // yellow
+    const reset = "\x1b[0m"
+    const dim = "\x1b[2m"
+    return `${base} [${numColor}${premium.remaining}${reset} ${dim}left${reset}]`
+  }
+  return base
+}
+
+export const getPremiumInfo = async (): Promise<{
+  remaining: number
+  total: number
+} | null> => {
+  try {
+    const usage = await getCopilotUsage()
+    const pi = usage.quota_snapshots.premium_interactions
+    if (!pi.unlimited) {
+      return { remaining: pi.remaining, total: pi.entitlement }
+    }
+  } catch {
+    // Ignore errors, don't affect main flow
+  }
+  return null
 }

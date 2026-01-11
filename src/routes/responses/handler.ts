@@ -5,7 +5,11 @@ import { streamSSE } from "hono/streaming"
 
 import { awaitApproval } from "~/lib/approval"
 import { getConfig } from "~/lib/config"
-import { createHandlerLogger } from "~/lib/logger"
+import {
+  createHandlerLogger,
+  formatStreamLog,
+  getPremiumInfo,
+} from "~/lib/logger"
 import { checkRateLimit } from "~/lib/rate-limit"
 import { state } from "~/lib/state"
 import {
@@ -13,57 +17,12 @@ import {
   type ResponsesPayload,
   type ResponsesResult,
 } from "~/services/copilot/create-responses"
-import { getCopilotUsage } from "~/services/github/get-copilot-usage"
 
 import { getResponsesRequestOptions } from "./utils"
 
 const logger = createHandlerLogger("responses-handler")
 
 const RESPONSES_ENDPOINT = "/responses"
-
-interface OutLogOptions {
-  model: string
-  chunks: number
-  done: boolean
-  premium?: { remaining: number; total: number } | null
-}
-
-const formatOutLog = ({
-  model,
-  chunks,
-  done,
-  premium,
-}: OutLogOptions): string => {
-  const base = `\x1b[2K\r↪ ${model} ${chunks}${done ? " ✓" : ""}`
-  if (done && premium) {
-    // Color based on remaining percentage: green > 50%, yellow 20-50%, red < 20%
-    const pct = premium.remaining / premium.total
-    let numColor = "\x1b[31m" // red < 20%
-    if (pct > 0.5)
-      numColor = "\x1b[32m" // green
-    else if (pct > 0.2) numColor = "\x1b[33m" // yellow
-    const reset = "\x1b[0m"
-    const dim = "\x1b[2m"
-    return `${base} [${numColor}${premium.remaining}${reset} ${dim}left${reset}]`
-  }
-  return base
-}
-
-const getPremiumInfo = async (): Promise<{
-  remaining: number
-  total: number
-} | null> => {
-  try {
-    const usage = await getCopilotUsage()
-    const pi = usage.quota_snapshots.premium_interactions
-    if (!pi.unlimited) {
-      return { remaining: pi.remaining, total: pi.entitlement }
-    }
-  } catch {
-    // Ignore errors, don't affect main flow
-  }
-  return null
-}
 
 export const handleResponses = async (c: Context) => {
   await checkRateLimit(state)
@@ -111,7 +70,7 @@ export const handleResponses = async (c: Context) => {
           logger.debug("Responses stream chunk:", JSON.stringify(chunk))
           chunkCount++
           process.stdout.write(
-            formatOutLog({
+            formatStreamLog({
               model: payload.model,
               chunks: chunkCount,
               done: false,
@@ -126,7 +85,7 @@ export const handleResponses = async (c: Context) => {
       } finally {
         const premium = await getPremiumInfo()
         process.stdout.write(
-          `${formatOutLog({ model: payload.model, chunks: chunkCount, done: true, premium })}\n`,
+          `${formatStreamLog({ model: payload.model, chunks: chunkCount, done: true, premium })}\n`,
         )
       }
     })
@@ -138,7 +97,7 @@ export const handleResponses = async (c: Context) => {
   )
   const premium = await getPremiumInfo()
   process.stdout.write(
-    `${formatOutLog({ model: payload.model, chunks: 0, done: true, premium })}\n`,
+    `${formatStreamLog({ model: payload.model, chunks: 0, done: true, premium })}\n`,
   )
   return c.json(response as ResponsesResult)
 }

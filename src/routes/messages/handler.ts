@@ -5,7 +5,11 @@ import { streamSSE } from "hono/streaming"
 
 import { awaitApproval } from "~/lib/approval"
 import { getSmallModel } from "~/lib/config"
-import { createHandlerLogger } from "~/lib/logger"
+import {
+  createHandlerLogger,
+  formatStreamLog,
+  getPremiumInfo,
+} from "~/lib/logger"
 import { checkRateLimit } from "~/lib/rate-limit"
 import { state } from "~/lib/state"
 import { setupPingInterval } from "~/lib/utils"
@@ -29,7 +33,6 @@ import {
   type ResponsesResult,
   type ResponseStreamEvent,
 } from "~/services/copilot/create-responses"
-import { getCopilotUsage } from "~/services/github/get-copilot-usage"
 
 import {
   type AnthropicMessagesPayload,
@@ -42,50 +45,6 @@ import {
 import { translateChunkToAnthropicEvents } from "./stream-translation"
 
 const logger = createHandlerLogger("messages-handler")
-
-interface OutLogOptions {
-  model: string
-  chunks: number
-  done: boolean
-  premium?: { remaining: number; total: number } | null
-}
-
-const formatOutLog = ({
-  model,
-  chunks,
-  done,
-  premium,
-}: OutLogOptions): string => {
-  const base = `\x1b[2K\r↪ ${model} ${chunks}${done ? " ✓" : ""}`
-  if (done && premium) {
-    // Color based on remaining percentage: green > 50%, yellow 20-50%, red < 20%
-    const pct = premium.remaining / premium.total
-    let numColor = "\x1b[31m" // red < 20%
-    if (pct > 0.5)
-      numColor = "\x1b[32m" // green
-    else if (pct > 0.2) numColor = "\x1b[33m" // yellow
-    const reset = "\x1b[0m"
-    const dim = "\x1b[2m"
-    return `${base} [${numColor}${premium.remaining}${reset} ${dim}left${reset}]`
-  }
-  return base
-}
-
-const getPremiumInfo = async (): Promise<{
-  remaining: number
-  total: number
-} | null> => {
-  try {
-    const usage = await getCopilotUsage()
-    const pi = usage.quota_snapshots.premium_interactions
-    if (!pi.unlimited) {
-      return { remaining: pi.remaining, total: pi.entitlement }
-    }
-  } catch {
-    // Ignore errors, don't affect main flow
-  }
-  return null
-}
 
 export async function handleCompletion(c: Context) {
   await checkRateLimit(state)
@@ -143,7 +102,7 @@ const handleWithChatCompletions = async (
     )
     const premium = await getPremiumInfo()
     process.stdout.write(
-      `${formatOutLog({ model: openAIPayload.model, chunks: 0, done: true, premium })}\n`,
+      `${formatStreamLog({ model: openAIPayload.model, chunks: 0, done: true, premium })}\n`,
     )
     return c.json(anthropicResponse)
   }
@@ -174,7 +133,7 @@ const handleWithChatCompletions = async (
 
         chunkCount++
         process.stdout.write(
-          formatOutLog({
+          formatStreamLog({
             model: openAIPayload.model,
             chunks: chunkCount,
             done: false,
@@ -196,7 +155,7 @@ const handleWithChatCompletions = async (
       clearInterval(pingInterval)
       const premium = await getPremiumInfo()
       process.stdout.write(
-        `${formatOutLog({ model: openAIPayload.model, chunks: chunkCount, done: true, premium })}\n`,
+        `${formatStreamLog({ model: openAIPayload.model, chunks: chunkCount, done: true, premium })}\n`,
       )
     }
   })
@@ -244,7 +203,7 @@ const handleWithResponsesApi = async (
 
           chunkCount++
           process.stdout.write(
-            formatOutLog({
+            formatStreamLog({
               model: responsesPayload.model,
               chunks: chunkCount,
               done: false,
@@ -288,7 +247,7 @@ const handleWithResponsesApi = async (
         clearInterval(pingInterval)
         const premium = await getPremiumInfo()
         process.stdout.write(
-          `${formatOutLog({ model: responsesPayload.model, chunks: chunkCount, done: true, premium })}\n`,
+          `${formatStreamLog({ model: responsesPayload.model, chunks: chunkCount, done: true, premium })}\n`,
         )
       }
     })
@@ -307,7 +266,7 @@ const handleWithResponsesApi = async (
   )
   const premium = await getPremiumInfo()
   process.stdout.write(
-    `${formatOutLog({ model: responsesPayload.model, chunks: 0, done: true, premium })}\n`,
+    `${formatStreamLog({ model: responsesPayload.model, chunks: 0, done: true, premium })}\n`,
   )
   return c.json(anthropicResponse)
 }
