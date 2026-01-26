@@ -12,6 +12,9 @@ node_modules/
 
 # build output
 dist/
+
+# external repos for reference
+.vendor/
 tmp/bug-analysis-feature-branch-large-toolcall-failure.md
 tmp/codex-gemini-plan-v2.md
 tmp/codex-gemini-plan.md
