@@ -259,12 +259,12 @@ interface {
 | --------------- | -------- | ------------------ |
 | `end_turn`      | ✅       | ✅                 |
 | `max_tokens`    | ✅       | ✅                 |
-| `stop_sequence` | ✅       | ✅                 |
+| `stop_sequence` | ✅       | ❌ Never produced (maps to `end_turn`) |
 | `tool_use`      | ✅       | ✅                 |
 | `pause_turn`    | ✅       | ❌ Not mapped      |
 | `refusal`       | ✅       | ❌ Not mapped      |
 
-**Note**: `content_filter` from backend is mapped to `end_turn` (degraded).
+**Note**: Both `stop` (OpenAI) and `content_filter` from backend are mapped to `end_turn`. The `stop_sequence` value is never produced even when stop sequences are used.
 
 ```json
 // Official API response
@@ -521,25 +521,75 @@ In streaming mode, `usage` is only fully populated in the final `message_delta` 
 | `message_start` | Always `0` |
 | `message_delta` (final) | Actual count |
 
-### Error Event Simplification
+### Error Event Handling
 
-All streaming errors are converted to a generic message:
+Error handling differs between paths:
+
+**Chat Completions Path**:
+- No `error` event is sent during streaming
+- Errors cause the stream to terminate without notification
+- Generic error message is used only in `translateErrorToAnthropicErrorEvent` fallback
+
+**Responses API Path**:
+- Errors are forwarded with the original error message from upstream
+- Example: `"The response failed due to: <upstream error>"`
 
 ```json
+// Responses API error example
 {
   "type": "error",
   "error": {
     "type": "api_error",
-    "message": "An unexpected error occurred during streaming."
+    "message": "The response failed due to an unknown error."
   }
 }
 ```
 
-Original error details from the backend are not preserved.
-
 ### Tool Arguments Parsing (Non-Streaming)
 
 In non-streaming responses, tool call arguments are parsed with `JSON.parse()` without try/catch. Malformed JSON from the backend will cause an unhandled exception.
+
+### `anthropic-beta` Header Behavior
+
+When the `anthropic-beta` header is present:
+
+1. **Model Override**: If no tools are provided, the model is forced to a smaller model via `getSmallModel()`
+2. **Content Merging**: `tool_result` and `text` blocks within the same user message are merged to avoid consuming premium requests
+
+```typescript
+// Example trigger condition
+if (anthropicBeta && noTools) {
+  anthropicPayload.model = getSmallModel()
+}
+```
+
+### Function Call Whitespace Guard (Responses API Streaming)
+
+In Responses API streaming, function call arguments are monitored for excessive consecutive whitespace characters (`\r`, `\n`, `\t`). If more than 20 consecutive whitespace characters are detected, the stream terminates with an error event.
+
+### usage.input_tokens Semantics
+
+Our implementation **subtracts cached tokens** from `input_tokens`:
+
+```typescript
+input_tokens = raw_input_tokens - cached_tokens
+```
+
+This differs from the official API where `input_tokens` represents the total input token count (including cached).
+
+### Thinking Signature Filtering (Chat Completions Path, Claude Models)
+
+In the Chat Completions path, Claude models filter out thinking blocks where the signature **contains** `@`:
+
+```typescript
+if (modelId.startsWith("claude")) {
+  thinkingBlocks = thinkingBlocks.filter(
+    (b) => !b.signature.includes("@")  // Filter out GPT-style signatures
+  )
+}
+```
+
+This is the inverse of the Responses API path which **requires** `@` in the signature.
 
 ---
 

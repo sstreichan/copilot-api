@@ -99,6 +99,51 @@ The documentation accurately captures the differences between official Anthropic
 
 ---
 
+## Round 4 - Third Fresh Agent Review
+
+**Agent**: general-purpose (agentId: aba101d)
+**Purpose**: 最严格标准的最终审查
+
+### New Findings (6 items)
+
+| # | Finding | Status |
+|---|---------|--------|
+| 1 | `stop_sequence` never produced | ✅ Fixed |
+| 2 | Error handling differs by path | ✅ Fixed |
+| 3 | `anthropic-beta` header behavior | ✅ Added |
+| 4 | Function call whitespace guard | ✅ Added |
+| 5 | `usage.input_tokens` semantics | ✅ Added |
+| 6 | Thinking signature filtering (inverse between paths) | ✅ Added |
+
+### Final Confirmation
+
+子代理确认所有 6 项更新正确实现，没有发现新问题。
+
+---
+
+## Grand Summary
+
+**Total Rounds**: 4 (2 original agents + 2 fresh agents)
+**Total Issues Found & Fixed**: 22+
+
+| Round | Agent | Findings |
+|-------|-------|----------|
+| 1 | afb4ab5 | 5 errors + 6 missing items |
+| 2 | ab4976e | 11 behavioral differences |
+| 3 | aba101d | 6 new issues |
+
+**Final Status**: completed
+**Final Outcome**: consensus
+
+文档现在全面覆盖：
+- 参数支持状态
+- 行为性差异
+- 流式处理细节
+- 错误处理行为
+- 路径特定行为
+
+---
+
 ## Round 3 - Fresh Agent Review
 
 **Agent**: general-purpose (agentId: ab4976e)
@@ -141,5 +186,50 @@ The documentation accurately captures the differences between official Anthropic
 - 错误处理行为
 
 **审查结论**: ✅ 可以合并提交
+
+---
+
+## Round 4 - Third Fresh Agent Review
+
+**Agent**: general-purpose (agentId: aba101d)
+**Purpose**: 最严格标准的最终审查
+
+### New Findings (6 items)
+
+| # | Finding | Status |
+|---|---------|--------|
+| 1 | `stop_sequence` never produced | ✅ Fixed |
+| 2 | Error handling differs by path | ✅ Fixed |
+| 3 | `anthropic-beta` header behavior | ✅ Added |
+| 4 | Function call whitespace guard | ✅ Added |
+| 5 | `usage.input_tokens` semantics | ✅ Added |
+| 6 | Thinking signature filtering (inverse between paths) | ✅ Added |
+
+### Final Confirmation
+
+子代理确认所有 6 项更新正确实现，没有发现新问题。
+
+---
+
+## Grand Summary
+
+**Total Rounds**: 4 (2 original agents + 2 fresh agents)
+**Total Issues Found & Fixed**: 22+
+
+| Round | Agent | Findings |
+|-------|-------|----------|
+| 1 | afb4ab5 | 5 errors + 6 missing items |
+| 2 | ab4976e | 11 behavioral differences |
+| 3 | aba101d | 6 new issues |
+
+**Final Status**: completed
+**Final Outcome**: consensus
+
+文档现在全面覆盖：
+- 参数支持状态
+- 行为性差异
+- 流式处理细节
+- 错误处理行为
+- 路径特定行为
 
 ---
