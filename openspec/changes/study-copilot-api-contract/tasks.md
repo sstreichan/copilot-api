@@ -11,39 +11,32 @@
 ## 阶段 2：请求构建研究
 
 - [ ] **2.1** 分析 `createCapiRequestBody` 函数（Chat Completions）
-  - 文件：`src/platform/networking/common/networking.ts`
   - 记录：所有参数字段、类型、默认值
   - 验证：输出请求体 TypeScript 接口定义
 
 - [ ] **2.2** 分析 `createResponsesRequestBody` 函数（Responses API）
-  - 文件：`src/platform/endpoint/node/responsesApi.ts`
   - 记录：与 Chat Completions 的差异
   - 验证：输出两种 API 的差异对比表
 
 - [ ] **2.3** 分析 `ChatEndpoint.createRequestBody` API 选择逻辑
-  - 文件：`src/platform/endpoint/node/chatEndpoint.ts`
   - 记录：何时使用 Responses API vs Chat Completions
   - 验证：总结选择条件
 
 - [ ] **2.4** 分析端点选择与模型能力映射 *(新增)*
-  - 文件：`src/platform/endpoint/common/endpointProvider.ts`
   - 记录：`ModelSupportedEndpoint` 枚举、模型能力判定逻辑
   - 验证：输出端点选择决策树
 
 ## 阶段 3：Headers 研究
 
 - [ ] **3.1** 分析 `postRequest` 函数中的 headers 设置
-  - 文件：`src/platform/networking/common/networking.ts`
   - 记录：所有 headers 名称、值来源、用途
   - 验证：输出完整 headers 列表
 
-- [ ] **3.2** 分析 `chatMLFetcher.ts` 中的额外 headers
-  - 文件：`src/extension/prompt/node/chatMLFetcher.ts`
+- [ ] **3.2** 分析高层协调器中的额外 headers
   - 记录：`X-Initiator`、`Copilot-Vision-Request` 等
   - 验证：补充到 headers 列表
 
 - [ ] **3.3** 分析响应 headers 读取
-  - 文件：`src/platform/networking/common/fetch.ts`
   - 记录：`getRequestId` 函数读取哪些 headers
   - 验证：输出响应 headers 列表
 
@@ -55,12 +48,10 @@
 ## 阶段 4：响应处理研究
 
 - [ ] **4.1** 分析 `SSEProcessor` 类（Chat Completions 流）
-  - 文件：`src/platform/networking/node/stream.ts`
   - 记录：SSE 事件解析逻辑、chunk 格式
   - 验证：输出 SSE 事件类型列表
 
 - [ ] **4.2** 分析 `OpenAIResponsesProcessor`（Responses API 流）
-  - 文件：`src/platform/endpoint/node/responsesApi.ts`
   - 记录：与 SSEProcessor 的差异
   - 验证：对比两种处理器的差异
 
@@ -69,7 +60,6 @@
   - 验证：输出 TypeScript 接口定义
 
 - [ ] **4.4** 分析非流式响应结构 *(新增)*
-  - 文件：`src/platform/networking/common/openai.ts`
   - 记录：非流式返回的完整结构
   - 验证：对比流式与非流式差异
 
@@ -103,10 +93,9 @@
   - 格式：TypeScript 接口 + 示例
 
 - [ ] **6.2** 更新我们的类型定义（如需要）
-  - 对比：`src/services/copilot/create-chat-completions.ts`
   - 记录：发现的差异
 
-- [ ] **6.3** 验证并更新 `docs/anthropic-api-compatibility.md`
+- [ ] **6.3** 验证并更新现有兼容性文档
   - 确保与 Copilot 实际行为一致
 
 ## 依赖关系

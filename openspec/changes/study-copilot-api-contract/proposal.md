@@ -35,16 +35,6 @@
 
 ## 研究目标
 
-### 重点文件
-
-| 文件路径 | 用途 |
-|----------|------|
-| `src/platform/networking/common/networking.ts` | `postRequest` + `createCapiRequestBody` |
-| `src/platform/endpoint/node/responsesApi.ts` | `createResponsesRequestBody` + 响应处理 |
-| `src/platform/endpoint/node/chatEndpoint.ts` | API 选择逻辑 + `ChatEndpoint` 类 |
-| `src/platform/networking/node/stream.ts` | `SSEProcessor` 流解析 |
-| `src/extension/prompt/node/chatMLFetcher.ts` | 高层请求协调 |
-
 ### 需要记录的关键接口
 
 1. **请求体** (`IEndpointBody`)

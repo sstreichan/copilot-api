@@ -38,12 +38,12 @@
 
 #### Scenario: 验证类型定义一致性
 
-**Given** 我们的 `ChatCompletionsPayload` 类型定义
+**Given** 我们的请求体类型定义
 **When** 与官方 `IEndpointBody` 对比
 **Then** 应记录所有差异并评估是否需要更新
 
 #### Scenario: 验证 Headers 一致性
 
-**Given** 我们的 `api-config.ts` 中的 headers
+**Given** 我们的 headers 配置
 **When** 与官方 `postRequest` 函数对比
 **Then** 应确保包含所有必要 headers

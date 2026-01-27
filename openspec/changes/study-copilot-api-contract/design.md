@@ -34,41 +34,16 @@
 
 ## 研究范围边界
 
-### 包含（与 Copilot 后端通信相关）
+### 包含
 
-```
-src/platform/
-├── networking/           ← 核心网络层
-│   ├── common/
-│   │   ├── networking.ts  ← postRequest, createCapiRequestBody
-│   │   ├── fetch.ts       ← getRequestId, headers
-│   │   └── openai.ts      ← 类型定义
-│   └── node/
-│       └── stream.ts      ← SSEProcessor
-└── endpoint/
-    ├── common/
-    │   └── endpointProvider.ts  ← ModelSupportedEndpoint enum
-    └── node/
-        ├── chatEndpoint.ts      ← API 选择逻辑
-        └── responsesApi.ts      ← Responses API 处理
+与 Copilot 后端通信相关的网络层、端点处理、流解析等代码。
 
-src/extension/
-└── prompt/
-    └── node/
-        └── chatMLFetcher.ts     ← 高层协调器
-```
+### 排除
 
-### 排除（不相关）
-
-```
-src/extension/
-├── byok/           ← 自带密钥（第三方 API）
-├── agents/claude/  ← Anthropic BYOK
-├── mcp/            ← MCP 服务器
-├── inlineChat/     ← UI 组件
-├── inlineEdits/    ← UI 组件
-└── testing/        ← 测试相关
-```
+- BYOK（自带密钥）流程
+- MCP 服务器集成
+- UI 组件
+- 测试相关代码
 
 ## 输出格式设计
 
@@ -115,19 +90,15 @@ src/extension/
 ### 需要验证的假设
 
 1. **我们的 `ChatCompletionsPayload` 类型是否完整？**
-   - 文件：`src/services/copilot/create-chat-completions.ts`
    - 对比：官方 `IEndpointBody`
 
 2. **我们的 headers 是否齐全？**
-   - 文件：`src/lib/api-config.ts`
    - 对比：官方 `postRequest`
 
 3. **SSE 解析逻辑是否一致？**
-   - 文件：`src/routes/messages/stream-translation.ts`
    - 对比：官方 `SSEProcessor`
 
 4. **finish_reason 映射是否正确？**
-   - 文件：`src/routes/messages/utils.ts`
    - 对比：官方处理逻辑
 
 ## 风险和缓解
