@@ -118,7 +118,7 @@ test("does not include anthropic-beta header when not provided", async () => {
   expect(headers["anthropic-beta"]).toBeUndefined()
 })
 
-test("passes payload unchanged to endpoint", async () => {
+test("passes payload with forced temperature=1 to endpoint", async () => {
   const payload: AnthropicMessagesPayload = {
     model: "claude-sonnet-4-20250514",
     max_tokens: 2048,
@@ -128,11 +128,18 @@ test("passes payload unchanged to endpoint", async () => {
       { role: "user", content: "how are you?" },
     ],
     system: "You are a helpful assistant.",
-    temperature: 0.7,
+    temperature: 0.7, // This should be overridden to 1
   }
   await createMessages(payload)
   const body = (fetchMock.mock.calls[0][1] as { body: string }).body
-  expect(JSON.parse(body)).toEqual(payload)
+  const parsed = JSON.parse(body) as AnthropicMessagesPayload
+  // temperature is forced to 1 for deep thinking
+  expect(parsed.temperature).toBe(1)
+  // Other fields remain unchanged
+  expect(parsed.model).toBe(payload.model)
+  expect(parsed.max_tokens).toBe(payload.max_tokens)
+  expect(parsed.messages).toEqual(payload.messages)
+  expect(parsed.system).toBe(payload.system)
 })
 
 test("returns raw Response object", async () => {

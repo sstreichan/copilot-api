@@ -61,10 +61,19 @@ export const createMessages = async (
     stream: payload.stream,
   })
 
+  // Force temperature=1 for deep thinking (like Anthropic's extended thinking mode)
+  // Note: Anthropic API doesn't allow both temperature and top_p, so we remove top_p
+  // top_k can be used with temperature, so we keep it if provided
+  const { top_p: _ignoredTopP, ...restPayload } = payload
+  const enhancedPayload = {
+    ...restPayload,
+    temperature: 1,
+  }
+
   const response = await fetch(`${copilotBaseUrl(state)}/v1/messages`, {
     method: "POST",
     headers,
-    body: JSON.stringify(payload),
+    body: JSON.stringify(enhancedPayload),
   })
 
   if (!response.ok) {
