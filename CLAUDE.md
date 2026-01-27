@@ -25,6 +25,7 @@ bun run typecheck        # Type check
 # CLI Flags (start command)
 bun run dev -- -F           # Force X-Initiator: agent
 bun run dev -- -a business  # Use business account type
+bun run dev -- -M           # Native Messages API for Claude models
 
 # Issue Tracking (beads)
 bd ready                 # Find available work
@@ -43,6 +44,7 @@ bd sync                  # Sync before commit
 
 ### Core Services
 - `src/services/copilot/create-chat-completions.ts` - Central Copilot API caller (token refresh, headers)
+- `src/services/copilot/create-messages.ts` - Native Messages API passthrough for Claude models
 - `src/lib/state.ts` - **Single source of truth** for runtime state (tokens, models, config)
 - `src/lib/api-config.ts` - GitHub API headers (Copilot v0.35.0, VSCode v1.107.0)
 - `src/lib/config.ts` - App configuration (extraPrompts, useFunctionApplyPatch, modelReasoningEfforts)
@@ -72,6 +74,7 @@ bd sync                  # Sync before commit
 
 ## Current Focus (01/2026)
 
+- `nativeMessages` mode - Passthrough to Copilot's `/v1/messages` for Claude models (no format conversion)
 - `interleaved_thinking_protocol` - 强制 Claude 在工具调用后输出思考块
 - `useFunctionApplyPatch` - 将 custom 类型的 apply_patch 转为 function 类型
 - `thinking_budget` + reasoning support (`reasoning_text`, `reasoning_opaque`)
@@ -98,6 +101,7 @@ bd sync                  # Sync before commit
 
 | Date | Change | Rollback |
 |:-----|:-------|:---------|
+| 2026-01-28 | Native Messages API (`-M` flag) for Claude models | Remove create-messages.ts, revert handler.ts |
 | 2026-01-10 | PR #20: interleaved_thinking + useFunctionApplyPatch | Revert translation files |
 | 2025-12-13 | OpenSpec integration | Remove openspec/ |
 | 2025-12-11 | Copilot v0.35.0 | Revert api-config.ts |

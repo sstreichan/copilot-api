@@ -17,6 +17,7 @@ export interface State {
   lastRequestTimestamp?: number
   verbose: boolean
   forceAgent: boolean
+  nativeMessages: boolean
 }
 
 export const state: State = {
@@ -26,4 +27,5 @@ export const state: State = {
   showToken: false,
   verbose: false,
   forceAgent: false,
+  nativeMessages: false,
 }

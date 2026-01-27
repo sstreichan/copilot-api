@@ -106,8 +106,8 @@ if (state.nativeMessages && isClaudeModel(anthropicPayload.model)) {
 
 ### Phase 5: 验证与文档
 
-#### Task 5.1: 端到端验证
-**方法**: 手动测试
+#### Task 5.1: 端到端验证 (用户执行)
+**方法**: 手动测试 (**由用户自己执行，非 agent**)
 - 启动服务器 `bun run dev -- -M`
 - 发送 Claude 模型请求，确认使用 native endpoint
 - 发送 GPT 模型请求，确认 fallback

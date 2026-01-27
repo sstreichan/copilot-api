@@ -1,4 +1,5 @@
 import type { Context } from "hono"
+import type { ContentfulStatusCode } from "hono/utils/http-status"
 
 import consola from "consola"
 import { streamSSE } from "hono/streaming"
@@ -28,6 +29,7 @@ import {
   type ChatCompletionChunk,
   type ChatCompletionResponse,
 } from "~/services/copilot/create-chat-completions"
+import { createMessages } from "~/services/copilot/create-messages"
 import {
   createResponses,
   type ResponsesResult,
@@ -54,6 +56,12 @@ export async function handleCompletion(c: Context) {
   const anthropicPayload = await c.req.json<AnthropicMessagesPayload>()
   const originalModel = anthropicPayload.model
   logger.debug("Anthropic request payload:", JSON.stringify(anthropicPayload))
+
+  // ⚠️ CRITICAL: Native Messages API branch MUST be BEFORE any payload modification
+  // This ensures payload is passed through unchanged to Copilot's /v1/messages endpoint
+  if (state.nativeMessages && isClaudeModel(anthropicPayload.model)) {
+    return await handleWithNativeMessages(c, anthropicPayload, originalModel)
+  }
 
   // fix claude code 2.0.28+ warmup request consume premium request, forcing small model if no tools are used
   // set "CLAUDE_CODE_SUBAGENT_MODEL": "you small model" also can avoid this
@@ -82,6 +90,70 @@ export async function handleCompletion(c: Context) {
 }
 
 const RESPONSES_ENDPOINT = "/responses"
+
+// Helper to check if model is a Claude model (exported for testing)
+export const isClaudeModel = (model: string): boolean =>
+  model.toLowerCase().startsWith("claude")
+
+// Determine initiator based on last message role (exported for testing)
+export const getInitiatorFromPayload = (
+  payload: AnthropicMessagesPayload,
+): "user" | "agent" => {
+  if (payload.messages.length === 0) return "user"
+  const lastMessage = payload.messages.at(-1)
+  // tool_result messages indicate agent context (responding to tool calls)
+  if (
+    lastMessage?.role === "user"
+    && Array.isArray(lastMessage.content)
+    && lastMessage.content.some((block) => block.type === "tool_result")
+  ) {
+    return "agent"
+  }
+  return lastMessage?.role === "assistant" ? "agent" : "user"
+}
+
+// Handle requests using Copilot's native /v1/messages endpoint (passthrough)
+const handleWithNativeMessages = async (
+  c: Context,
+  anthropicPayload: AnthropicMessagesPayload,
+  originalModel: string,
+): Promise<Response> => {
+  const anthropicBeta = c.req.header("anthropic-beta")
+
+  consola.info(`IN ${originalModel} → native /v1/messages`)
+  logger.debug("Using native Messages API passthrough")
+
+  if (state.manualApprove) {
+    await awaitApproval()
+  }
+
+  const response = await createMessages(anthropicPayload, {
+    initiator: getInitiatorFromPayload(anthropicPayload),
+    anthropicBeta,
+  })
+
+  // Stream: use raw body passthrough (NOT streamSSE reconstruction)
+  if (anthropicPayload.stream && response.body) {
+    const premium = await getPremiumInfo()
+    consola.info(`IN ${originalModel} → native /v1/messages (stream)`)
+    process.stdout.write(
+      `${formatStreamLog({ model: originalModel, chunks: 0, done: true, premium })}\n`,
+    )
+    return c.body(response.body, response.status as ContentfulStatusCode, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+    })
+  }
+
+  // Non-stream: return JSON directly
+  const jsonResponse = await response.json()
+  const premium = await getPremiumInfo()
+  process.stdout.write(
+    `${formatStreamLog({ model: originalModel, chunks: 0, done: true, premium })}\n`,
+  )
+  return c.json(jsonResponse)
+}
 
 const handleWithChatCompletions = async (
   c: Context,

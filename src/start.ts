@@ -26,6 +26,7 @@ interface RunServerOptions {
   showToken: boolean
   proxyEnv: boolean
   forceAgent: boolean
+  nativeMessages: boolean
 }
 
 export async function runServer(options: RunServerOptions): Promise<void> {
@@ -52,6 +53,11 @@ export async function runServer(options: RunServerOptions): Promise<void> {
   state.rateLimitWait = options.rateLimitWait
   state.showToken = options.showToken
   state.forceAgent = options.forceAgent
+  state.nativeMessages = options.nativeMessages
+
+  if (options.nativeMessages) {
+    consola.info("Native Messages API enabled for Claude models")
+  }
 
   await ensurePaths()
   await cacheVSCodeVersion()
@@ -200,11 +206,17 @@ export const start = defineCommand({
       default: false,
       description: "Force X-Initiator header to always be 'agent'",
     },
+    "native-messages": {
+      alias: "M",
+      type: "boolean",
+      default: false,
+      description:
+        "Use Copilot's native /v1/messages endpoint for Claude models",
+    },
   },
   run({ args }) {
     const rateLimitRaw = args["rate-limit"]
     const rateLimit =
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
       rateLimitRaw === undefined ? undefined : Number.parseInt(rateLimitRaw, 10)
 
     return runServer({
@@ -219,6 +231,7 @@ export const start = defineCommand({
       showToken: args["show-token"],
       proxyEnv: args["proxy-env"],
       forceAgent: args["force-agent"],
+      nativeMessages: args["native-messages"],
     })
   },
 })
