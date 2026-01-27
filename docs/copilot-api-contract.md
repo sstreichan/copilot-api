@@ -10,7 +10,7 @@
 |------|------|------|
 | Chat Completions | `/chat/completions` | 标准 OpenAI 格式 |
 | Responses | `/responses` | OpenAI Responses API（支持 reasoning） |
-| Messages | `/v1/messages` | Anthropic 格式（仅 BYOK） |
+| Messages | `/v1/messages` | Anthropic 原生格式（由实验开关控制） |
 
 ### 端点选择逻辑
 
@@ -63,11 +63,31 @@ interface ChatCompletionsRequestBody {
   tool_choice?: 'none' | 'auto' | { type: 'function'; function: { name: string } };
 
   // 可选 - Anthropic 模型专用
+  // 仅当满足以下条件时注入：
+  // 1. isAnthropicFamily(model) - Anthropic 模型族
+  // 2. !disableThinking - 未禁用 thinking
+  // 3. location === ChatLocation.Agent - Agent 模式
   thinking_budget?: number;       // 思考预算（1024-32000）
 
   // 可选 - 其他
   prediction?: Prediction;        // 预测输出
   logprobs?: boolean;             // 返回 log 概率
+
+  // 可选 - 采样调整（通过 postOptions 合并）
+  logit_bias?: number;            // Token 偏置
+  presence_penalty?: number;      // 存在惩罚
+  frequency_penalty?: number;     // 频率惩罚
+
+  // 可选 - Legacy 函数调用
+  functions?: OpenAiFunctionDef[];
+  function_call?: { name: string };
+
+  // 可选 - Copilot 扩展
+  copilot_thread_id?: string;     // 会话线程 ID
+  copilot_skills?: string[];      // 启用的 skills
+
+  // 可选 - 替代 max_tokens
+  max_completion_tokens?: number; // 与 max_tokens 二选一
 }
 
 interface CAPIChatMessage {
@@ -100,15 +120,20 @@ interface ResponsesRequestBody {
   stream: true;                   // 始终 true
 
   // 工具
+  // 注意：tools 会被转换为以下格式：
+  // { type: 'function', strict: false, parameters: {...} }
   tools?: ResponsesFunctionTool[];
   tool_choice?: 'none' | 'auto' | { type: 'function'; name: string };
 
   // 输出控制
   max_output_tokens?: number;
-  top_logprobs?: number;          // 0 或 3
+  top_logprobs?: number;          // logprobs ? 3 : undefined
 
   // 状态管理
-  previous_response_id?: string;  // 上次响应 ID
+  // previous_response_id 来自 stateful marker 机制：
+  // 1. 从消息历史中查找 statefulMarker
+  // 2. 如果找到，设置 previous_response_id 并截断消息
+  previous_response_id?: string;  // 上次响应 ID（用于多轮对话）
   store: false;                   // 始终 false
 
   // 截断
@@ -136,9 +161,171 @@ type ResponseInputItem =
   | { type: 'reasoning'; id: string; summary: []; encrypted_content: string };
 ```
 
+### Messages API（Anthropic 原生格式）
+
+> **重要发现**：Copilot 后端**原生支持** `/v1/messages` 端点，可直接透传 Anthropic 格式请求，无需转换为 OpenAI 格式。
+
+```typescript
+// 来源: messagesApi.ts:115-127
+interface MessagesRequestBody {
+  model: string;
+  messages: MessageParam[];
+  system?: TextBlockParam[];       // 系统消息（Anthropic 风格）
+
+  // 流式
+  stream: true;                    // 始终 true
+
+  // 工具
+  tools?: AnthropicTool[];
+  top_p?: number;
+  max_tokens?: number;
+
+  // Thinking（Anthropic 原生）
+  thinking?: {
+    type: 'enabled';
+    budget_tokens: number;         // 1024-32000，受 max_tokens-1 限制
+  };
+
+  // Context Management（实验性）
+  context_management?: ContextManagementConfig;
+}
+
+interface MessageParam {
+  role: 'user' | 'assistant';
+  content: ContentBlock[];
+}
+```
+
+#### 启用条件
+
+```typescript
+// 来源: chatEndpoint.ts:247-250
+function shouldUseMessagesApi(model: IChatModelInformation): boolean {
+  const enableMessagesApi = configService.getExperimentBasedConfig(
+    ConfigKey.UseAnthropicMessagesApi, expService);
+  return !!(enableMessagesApi &&
+    model.supported_endpoints?.includes(ModelSupportedEndpoint.Messages));
+}
+```
+
+#### Messages API SSE 事件类型
+
+```typescript
+// 来源: messagesApi.ts:381-673
+| 'message_start'           // 消息开始，包含 usage
+| 'content_block_start'     // 内容块开始（text/tool_use/thinking/server_tool_use/tool_search_tool_result）
+| 'content_block_delta'     // 内容增量
+| 'content_block_stop'      // 内容块结束
+| 'message_delta'           // 消息增量（stop_reason, usage, context_management）
+| 'message_stop'            // 消息结束
+| 'error'                   // 错误
+```
+
+#### content_block 类型详解
+
+```typescript
+// 来源: messagesApi.ts:395-434
+// content_block_start 事件中的 content_block.type 可能为：
+
+| 'text'                    // 文本内容
+| 'tool_use'                // 工具调用（客户端工具）
+| 'thinking'                // 思考内容（当启用 thinking 时）
+| 'server_tool_use'         // 服务器端工具调用（如 tool_search）
+| 'tool_search_tool_result' // 工具搜索结果
+
+// server_tool_use 示例
+{
+  "type": "content_block_start",
+  "index": 1,
+  "content_block": {
+    "type": "server_tool_use",
+    "id": "toolu_xxx",
+    "name": "tool_search"
+  }
+}
+
+// tool_search_tool_result 示例
+{
+  "type": "content_block_start",
+  "index": 2,
+  "content_block": {
+    "type": "tool_search_tool_result",
+    "tool_use_id": "toolu_xxx",
+    "content": {
+      "type": "tool_search_tool_search_result",
+      "tool_references": [{ "tool_name": "read_file" }, ...]
+    }
+  }
+}
+```
+
+#### context_management 响应
+
+```typescript
+// 来源: messagesApi.ts:578-584
+// 在 message_delta 事件中可能包含 context_management 字段
+
+{
+  "type": "message_delta",
+  "delta": { "stop_reason": "end_turn" },
+  "context_management": {
+    "applied_edits": [
+      { "cleared_input_tokens": 1000, ... }
+    ]
+  }
+}
+```
+
+示例事件：
+
+```
+data: {"type":"message_start","message":{"id":"msg_xxx","model":"claude-sonnet-4","usage":{"input_tokens":10}}}
+
+data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
+
+data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello"}}
+
+data: {"type":"content_block_stop","index":0}
+
+data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":5}}
+
+data: {"type":"message_stop"}
+```
+
+#### 对我们项目的意义（潜在优化建议）
+
+> ⚠️ 以下为基于源码分析的**推论**，非契约事实。实际可行性需验证。
+
+```
+当前实现：
+Client (Anthropic) → 转换 → OpenAI → Copilot /chat/completions
+
+潜在优化：
+Client (Anthropic) → 直接透传 → Copilot /v1/messages
+```
+
+潜在优势：
+- 省去格式转换
+- 完整支持 Anthropic 原生 thinking
+- 更好的工具调用兼容性
+
+注意事项：
+- 需验证 Copilot 后端是否对外开放此端点
+- 需确认实验开关 `UseAnthropicMessagesApi` 的启用条件
+
 ---
 
 ## 请求 Headers
+
+### 自动注入 Headers
+
+以下 Headers 由 `baseFetchFetcher.ts` 自动注入：
+
+| Header | 值 | 用途 |
+|--------|-----|------|
+| `User-Agent` | `GitHubCopilotChat/${version}` | 客户端标识 |
+| `X-VSCode-User-Agent-Library-Version` | 运行时动态 | 库版本标识 |
+| `Content-Type` | `application/json` | 请求体类型 |
 
 ### 基础 Headers
 
@@ -156,7 +343,16 @@ type ResponseInputItem =
 |--------|------|--------|------|
 | `X-Interaction-Id` | ✅ | `interactionService.interactionId` | 会话 ID |
 | `X-Initiator` | ✅ | `'user'` 或 `'agent'` | 请求发起者 |
-| `Copilot-Vision-Request` | ❌ | `'true'`（有图片时） | 标记 vision 请求 |
+| `Copilot-Vision-Request` | ❌ | `'true'`（有图片且 `supportsVision`） | 标记 vision 请求 |
+
+### 模型元数据注入 Headers
+
+以下 Headers 由 `modelMetadata.requestHeaders` 动态注入：
+
+| Header | 条件 | 用途 |
+|--------|------|------|
+| `X-Model-Provider-Preference` | 配置了 `ModelProviderPreference` | 模型提供商偏好 |
+| 其他 | `modelMetadata.requestHeaders` 中定义 | 模型特定配置 |
 
 ### Messages API Beta Headers
 
@@ -198,6 +394,9 @@ function locationToIntent(location: ChatLocation): string {
 | `X-Copilot-Experiment` | 服务端实验标识 |
 | `azureml-model-deployment` | 模型部署 ID |
 | `apim-request-id` | Azure API Management ID |
+| `Copilot-Edits-Session` | Speculative decoding 端点 token |
+| `retry-after` | 限流时的重试等待时间 |
+| `x-ratelimit-exceeded` | 触发限流的 key |
 
 ---
 
@@ -241,11 +440,32 @@ interface ExtendedChoiceJSON {
   };
   finish_reason?: 'stop' | 'length' | 'function_call' | 'tool_calls' | 'content_filter' | 'error' | null;
   logprobs?: ChoiceLogProbs;
-  content_filter_results?: Record<FilterReason, { filtered: boolean; severity: string }>;
+  // 注意：content_filter_results 不包含 'snippy'（copyright）
+  content_filter_results?: Record<Exclude<FilterReason, 'snippy'>, { filtered: boolean; severity: string }>;
 }
 ```
 
-### Responses API SSE 格式
+#### Copilot 扩展事件（choices 为 null 或空数组）
+
+除标准 choices 事件外，还有以下 Copilot 特有的顶层事件：
+
+```typescript
+// 来源: stream.ts:364-409
+// 这些事件的 choices 可能为 null 或空数组，仅包含顶层字段
+// 注意：初始 chunk 可能发送空 choices 数组来承载 prompt_filter_results
+
+// Usage 事件（仅包含 usage）
+data: {"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}
+
+// Copilot Confirmation 事件
+data: {"copilot_confirmation":{"state":"accepted","confirmation":{...}}}
+
+// Copilot Errors 事件
+data: {"copilot_errors":[{"code":"rate_limit","message":"..."}]}
+
+// Copilot References 事件
+data: {"copilot_references":[{"type":"file","uri":"..."}]}
+```
 
 ```typescript
 // 来源: responsesApi.ts:376-512
@@ -350,6 +570,46 @@ const RETRYABLE_ERRORS = [
 - 首次遇到上述错误时，断开所有连接并重试一次
 - 请求超时：30 秒（`requestTimeoutMs = 30 * 1000`）
 - 取消请求会发送遥测事件 `networking.cancelRequest`
+
+### Server Error 重试
+
+```typescript
+// 来源: chatMLFetcher.ts:305-329
+// 基于配置的状态码重试
+const retryServerErrorStatusCodes = configService.getExperimentBasedConfig(
+  ConfigKey.TeamInternal.RetryServerErrorStatusCodes, expService);
+const statusCodesToRetry = retryServerErrorStatusCodes.split(',').map(s => parseInt(s.trim(), 10));
+
+// 如果状态码在重试列表中，触发重试
+if (enableRetryOnError && statusCodesToRetry.includes(actualStatusCode)) {
+  await this._retryAfterError({ retryReason: 'server_error', ... });
+}
+```
+
+### 连接性回退
+
+```typescript
+// 来源: chatMLFetcher.ts:91
+// 连接检查延迟（毫秒）
+public connectivityCheckDelays = [1000, 10000, 10000];
+```
+
+### Rate Limiting 处理
+
+| 状态码 | 处理 | 响应 Headers |
+|--------|------|--------------|
+| `429` | 限流 | `retry-after`, `x-ratelimit-exceeded` |
+| `402` | 配额超限 | `retry-after` |
+
+```typescript
+// 来源: chatMLFetcher.ts:877-966
+// 解析 retry-after header
+const retryAfter = response.headers.get('retry-after');
+const retryAfterDate = convertToDate(retryAfter);
+
+// 返回失败信息
+return { failKind: ChatFailKind.RateLimited, data: { retryAfter, rateLimitKey } };
+```
 
 ### 错误响应结构
 
@@ -503,7 +763,9 @@ data: {"type":"response.output_item.done","item":{"type":"function_call","name":
 }
 ```
 
-#### 必需 Header
+#### 条件性 Header
+
+当请求包含图片**且**模型 `supportsVision` 时，需要添加：
 
 ```
 Copilot-Vision-Request: true
