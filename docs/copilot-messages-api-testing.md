@@ -8,7 +8,7 @@
 
 本文档记录了对 GitHub Copilot `/v1/messages` 端点的实际测试结果，验证其与 Anthropic Messages API 的兼容性。
 
-**关键发现**：Copilot `/v1/messages` 端点**几乎 100% 兼容** Anthropic Messages API，远超我们现有实现的兼容性。
+**关键发现**：Copilot `/v1/messages` 端点**高度兼容** Anthropic Messages API（已验证场景），远超我们现有实现的兼容性。
 
 ---
 
@@ -152,6 +152,27 @@ Client (Anthropic) → 直接透传 → Copilot /v1/messages
 
 ---
 
+## 语义验证（辩论后补充）
+
+> 以下测试验证参数不仅被接受，而且在语义上生效。
+
+| 功能 | 测试结果 | 验证方法 | 证据 |
+|------|----------|----------|------|
+| `stop_sequences` | ✅ PASS | 验证输出不包含停止词 | 输出 "1 2 3 4 " 不含 "5"，stop_reason = `stop_sequence` |
+| `tool_choice: none` | ✅ PASS | 验证无 tool_use block | Content types 为空，工具未被调用 |
+| `thinking: disabled` | ✅ PASS | 验证无 thinking block | 只有 `text` 类型，无 `thinking` |
+
+---
+
+## 已知限制
+
+| 限制 | 描述 |
+|------|------|
+| 非 Claude 模型 | GPT 模型调用 `/v1/messages` 返回 500 Internal Server Error |
+| 仅测试单一模型 | 所有测试基于 `claude-haiku-4.5`，其他 Claude 变体未验证 |
+
+---
+
 ## 未测试项
 
 以下功能未在本次测试中覆盖：
@@ -162,7 +183,6 @@ Client (Anthropic) → 直接透传 → Copilot /v1/messages
 - `cache_control` 提示缓存
 - `citations` 引用注释
 - `context_management` 上下文管理
-- 非 Claude 模型（GPT 模型返回 500）
 
 ---
 
@@ -179,6 +199,8 @@ Client (Anthropic) → 直接透传 → Copilot /v1/messages
 
 ## 结论
 
-Copilot `/v1/messages` 端点提供了**几乎完整的 Anthropic Messages API 兼容性**。
+Copilot `/v1/messages` 端点在已验证场景下提供了**高度的 Anthropic Messages API 兼容性**。
+
+关键功能（`stop_sequences`、`tool_choice`、`thinking`）经语义验证确认生效，不仅仅是"参数被接受"。
 
 对于 Claude 模型的请求，建议考虑直接透传到此端点，以简化代码并提高兼容性。
