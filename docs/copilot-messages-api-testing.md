@@ -21,8 +21,8 @@
 | `max_tokens` | ✅ 完全支持 | 支持任意值（包括小值如 10） |
 | `temperature` | ✅ 完全支持 | 接受 0-1 范围 |
 | `top_p` | ✅ 完全支持 | |
-| `top_k` | ✅ 意外支持 | 文档说不支持，但实际接受 |
-| `stop_sequences` | ✅ 完全支持 | 测试中正确在 "4" 处停止 |
+| `top_k` | ⚠️ 接受但未验证效果 | 参数被接受，采样效果未语义验证 |
+| `stop_sequences` | ✅ 完全支持 | 输出不含停止词，stop_reason=stop_sequence |
 | `stream` | ✅ 完全支持 | |
 | `system` (string) | ✅ 完全支持 | |
 | `system` (array) | ✅ 完全支持 | TextBlockParam[] 格式 |
