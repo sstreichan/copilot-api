@@ -76,14 +76,21 @@ export async function handleCompletion(c: Context) {
   const originalModel = anthropicPayload.model
   logger.debug("Anthropic request payload:", JSON.stringify(anthropicPayload))
 
-  // ⚠️ CRITICAL: Native Messages API branch MUST be BEFORE any payload modification
+  // Claude Code and OpenCode compact request detection (must be before nativeMessages branch)
+  const isCompact = isCompactRequest(anthropicPayload)
+  if (isCompact) {
+    logger.debug("Is compact request:", isCompact)
+    if (shouldCompactUseSmallModel()) {
+      anthropicPayload.model = getSmallModel()
+    }
+  }
+
+  // ⚠️ CRITICAL: Native Messages API branch MUST be BEFORE other payload modifications
   // This ensures payload is passed through unchanged to Copilot's /v1/messages endpoint
+  // (compact detection above is the only exception - it must happen first)
   if (state.nativeMessages && isClaudeModel(anthropicPayload.model)) {
     return await handleWithNativeMessages(c, anthropicPayload, originalModel)
   }
-
-  // Claude Code and OpenCode compact request detection
-  const isCompact = isCompactRequest(anthropicPayload)
 
   // fix claude code 2.0.28+ warmup request consume premium request, forcing small model if no tools are used
   // set "CLAUDE_CODE_SUBAGENT_MODEL": "you small model" also can avoid this
@@ -93,16 +100,11 @@ export async function handleCompletion(c: Context) {
     anthropicPayload.model = getSmallModel()
   }
 
-  if (isCompact) {
-    logger.debug("Is compact request:", isCompact)
-    if (shouldCompactUseSmallModel()) {
-      anthropicPayload.model = getSmallModel()
-    }
-  } else {
-    // Merge tool_result and text blocks into tool_result to avoid consuming premium requests
-    // (caused by skill invocations, edit hooks, plan or to do reminders)
-    // e.g. {"role":"user","content":[{"type":"tool_result","content":"Launching skill: xxx"},{"type":"text","text":"xxx"}]}
-    // compact requests are excluded from this processing
+  // Merge tool_result and text blocks into tool_result to avoid consuming premium requests
+  // (caused by skill invocations, edit hooks, plan or to do reminders)
+  // e.g. {"role":"user","content":[{"type":"tool_result","content":"Launching skill: xxx"},{"type":"text","text":"xxx"}]}
+  // compact requests are excluded from this processing
+  if (!isCompact) {
     mergeToolResultForClaude(anthropicBeta, anthropicPayload)
   }
 
