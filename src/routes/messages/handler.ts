@@ -5,7 +5,7 @@ import consola from "consola"
 import { streamSSE } from "hono/streaming"
 
 import { awaitApproval } from "~/lib/approval"
-import { getSmallModel } from "~/lib/config"
+import { getSmallModel, shouldCompactUseSmallModel } from "~/lib/config"
 import {
   createHandlerLogger,
   formatStreamLog,
@@ -50,6 +50,25 @@ import { translateChunkToAnthropicEvents } from "./stream-translation"
 
 const logger = createHandlerLogger("messages-handler")
 
+const compactSystemPromptStart =
+  "You are a helpful AI assistant tasked with summarizing conversations"
+
+const isCompactRequest = (
+  anthropicPayload: AnthropicMessagesPayload,
+): boolean => {
+  const system = anthropicPayload.system
+  if (typeof system === "string") {
+    return system.startsWith(compactSystemPromptStart)
+  }
+  if (!Array.isArray(system)) return false
+
+  return system.some(
+    (msg) =>
+      typeof msg.text === "string"
+      && msg.text.startsWith(compactSystemPromptStart),
+  )
+}
+
 export async function handleCompletion(c: Context) {
   await checkRateLimit(state)
 
@@ -63,18 +82,29 @@ export async function handleCompletion(c: Context) {
     return await handleWithNativeMessages(c, anthropicPayload, originalModel)
   }
 
+  // Claude Code and OpenCode compact request detection
+  const isCompact = isCompactRequest(anthropicPayload)
+
   // fix claude code 2.0.28+ warmup request consume premium request, forcing small model if no tools are used
   // set "CLAUDE_CODE_SUBAGENT_MODEL": "you small model" also can avoid this
   const anthropicBeta = c.req.header("anthropic-beta")
   const noTools = !anthropicPayload.tools || anthropicPayload.tools.length === 0
-  if (anthropicBeta && noTools) {
+  if (anthropicBeta && noTools && !isCompact) {
     anthropicPayload.model = getSmallModel()
   }
 
-  // Merge tool_result and text blocks into tool_result to avoid consuming premium requests
-  // (caused by skill invocations, edit hooks, plan or to do reminders)
-  // e.g. {"role":"user","content":[{"type":"tool_result","content":"Launching skill: xxx"},{"type":"text","text":"xxx"}]}
-  mergeToolResultForClaude(anthropicBeta, anthropicPayload)
+  if (isCompact) {
+    logger.debug("Is compact request:", isCompact)
+    if (shouldCompactUseSmallModel()) {
+      anthropicPayload.model = getSmallModel()
+    }
+  } else {
+    // Merge tool_result and text blocks into tool_result to avoid consuming premium requests
+    // (caused by skill invocations, edit hooks, plan or to do reminders)
+    // e.g. {"role":"user","content":[{"type":"tool_result","content":"Launching skill: xxx"},{"type":"text","text":"xxx"}]}
+    // compact requests are excluded from this processing
+    mergeToolResultForClaude(anthropicBeta, anthropicPayload)
+  }
 
   const useResponsesApi = shouldUseResponsesApi(anthropicPayload.model)
 

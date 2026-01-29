@@ -91,9 +91,11 @@ export const createMessages = async (
     "X-Initiator": state.forceAgent ? "agent" : (options.initiator ?? "user"),
   }
 
-  // Forward anthropic-beta header if provided
+  // Forward anthropic-beta header if provided, or auto-add for thinking
   if (options.anthropicBeta) {
     headers["anthropic-beta"] = options.anthropicBeta
+  } else if (payload.thinking?.budget_tokens) {
+    headers["anthropic-beta"] = "interleaved-thinking-2025-05-14"
   }
 
   // Force temperature=1 for deep thinking (like Anthropic's extended thinking mode)

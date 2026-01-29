@@ -179,11 +179,13 @@ test("throws error when copilot token is missing", async () => {
 
 test("throws HTTPError when response is not ok", async () => {
   // Override fetch mock to return error response
-  const errorFetchMock = mock(() => ({
+  const mockResponse = {
     ok: false,
     status: 500,
-    json: () => ({ error: "Internal Server Error" }),
-  }))
+    json: () => Promise.resolve({ error: "Internal Server Error" }),
+    clone: () => mockResponse,
+  }
+  const errorFetchMock = mock(() => mockResponse)
   // @ts-expect-error - Mock fetch doesn't implement all fetch properties
   ;(globalThis as unknown as { fetch: typeof fetch }).fetch = errorFetchMock
 
