@@ -6,6 +6,8 @@ import consola from "consola"
 import { serve, type ServerHandler } from "srvx"
 import invariant from "tiny-invariant"
 
+import type { Model } from "./services/copilot/get-models"
+
 import { mergeConfigWithDefaults } from "./lib/config"
 import { ensurePaths } from "./lib/paths"
 import { initProxyFromEnv } from "./lib/proxy"
@@ -13,6 +15,46 @@ import { generateEnvScript } from "./lib/shell"
 import { state } from "./lib/state"
 import { setupCopilotToken, setupGitHubToken } from "./lib/token"
 import { cacheModels, cacheVSCodeVersion } from "./lib/utils"
+
+function formatContextWindow(tokens?: number): string {
+  if (!tokens) return "   -  "
+  if (tokens >= 1_000_000)
+    return `${(tokens / 1_000_000).toFixed(1)}M`.padStart(6)
+  return `${Math.round(tokens / 1000)}K`.padStart(6)
+}
+
+function getContextWindow(m: Model): number {
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- runtime data may lack capabilities/limits
+  return m.capabilities?.limits?.max_context_window_tokens ?? 0
+}
+
+function formatModelsLog(models: Array<Model>): string {
+  const grouped = Object.groupBy(models, (m) => m.vendor)
+  const vendors = Object.keys(grouped).sort()
+
+  const lines: Array<string> = [`Available models (${models.length}):\n`]
+
+  for (const vendor of vendors) {
+    const vendorModels = grouped[vendor]
+    if (!vendorModels) continue
+
+    const sorted = vendorModels
+      .slice()
+      .sort((a, b) => getContextWindow(b) - getContextWindow(a))
+
+    lines.push(`${vendor} (${sorted.length})`)
+
+    for (const m of sorted) {
+      const ctx = formatContextWindow(getContextWindow(m))
+      const premium = m.billing?.is_premium === true ? "★" : " "
+      const preview = m.preview ? " preview" : ""
+      lines.push(`  ${m.id.padEnd(24)} ${ctx} ctx ${premium}${preview}`)
+    }
+    lines.push("")
+  }
+
+  return lines.join("\n")
+}
 
 interface RunServerOptions {
   port: number
@@ -72,9 +114,7 @@ export async function runServer(options: RunServerOptions): Promise<void> {
   await setupCopilotToken()
   await cacheModels()
 
-  consola.info(
-    `Available models: \n${state.models?.data.map((model) => `- ${model.id}`).join("\n")}`,
-  )
+  consola.info(formatModelsLog(state.models?.data ?? []))
 
   const serverUrl = `http://localhost:${options.port}`
 
