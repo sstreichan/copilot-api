@@ -17,11 +17,24 @@ export interface ModelsResponse {
   object: string
 }
 
+interface ModelVisionLimits {
+  max_prompt_image_size?: number
+  max_prompt_images?: number
+  supported_media_types?: Array<string>
+}
+
 interface ModelLimits {
   max_context_window_tokens?: number
   max_output_tokens?: number
   max_prompt_tokens?: number
   max_inputs?: number
+  vision?: ModelVisionLimits
+}
+
+interface ModelBilling {
+  is_premium: boolean
+  multiplier: number
+  restricted_to?: Array<string>
 }
 
 interface ModelSupports {
@@ -45,6 +58,7 @@ interface ModelCapabilities {
 }
 
 export interface Model {
+  billing?: ModelBilling
   capabilities: ModelCapabilities
   id: string
   model_picker_enabled: boolean
