@@ -10,6 +10,8 @@ Reverse-engineered proxy for GitHub Copilot API exposing OpenAI/Anthropic/Gemini
 Client API (Anthropic/Gemini/OpenAI) → OpenAI Format → GitHub Copilot API
 ```
 
+**Exception**: With `-M` flag, Claude models bypass conversion and use Copilot's native `/v1/messages` endpoint directly.
+
 ## Quick Reference
 
 ```bash
@@ -23,15 +25,8 @@ bun run lint:all --fix   # Lint and fix
 bun run typecheck        # Type check
 
 # CLI Flags (start command)
-bun run dev -- -F           # Force X-Initiator: agent
+bun run dev -- -M           # Native Messages API for Claude models (recommended)
 bun run dev -- -a business  # Use business account type
-bun run dev -- -M           # Native Messages API for Claude models
-
-# Issue Tracking (beads)
-bd ready                 # Find available work
-bd create --title="..." --type=task  # Create issue
-bd close <id>            # Mark complete
-bd sync                  # Sync before commit
 ```
 
 ## Architecture
@@ -41,13 +36,14 @@ bd sync                  # Sync before commit
 - `src/routes/generate-content/` - Gemini API
 - `src/routes/chat-completions/` - OpenAI passthrough
 - `src/routes/responses/` - GitHub Copilot Responses API
+- `src/routes/models/` - Enhanced `/v1/models` with capabilities, limits, billing
 
 ### Core Services
-- `src/services/copilot/create-chat-completions.ts` - Central Copilot API caller (token refresh, headers)
+- `src/services/copilot/create-chat-completions.ts` - Central Copilot API caller (token refresh, headers, signature retry)
 - `src/services/copilot/create-messages.ts` - Native Messages API passthrough for Claude models
+- `src/services/copilot/get-models.ts` - Model metadata with vision/thinking limits
 - `src/lib/state.ts` - **Single source of truth** for runtime state (tokens, models, config)
-- `src/lib/api-config.ts` - GitHub API headers (Copilot v0.35.0, VSCode v1.107.0)
-- `src/lib/config.ts` - App configuration (extraPrompts, useFunctionApplyPatch, modelReasoningEfforts)
+- `src/lib/config.ts` - App configuration (see Config Options below)
 
 ### Key Patterns
 
@@ -58,34 +54,33 @@ bd sync                  # Sync before commit
 
 **Translation Flow**: Each route has `handler.ts` + optional `*-translation.ts` for format conversion.
 
+**Signature Retry**: Both `create-chat-completions.ts` and `create-messages.ts` auto-retry on "Invalid signature in thinking block" errors by stripping thinking/reasoning fields.
+
+## Config Options
+
+Located in `~/.local/share/copilot-api/config.json`:
+
+| Option | Type | Default | Description |
+|:-------|:-----|:--------|:------------|
+| `extraPrompts` | `Record<string, string>` | gpt-5 exploration | Model-specific system prompt additions |
+| `smallModel` | `string` | `"gpt-5-mini"` | Model for warmup/compact requests |
+| `compactUseSmallModel` | `boolean` | `true` | Use small model for Claude Code/OpenCode compact requests |
+| `useFunctionApplyPatch` | `boolean` | `true` | Convert custom apply_patch to function type |
+| `modelReasoningEfforts` | `Record<string, string>` | - | Per-model reasoning effort levels |
+
 ## Critical Rules
 
 1. **State**: Never create parallel state caches; use `src/lib/state.ts` only
-2. **Streams**: Always `try/finally` with `stream.close()`; 4 cleanup paths must sync (finish_reason, [DONE], parseError, stream error)
-3. **Tool Calls**: IDs must be stable across chunks; `tool_calls` is non-terminal
+2. **Streams**: Always `try/finally` with `stream.close()`; 4 cleanup paths must sync
+3. **Tool Calls**: IDs must be stable across chunks; `tool_calls` finish_reason is non-terminal
 4. **Logging**: Use `consola` (never `console.log`); `LOG_LEVEL=debug` for verbose
 5. **Imports**: Use `~` alias for `src/` paths
-
-## MCP Servers
-
-- **Serena**: Semantic code ops - use `find_symbol`, `get_symbols_overview` before reading files
-- **Codex**: Second opinion for architecture decisions and code review
-- **OpenSpec**: For complex features - `/openspec:proposal`, see `openspec/AGENTS.md`
-
-## Current Focus (01/2026)
-
-- `nativeMessages` mode - Passthrough to Copilot's `/v1/messages` for Claude models (no format conversion)
-- `interleaved_thinking_protocol` - 强制 Claude 在工具调用后输出思考块
-- `useFunctionApplyPatch` - 将 custom 类型的 apply_patch 转为 function 类型
-- `thinking_budget` + reasoning support (`reasoning_text`, `reasoning_opaque`)
-- Premium quota tracking (`getCopilotUsage`)
 
 ## Testing
 
 - Mock pattern: `mock.module("~/services/copilot/create-chat-completions", ...)`
-- Use recorded fixtures, not live API calls
+- Use recorded fixtures in `tests/fixtures/`, not live API calls
 - Never hardcode token counts (use `expect.any(Number)`)
-- Test utils in `tests/generate-content/_test-utils.ts`
 
 ## Known Pitfalls
 
@@ -93,16 +88,22 @@ bd sync                  # Sync before commit
 |:------|:---------|
 | Tool calls disappear | Don't filter empty scaffold chunks; let accumulator handle |
 | Multi-round tools fail | `finish_reason: "tool_calls"` is intermediate, don't clear |
-| Orphan tool calls | Clear on all 4 termination paths |
 | Stream hangs | Always close in finally block |
-| CLI `-fa` parsed as `-f -a` | citty 基于 mri，遵循 POSIX 短选项规则，别名**必须是单字符**（如 `-F`） |
+| Thinking signature errors | Auto-retried with stripped fields; check logs for warnings |
+| CLI `-ab` parsed as `-a -b` | citty uses mri; short option aliases must be single-char |
 
-## Decision Log (Recent)
+## Recent Changes (01/2026)
+
+- **Native Messages API** (`-M`): Direct passthrough to Copilot `/v1/messages` for Claude models
+- **Compact Detection**: Auto-detect Claude Code/OpenCode summarization requests, optionally use small model
+- **Models API Enrichment**: `/v1/models` returns thinking_budget, vision limits, billing info
+- **Thinking Compatibility**: `THINKING_TEXT = "Thinking..."` default for opencode compatibility
+
+## Decision Log
 
 | Date | Change | Rollback |
 |:-----|:-------|:---------|
-| 2026-01-28 | Native Messages API (`-M` flag) for Claude models | Remove create-messages.ts, revert handler.ts |
-| 2026-01-10 | PR #20: interleaved_thinking + useFunctionApplyPatch | Revert translation files |
-| 2025-12-13 | OpenSpec integration | Remove openspec/ |
-| 2025-12-11 | Copilot v0.35.0 | Revert api-config.ts |
-| 2025-12-03 | thinking_budget support | Revert translation files |
+| 2026-01-31 | Models API enrichment (capabilities, limits, vendor grouping) | Revert routes/models/route.ts, get-models.ts |
+| 2026-01-29 | Compact request detection + anthropic-beta auto-add | Revert handler.ts, config.ts |
+| 2026-01-28 | Native Messages API (`-M` flag) | Remove create-messages.ts, revert handler.ts |
+| 2026-01-10 | interleaved_thinking + useFunctionApplyPatch | Revert translation files |

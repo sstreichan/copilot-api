@@ -244,7 +244,7 @@ export const start = defineCommand({
       alias: "F",
       type: "boolean",
       default: false,
-      description: "Force X-Initiator header to always be 'agent'",
+      description: "Force 'agent' mode",
     },
     "native-messages": {
       alias: "M",
