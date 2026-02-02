@@ -17,13 +17,16 @@ export interface ShouldUseAgentModeParams {
  * Algorithm:
  *   ideal_daily = entitlement / days_in_month
  *   expected_remaining = entitlement - (day_of_month × ideal_daily)
- *   if remaining < expected_remaining → use agent (over budget)
+ *   if remaining <= expected_remaining → use agent (at or over budget)
+ *
+ * Uses <= to trigger at exact threshold (stops at expected, not below).
+ * Math.max(5, ...) ensures minimum 5 quota reserve even at month end.
  */
 export function shouldUseAgentMode(params: ShouldUseAgentModeParams): boolean {
   const { entitlement, remaining, dayOfMonth, daysInMonth } = params
   const idealDaily = entitlement / daysInMonth
-  const expectedRemaining = entitlement - dayOfMonth * idealDaily
-  return remaining < expectedRemaining
+  const expectedRemaining = Math.max(5, entitlement - dayOfMonth * idealDaily)
+  return remaining <= expectedRemaining
 }
 
 export interface SmartAgentDecision {
@@ -56,8 +59,10 @@ export async function getSmartAgentDecision(
     const quota = usage.quota_snapshots.premium_interactions
     const daysInMonth = getDaysInMonth(now)
     const dayOfMonth = now.getDate()
-    const expectedRemaining =
-      quota.entitlement - dayOfMonth * (quota.entitlement / daysInMonth)
+    const expectedRemaining = Math.max(
+      5,
+      quota.entitlement - dayOfMonth * (quota.entitlement / daysInMonth),
+    )
 
     const forceAgent = shouldUseAgentMode({
       entitlement: quota.entitlement,

@@ -39,15 +39,15 @@ describe("shouldUseAgentMode", () => {
 
   // --- Boundary cases ---
 
-  test("returns false when exactly on budget (remaining === expected)", () => {
-    // expected = 150, remaining = 150 → exactly on budget, use user
+  test("returns true when exactly on budget (remaining === expected)", () => {
+    // expected = 150, remaining = 150 → exactly on budget, trigger agent to protect
     const result = shouldUseAgentMode({
       entitlement: 300,
       remaining: 150,
       dayOfMonth: 15,
       daysInMonth: 30,
     })
-    expect(result).toBe(false)
+    expect(result).toBe(true)
   })
 
   test("returns false on day 1 with full quota", () => {
@@ -73,12 +73,24 @@ describe("shouldUseAgentMode", () => {
     expect(result).toBe(true)
   })
 
-  test("returns false on last day of month with some remaining", () => {
-    // Day 30: expected = 300 - (30 * 10) = 0
-    // remaining = 5 >= 0 → on budget
+  test("returns true on last day of month with some remaining (min reserve)", () => {
+    // Day 30: expected = max(5, 300 - 30*10) = max(5, 0) = 5
+    // remaining = 5 <= 5 → trigger agent (at reserve threshold)
     const result = shouldUseAgentMode({
       entitlement: 300,
       remaining: 5,
+      dayOfMonth: 30,
+      daysInMonth: 30,
+    })
+    expect(result).toBe(true)
+  })
+
+  test("returns false on last day when above reserve", () => {
+    // Day 30: expected = max(5, 0) = 5
+    // remaining = 10 > 5 → on budget, can still use
+    const result = shouldUseAgentMode({
+      entitlement: 300,
+      remaining: 10,
       dayOfMonth: 30,
       daysInMonth: 30,
     })
@@ -88,14 +100,38 @@ describe("shouldUseAgentMode", () => {
   test("handles months with different lengths (28-day month)", () => {
     // 28-day month, 280 entitlement → daily = 10
     // Day 14: expected = 280 - (14 * 10) = 140
-    // remaining = 140 → exactly on budget
+    // remaining = 140 → exactly on budget, trigger agent (<=)
     const result = shouldUseAgentMode({
       entitlement: 280,
       remaining: 140,
       dayOfMonth: 14,
       daysInMonth: 28,
     })
+    expect(result).toBe(true)
+  })
+
+  test("handles months with different lengths - above budget", () => {
+    // 28-day month, 280 entitlement → daily = 10
+    // Day 14: expected = 140, remaining = 141 > 140 → on budget
+    const result = shouldUseAgentMode({
+      entitlement: 280,
+      remaining: 141,
+      dayOfMonth: 14,
+      daysInMonth: 28,
+    })
     expect(result).toBe(false)
+  })
+
+  test("returns true on last day when quota exhausted", () => {
+    // Day 30: expected = max(5, 300 - 30*10) = 5
+    // remaining = 0 <= 5 → trigger agent
+    const result = shouldUseAgentMode({
+      entitlement: 300,
+      remaining: 0,
+      dayOfMonth: 30,
+      daysInMonth: 30,
+    })
+    expect(result).toBe(true)
   })
 })
 
