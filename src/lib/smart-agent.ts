@@ -1,0 +1,125 @@
+import consola from "consola"
+
+import { state } from "~/lib/state"
+import {
+  getSmartAgentDecision,
+  type SmartAgentDecision,
+} from "~/services/github/get-copilot-usage"
+
+export interface ResolveInitiatorResult {
+  initiator: "agent" | "user"
+  decision?: SmartAgentDecision
+}
+
+// Cache TTL: 3 minutes (only used when over budget)
+const CACHE_TTL_MS = 180_000
+
+/**
+ * Update the smart agent cache in state.
+ * Extracted to avoid require-atomic-updates lint warning.
+ */
+function updateSmartAgentCache(
+  decision: SmartAgentDecision | null,
+  timestamp: number,
+): void {
+  state.smartAgentDecision = decision
+  state.smartAgentCacheTimestamp = timestamp
+}
+
+/**
+ * Clear the smart agent decision cache.
+ * Useful for testing or when forcing a fresh decision.
+ */
+export function clearSmartAgentCache(): void {
+  updateSmartAgentCache(null, 0)
+}
+
+/**
+ * Get decision, using cache only when over budget (forceAgent=true).
+ *
+ * Caching strategy:
+ * - Over budget (forceAgent=true): Cache the decision because once over budget,
+ *   it will stay over budget for a long time. Reduces unnecessary API calls.
+ * - On budget (forceAgent=false): Don't cache. Check every time to catch
+ *   the exact moment when quota drops below expected.
+ */
+async function getDecisionWithSmartCache(
+  now?: Date,
+): Promise<SmartAgentDecision> {
+  const currentTime = Date.now()
+  const cacheTimestamp = state.smartAgentCacheTimestamp ?? 0
+
+  // Only use cache if:
+  // 1. Cache exists
+  // 2. Cache is not expired
+  // 3. Cached decision was forceAgent=true (over budget)
+  if (
+    state.smartAgentDecision
+    && currentTime - cacheTimestamp < CACHE_TTL_MS
+    && state.smartAgentDecision.forceAgent
+  ) {
+    return state.smartAgentDecision
+  }
+
+  const decision = await getSmartAgentDecision(now)
+
+  // Only cache when over budget (forceAgent=true)
+  // Don't cache when on budget - need to check every time
+  if (decision.forceAgent) {
+    updateSmartAgentCache(decision, currentTime)
+  } else {
+    // Clear cache when on budget to ensure fresh checks
+    updateSmartAgentCache(null, 0)
+  }
+
+  return decision
+}
+
+/**
+ * Resolve the initiator value based on smart agent decision.
+ *
+ * When state.forceAgent is true:
+ * - If over budget (remaining < expected), force "agent" mode
+ * - If on budget, keep the defaultInitiator
+ * - On API failure, default to "agent" (protect user quota)
+ *
+ * When state.forceAgent is false:
+ * - Return defaultInitiator without making API calls
+ *
+ * @param defaultInitiator - The initiator to use when not forcing agent or on budget
+ * @param now - Optional Date for testing (defaults to current time)
+ * @returns The resolved initiator and optional decision details
+ */
+export async function resolveInitiatorWithSmartAgent(
+  defaultInitiator: "agent" | "user",
+  now?: Date,
+): Promise<ResolveInitiatorResult> {
+  // When forceAgent is false, skip API call entirely
+  if (!state.forceAgent) {
+    return { initiator: defaultInitiator }
+  }
+
+  const decision = await getDecisionWithSmartCache(now)
+
+  if (decision.forceAgent) {
+    // Over budget or API failure: force agent mode
+    if (decision.error) {
+      consola.warn(
+        `[quota] Smart agent: API error, defaulting to agent mode - ${decision.error}`,
+      )
+    } else {
+      consola.info(
+        `[quota] Smart agent: remaining ${decision.remaining} < expected ${decision.expected} → using agent mode`,
+      )
+    }
+    return { initiator: "agent", decision }
+  }
+
+  // On budget: keep existing logic
+  consola.debug(
+    `[quota] remaining ${decision.remaining} >= expected ${decision.expected} → using existing logic`,
+  )
+  return { initiator: defaultInitiator, decision }
+}
+
+export { type SmartAgentDecision } from "~/services/github/get-copilot-usage"

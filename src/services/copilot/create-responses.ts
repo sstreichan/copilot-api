@@ -3,6 +3,7 @@ import { events } from "fetch-event-stream"
 
 import { copilotBaseUrl, copilotHeaders } from "~/lib/api-config"
 import { HTTPError } from "~/lib/error"
+import { resolveInitiatorWithSmartAgent } from "~/lib/smart-agent"
 import { state } from "~/lib/state"
 
 export interface ResponsesPayload {
@@ -332,9 +333,13 @@ export const createResponses = async (
 ): Promise<CreateResponsesReturn> => {
   if (!state.copilotToken) throw new Error("Copilot token not found")
 
+  // Determine X-Initiator value
+  const { initiator: effectiveInitiator } =
+    await resolveInitiatorWithSmartAgent(initiator)
+
   const headers: Record<string, string> = {
     ...copilotHeaders(state, vision),
-    "X-Initiator": state.forceAgent ? "agent" : initiator,
+    "X-Initiator": effectiveInitiator,
   }
 
   // service_tier is not supported by github copilot

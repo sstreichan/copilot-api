@@ -1,4 +1,5 @@
 import type { ModelsResponse } from "~/services/copilot/get-models"
+import type { SmartAgentDecision } from "~/services/github/get-copilot-usage"
 
 export interface State {
   githubToken?: string
@@ -18,6 +19,10 @@ export interface State {
   verbose: boolean
   forceAgent: boolean
   nativeMessages: boolean
+
+  // Smart agent cache (TTL: 3 minutes)
+  smartAgentDecision?: SmartAgentDecision | null
+  smartAgentCacheTimestamp?: number
 }
 
 export const state: State = {

@@ -7,6 +7,7 @@ import type {
 
 import { copilotBaseUrl, copilotHeaders } from "~/lib/api-config"
 import { HTTPError } from "~/lib/error"
+import { resolveInitiatorWithSmartAgent } from "~/lib/smart-agent"
 import { state } from "~/lib/state"
 
 export interface CreateMessagesOptions {
@@ -86,9 +87,13 @@ export const createMessages = async (
 
   const enableVision = hasImageContent(payload)
 
+  // Determine X-Initiator value
+  const defaultInitiator = options.initiator ?? "user"
+  const { initiator } = await resolveInitiatorWithSmartAgent(defaultInitiator)
+
   const headers: Record<string, string> = {
     ...copilotHeaders(state, enableVision),
-    "X-Initiator": state.forceAgent ? "agent" : (options.initiator ?? "user"),
+    "X-Initiator": initiator,
   }
 
   // Forward anthropic-beta header if provided, or auto-add for thinking

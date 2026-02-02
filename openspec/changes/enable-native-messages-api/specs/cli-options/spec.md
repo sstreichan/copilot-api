@@ -30,7 +30,7 @@
 - Then: 行为等同于 `--native-messages`
 
 #### Scenario: 与其他标志组合
-- Given: 用户执行 `copilot-api start -M -F -v`
+- Given: 用户执行 `copilot-api start -M -v`
 - When: 发送 Claude 模型请求
-- Then: `--native-messages`、`--force-agent`、`--verbose` 均生效
+- Then: `--native-messages`、`--verbose` 均生效
 - And: 各标志功能互不干扰

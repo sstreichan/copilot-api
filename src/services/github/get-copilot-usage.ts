@@ -1,6 +1,84 @@
+import consola from "consola"
+
 import { GITHUB_API_BASE_URL, githubHeaders } from "~/lib/api-config"
 import { HTTPError } from "~/lib/error"
 import { state } from "~/lib/state"
+
+export interface ShouldUseAgentModeParams {
+  entitlement: number
+  remaining: number
+  dayOfMonth: number
+  daysInMonth: number
+}
+
+/**
+ * Determines whether to use agent mode based on quota usage progress.
+ *
+ * Algorithm:
+ *   ideal_daily = entitlement / days_in_month
+ *   expected_remaining = entitlement - (day_of_month × ideal_daily)
+ *   if remaining < expected_remaining → use agent (over budget)
+ */
+export function shouldUseAgentMode(params: ShouldUseAgentModeParams): boolean {
+  const { entitlement, remaining, dayOfMonth, daysInMonth } = params
+  const idealDaily = entitlement / daysInMonth
+  const expectedRemaining = entitlement - dayOfMonth * idealDaily
+  return remaining < expectedRemaining
+}
+
+export interface SmartAgentDecision {
+  forceAgent: boolean
+  remaining?: number
+  expected?: number
+  error?: string
+}
+
+/**
+ * Get days in month from the current date.
+ */
+function getDaysInMonth(now: Date): number {
+  return new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate()
+}
+
+/**
+ * Fetches usage and determines whether to force agent mode.
+ *
+ * - forceAgent: true → over budget, force agent mode
+ * - forceAgent: false → on budget, use existing logic (check tool/assistant)
+ *
+ * Returns forceAgent: true on API failure (protect user quota).
+ */
+export async function getSmartAgentDecision(
+  now: Date = new Date(),
+): Promise<SmartAgentDecision> {
+  try {
+    const usage = await getCopilotUsage()
+    const quota = usage.quota_snapshots.premium_interactions
+    const daysInMonth = getDaysInMonth(now)
+    const dayOfMonth = now.getDate()
+    const expectedRemaining =
+      quota.entitlement - dayOfMonth * (quota.entitlement / daysInMonth)
+
+    const forceAgent = shouldUseAgentMode({
+      entitlement: quota.entitlement,
+      remaining: quota.remaining,
+      dayOfMonth,
+      daysInMonth,
+    })
+
+    return {
+      forceAgent,
+      remaining: quota.remaining,
+      expected: Math.round(expectedRemaining),
+    }
+  } catch (error) {
+    consola.warn("[quota] Failed to fetch usage, defaulting to agent mode")
+    return {
+      forceAgent: true,
+      error: error instanceof Error ? error.message : String(error),
+    }
+  }
+}
 
 export const getCopilotUsage = async (): Promise<CopilotUsageResponse> => {
   const response = await fetch(`${GITHUB_API_BASE_URL}/copilot_internal/user`, {

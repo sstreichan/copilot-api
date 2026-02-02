@@ -3,6 +3,7 @@ import { events } from "fetch-event-stream"
 
 import { copilotBaseUrl, copilotHeaders } from "~/lib/api-config"
 import { HTTPError } from "~/lib/error"
+import { resolveInitiatorWithSmartAgent } from "~/lib/smart-agent"
 import { state } from "~/lib/state"
 
 /**
@@ -58,11 +59,14 @@ export const createChatCompletions = async (
     }
   }
 
-  // Build headers and add X-Initiator
+  // Determine X-Initiator value
   const dynamicInitiator = isAgentCall ? "agent" : "user"
+  const { initiator } = await resolveInitiatorWithSmartAgent(dynamicInitiator)
+
+  // Build headers and add X-Initiator
   const headers: Record<string, string> = {
     ...copilotHeaders(state, enableVision),
-    "X-Initiator": state.forceAgent ? "agent" : dynamicInitiator,
+    "X-Initiator": initiator,
   }
 
   // First attempt: passthrough unchanged

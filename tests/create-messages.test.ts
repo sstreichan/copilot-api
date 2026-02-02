@@ -2,8 +2,11 @@ import { test, expect, mock, beforeEach } from "bun:test"
 
 import type { AnthropicMessagesPayload } from "../src/routes/messages/anthropic-types"
 
+import { clearSmartAgentCache } from "../src/lib/smart-agent"
 import { state } from "../src/lib/state"
 import { createMessages } from "../src/services/copilot/create-messages"
+
+/* eslint-disable @typescript-eslint/no-non-null-assertion */
 
 // Mock state
 state.copilotToken = "test-token"
@@ -15,6 +18,7 @@ let fetchMock: ReturnType<typeof mock>
 
 beforeEach(() => {
   state.forceAgent = false
+  clearSmartAgentCache() // Clear cache between tests
   fetchMock = mock(
     (_url: string, opts: { headers: Record<string, string> }) => {
       return {
@@ -78,15 +82,23 @@ test("sets X-Initiator to agent when specified", async () => {
 
 test("forces X-Initiator to agent when state.forceAgent is true", async () => {
   state.forceAgent = true
+  state.githubToken = "test-github-token"
+
   const payload: AnthropicMessagesPayload = {
     model: "claude-sonnet-4-20250514",
     max_tokens: 1024,
     messages: [{ role: "user", content: "hi" }],
   }
   await createMessages(payload, { initiator: "user" })
-  const headers = (
-    fetchMock.mock.calls[0][1] as { headers: Record<string, string> }
-  ).headers
+
+  // With smart agent mode, first call is usage API, second is messages API
+  // Find the /v1/messages call
+  const messagesCall = fetchMock.mock.calls.find((call) =>
+    (call[0] as string).includes("/v1/messages"),
+  )
+  expect(messagesCall).toBeDefined()
+  const headers = (messagesCall![1] as { headers: Record<string, string> })
+    .headers
   expect(headers["X-Initiator"]).toBe("agent")
 })
 
