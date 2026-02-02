@@ -26,6 +26,7 @@ bun run typecheck        # Type check
 
 # CLI Flags (start command)
 bun run dev -- -M           # Native Messages API for Claude models (recommended)
+bun run dev -- -F           # Smart agent: auto-switch to agent mode when over quota budget
 bun run dev -- -a business  # Use business account type
 ```
 
@@ -44,6 +45,18 @@ bun run dev -- -a business  # Use business account type
 - `src/services/copilot/get-models.ts` - Model metadata with vision/thinking limits
 - `src/lib/state.ts` - **Single source of truth** for runtime state (tokens, models, config)
 - `src/lib/config.ts` - App configuration (see Config Options below)
+- `src/lib/smart-agent.ts` - Smart agent decision logic with caching (see Smart Agent below)
+
+### Smart Agent (`-F` flag)
+
+Monitors quota usage and auto-switches to agent mode when over budget:
+- `src/lib/smart-agent.ts` - Decision caching and initiator resolution
+- `src/services/github/get-copilot-usage.ts` - Quota API and threshold calculation
+
+**Key behaviors**:
+- Only caches `forceAgent=true` decisions (over budget stays over budget)
+- Uses `<=` for threshold to trigger at exact boundary
+- `Math.max(5, ...)` ensures minimum 5 quota reserve at month end
 
 ### Key Patterns
 
@@ -91,6 +104,12 @@ Located in `~/.local/share/copilot-api/config.json`:
 | Stream hangs | Always close in finally block |
 | Thinking signature errors | Auto-retried with stripped fields; check logs for warnings |
 | CLI `-ab` parsed as `-a -b` | citty uses mri; short option aliases must be single-char |
+| Smart agent caches wrong state | Only cache `forceAgent=true` (over budget); never cache "on budget" - would miss threshold crossing |
+| Smart agent threshold overshoot | Use `<=` not `<` to trigger at exact threshold; use `Math.max(5, ...)` for minimum reserve |
+
+## Recent Changes (02/2026)
+
+- **Smart Agent** (`-F`): Auto-switch to agent mode when over quota budget; precise threshold with `<=` and minimum 5 reserve
 
 ## Recent Changes (01/2026)
 
@@ -103,6 +122,7 @@ Located in `~/.local/share/copilot-api/config.json`:
 
 | Date | Change | Rollback |
 |:-----|:-------|:---------|
+| 2026-02-02 | Smart agent: cache only forceAgent=true, use <=, min reserve 5 | Revert smart-agent.ts, get-copilot-usage.ts |
 | 2026-01-31 | Models API enrichment (capabilities, limits, vendor grouping) | Revert routes/models/route.ts, get-models.ts |
 | 2026-01-29 | Compact request detection + anthropic-beta auto-add | Revert handler.ts, config.ts |
 | 2026-01-28 | Native Messages API (`-M` flag) | Remove create-messages.ts, revert handler.ts |
