@@ -64,7 +64,12 @@ function sortModels<T extends TransformedModel>(models: Array<T>): Array<T> {
     // 2. Premium before non-premium (within same type)
     if (a.is_premium !== b.is_premium) return a.is_premium ? -1 : 1
 
-    // 3. Sort by context_window descending
+    // 3. Sort by max_prompt descending (input token capacity)
+    const aPrompt = Number(a.limits.max_prompt) || 0
+    const bPrompt = Number(b.limits.max_prompt) || 0
+    if (aPrompt !== bPrompt) return bPrompt - aPrompt
+
+    // Tie-breaker: if max_prompt is equal, larger context_window first
     const aContext = Number(a.limits.context_window) || 0
     const bContext = Number(b.limits.context_window) || 0
     return bContext - aContext

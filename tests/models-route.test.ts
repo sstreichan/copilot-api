@@ -247,28 +247,28 @@ describe("GET /models - sorting", () => {
     }
   })
 
-  test("premium models are sorted by context_window descending", async () => {
+  test("premium models are sorted by max_prompt descending", async () => {
     const response = await getModelsResponse()
     const premiumChatModels = response.data.filter(
       (m) => m.is_premium && m.type === "chat",
     )
 
     for (let i = 1; i < premiumChatModels.length; i++) {
-      const prev = premiumChatModels[i - 1].limits.context_window ?? 0
-      const curr = premiumChatModels[i].limits.context_window ?? 0
+      const prev = premiumChatModels[i - 1].limits.max_prompt ?? 0
+      const curr = premiumChatModels[i].limits.max_prompt ?? 0
       expect(prev).toBeGreaterThanOrEqual(curr)
     }
   })
 
-  test("non-premium chat models are sorted by context_window descending", async () => {
+  test("non-premium chat models are sorted by max_prompt descending", async () => {
     const response = await getModelsResponse()
     const nonPremiumChatModels = response.data.filter(
       (m) => !m.is_premium && m.type === "chat",
     )
 
     for (let i = 1; i < nonPremiumChatModels.length; i++) {
-      const prev = nonPremiumChatModels[i - 1].limits.context_window ?? 0
-      const curr = nonPremiumChatModels[i].limits.context_window ?? 0
+      const prev = nonPremiumChatModels[i - 1].limits.max_prompt ?? 0
+      const curr = nonPremiumChatModels[i].limits.max_prompt ?? 0
       expect(prev).toBeGreaterThanOrEqual(curr)
     }
   })
