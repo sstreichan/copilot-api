@@ -97,9 +97,12 @@ export const createMessages = async (
   }
 
   // Forward anthropic-beta header if provided, or auto-add for thinking
+  // Note: Opus 4.6 adaptive thinking does not require a beta header
+  const isOpus46Model =
+    payload.model.includes("opus-4-6") || payload.model.includes("opus-4.6")
   if (options.anthropicBeta) {
     headers["anthropic-beta"] = options.anthropicBeta
-  } else if (payload.thinking?.budget_tokens) {
+  } else if (!isOpus46Model && payload.thinking?.budget_tokens) {
     headers["anthropic-beta"] = "interleaved-thinking-2025-05-14"
   }
 
@@ -107,9 +110,19 @@ export const createMessages = async (
   // Note: Anthropic API doesn't allow both temperature and top_p, so we remove top_p
   // top_k can be used with temperature, so we keep it if provided
   const { top_p: _ignoredTopP, ...restPayload } = payload
+
+  // For Opus 4.6+, always use adaptive thinking with max effort
   const enhancedPayload = {
     ...restPayload,
     temperature: 1,
+    ...(isOpus46Model && {
+      thinking: { type: "adaptive" as const },
+      output_config: { effort: "max" as const },
+    }),
+  }
+
+  if (isOpus46Model) {
+    consola.debug("Opus 4.6 detected: using adaptive thinking with max effort")
   }
 
   consola.debug("Native Messages API request:", {
