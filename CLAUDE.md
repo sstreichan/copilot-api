@@ -2,6 +2,14 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Core Rules
+
+- NEVER guess or speculate. When uncertain, use search tools (web, grep, read) to verify before responding. If you cannot verify, say so explicitly rather than fabricating an answer.
+- When given a skill or explicit task instructions, execute them immediately. Do NOT ask clarifying questions or hesitate unless critical information is genuinely missing.
+- Never claim or imply you are a specific model (e.g., "I am Opus 4.6") unless you have verified it. Do not include model names in Co-Authored-By commit trailers unless the user specifies.
+- Default to detailed, thorough responses. When summarizing articles, code, or research, provide paragraph-level detail unless explicitly asked for a brief summary.
+- When multiple search/MCP tools are available (exa, firecrawl, tavily, web search), use ALL relevant tools for research tasks, not just the first one. Compare results across sources.
+
 ## Project Overview
 
 Reverse-engineered proxy for GitHub Copilot API exposing OpenAI/Anthropic/Gemini compatible endpoints. Translates between API formats using a **three-layer architecture**:
@@ -106,6 +114,7 @@ Located in `~/.local/share/copilot-api/config.json`:
 | CLI `-ab` parsed as `-a -b` | citty uses mri; short option aliases must be single-char |
 | Smart agent caches wrong state | Only cache `forceAgent=true` (over budget); never cache "on budget" - would miss threshold crossing |
 | Smart agent threshold overshoot | Use `<=` not `<` to trigger at exact threshold; use `Math.max(5, ...)` for minimum reserve |
+| SSE ping causes `AI_JSONParseError` | Ping events must send `data: '{"type":"ping"}'`, not empty string. `@ai-sdk/anthropic` runs `JSON.parse` on all SSE data (only skips `[DONE]`); empty string → `Unexpected EOF`. Fixed in `utils.ts` and `messages/handler.ts` |
 
 ## Recent Changes (02/2026)
 

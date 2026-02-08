@@ -35,7 +35,7 @@ export const setupPingInterval = (
     try {
       await stream.writeSSE({
         event: "ping",
-        data: "",
+        data: '{"type":"ping"}',
       })
       consola.debug("Sent ping")
     } catch (error) {
