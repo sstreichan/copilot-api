@@ -101,7 +101,15 @@ export const createMessages = async (
   const isOpus46Model =
     payload.model.includes("opus-4-6") || payload.model.includes("opus-4.6")
   if (options.anthropicBeta) {
-    headers["anthropic-beta"] = options.anthropicBeta
+    // align with vscode copilot extension anthropic-beta
+    const filteredBeta = options.anthropicBeta
+      .split(",")
+      .map((item) => item.trim())
+      .filter((item) => item !== "claude-code-20250219")
+      .join(",")
+    if (filteredBeta) {
+      headers["anthropic-beta"] = filteredBeta
+    }
   } else if (!isOpus46Model && payload.thinking?.budget_tokens) {
     headers["anthropic-beta"] = "interleaved-thinking-2025-05-14"
   }

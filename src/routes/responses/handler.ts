@@ -33,6 +33,9 @@ export const handleResponses = async (c: Context) => {
 
   useFunctionApplyPatch(payload)
 
+  // Remove web_search tool as it's not supported by GitHub Copilot
+  removeWebSearchTool(payload)
+
   const selectedModel = state.models?.data.find(
     (model) => model.id === payload.model,
   )
@@ -149,4 +152,12 @@ const useFunctionApplyPatch = (payload: ResponsesPayload): void => {
       }
     }
   }
+}
+
+const removeWebSearchTool = (payload: ResponsesPayload): void => {
+  if (!Array.isArray(payload.tools) || payload.tools.length === 0) return
+
+  payload.tools = payload.tools.filter((t) => {
+    return t.type !== "web_search"
+  })
 }

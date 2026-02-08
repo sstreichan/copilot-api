@@ -26,6 +26,9 @@ export interface AnthropicMessagesPayload {
     effort?: "max" | "high" | "medium" | "low"
   }
   service_tier?: "auto" | "standard_only"
+  output_config?: {
+    effort?: "low" | "medium" | "high" | "max"
+  }
 }
 
 export interface AnthropicTextBlock {

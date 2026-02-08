@@ -1,19 +1,16 @@
 {
-  "name": "copilot-api",
-  "version": "0.7.0",
-  "description": "Turn GitHub Copilot into OpenAI/Anthropic API compatible server. Usable with Claude Code!",
+  "name": "@jeffreycao/copilot-api",
+  "version": "1.0.7",
+  "description": "Turn GitHub Copilot into OpenAI/Anthropic API compatible server. Usable with Claude Code Or Codex Or Opencode!",
   "keywords": [
     "proxy",
     "github-copilot",
     "openai-compatible"
   ],
-  "homepage": "https://github.com/ericc-ch/copilot-api",
-  "bugs": "https://github.com/ericc-ch/copilot-api/issues",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/ericc-ch/copilot-api.git"
-  },
-  "author": "Erick Christian <erickchristian48@gmail.com>",
+  "homepage": "https://github.com/caozhiyuan/copilot-api/tree/all",
+  "bugs": "https://github.com/caozhiyuan/copilot-api/issues",
+  "license": "MIT",
+  "author": "caozhiyuan",
   "type": "module",
   "bin": {
     "copilot-api": "./dist/main.js"
