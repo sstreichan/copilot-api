@@ -6,6 +6,7 @@ import type {
 } from "~/routes/messages/anthropic-types"
 
 import { copilotBaseUrl, copilotHeaders } from "~/lib/api-config"
+import { getReasoningEffortForModel } from "~/lib/config"
 import { HTTPError } from "~/lib/error"
 import { resolveInitiatorWithSmartAgent } from "~/lib/smart-agent"
 import { state } from "~/lib/state"
@@ -72,6 +73,110 @@ const hasImageContent = (payload: AnthropicMessagesPayload): boolean =>
   })
 
 /**
+ * Map config reasoning effort to Anthropic adaptive thinking effort level.
+ */
+const getAnthropicEffortForModel = (
+  model: string,
+): "low" | "medium" | "high" | "max" => {
+  const reasoningEffort = getReasoningEffortForModel(model)
+
+  if (reasoningEffort === "xhigh") return "max"
+  if (reasoningEffort === "none" || reasoningEffort === "minimal") return "low"
+
+  return reasoningEffort
+}
+
+/**
+ * Resolve the anthropic-beta header value based on options and model capabilities.
+ */
+const resolveAnthropicBetaHeader = (
+  options: CreateMessagesOptions,
+  supportsAdaptive: boolean,
+  payload: AnthropicMessagesPayload,
+): string | undefined => {
+  if (options.anthropicBeta) {
+    // align with vscode copilot extension anthropic-beta
+    const filteredBeta = options.anthropicBeta
+      .split(",")
+      .map((item) => item.trim())
+      .filter((item) => item !== "claude-code-20250219")
+      .join(",")
+    return filteredBeta || undefined
+  }
+
+  if (!supportsAdaptive && payload.thinking?.budget_tokens) {
+    return "interleaved-thinking-2025-05-14"
+  }
+
+  return undefined
+}
+
+/**
+ * Build the enhanced payload: strip top_p, force temperature=1,
+ * and add adaptive thinking config for capable models.
+ */
+const buildEnhancedPayload = (
+  payload: AnthropicMessagesPayload,
+  supportsAdaptive: boolean,
+) => {
+  const { top_p: _ignoredTopP, ...restPayload } = payload
+
+  return {
+    ...restPayload,
+    temperature: 1,
+    ...(supportsAdaptive && {
+      thinking: { type: "adaptive" as const },
+      output_config: { effort: getAnthropicEffortForModel(payload.model) },
+    }),
+  }
+}
+
+/**
+ * Send request to native /v1/messages and handle invalid signature retry.
+ */
+const sendWithSignatureRetry = async (
+  url: string,
+  headers: Record<string, string>,
+  enhancedPayload: ReturnType<typeof buildEnhancedPayload>,
+): Promise<Response> => {
+  const response = await fetch(url, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(enhancedPayload),
+  })
+
+  if (response.ok) return response
+
+  const errorBody = await response
+    .clone()
+    .json()
+    .catch(() => null)
+
+  if (response.status === 400 && isInvalidSignatureError(errorBody)) {
+    consola.warn(
+      "Invalid signature in thinking block detected, retrying with thinking blocks stripped",
+    )
+    const strippedPayload = stripThinkingBlocks(enhancedPayload)
+    const retryResponse = await fetch(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(strippedPayload),
+    })
+    if (!retryResponse.ok) {
+      consola.error("Retry also failed", retryResponse.status)
+      throw new HTTPError(
+        "Failed to create native messages (after retry)",
+        retryResponse,
+      )
+    }
+    return retryResponse
+  }
+
+  consola.error("Failed to create native messages", response.status)
+  throw new HTTPError("Failed to create native messages", response)
+}
+
+/**
  * Passthrough to Copilot's native /v1/messages endpoint.
  * No payload transformation - direct Anthropic format.
  *
@@ -96,41 +201,26 @@ export const createMessages = async (
     "X-Initiator": initiator,
   }
 
-  // Forward anthropic-beta header if provided, or auto-add for thinking
-  // Note: Opus 4.6 adaptive thinking does not require a beta header
-  const isOpus46Model =
-    payload.model.includes("opus-4-6") || payload.model.includes("opus-4.6")
-  if (options.anthropicBeta) {
-    // align with vscode copilot extension anthropic-beta
-    const filteredBeta = options.anthropicBeta
-      .split(",")
-      .map((item) => item.trim())
-      .filter((item) => item !== "claude-code-20250219")
-      .join(",")
-    if (filteredBeta) {
-      headers["anthropic-beta"] = filteredBeta
-    }
-  } else if (!isOpus46Model && payload.thinking?.budget_tokens) {
-    headers["anthropic-beta"] = "interleaved-thinking-2025-05-14"
+  // Resolve model capabilities and build enhanced payload
+  const selectedModel = state.models?.data.find((m) => m.id === payload.model)
+  const supportsAdaptive =
+    selectedModel?.capabilities.supports.adaptive_thinking ?? false
+
+  const betaHeader = resolveAnthropicBetaHeader(
+    options,
+    supportsAdaptive,
+    payload,
+  )
+  if (betaHeader) {
+    headers["anthropic-beta"] = betaHeader
   }
 
-  // Force temperature=1 for deep thinking (like Anthropic's extended thinking mode)
-  // Note: Anthropic API doesn't allow both temperature and top_p, so we remove top_p
-  // top_k can be used with temperature, so we keep it if provided
-  const { top_p: _ignoredTopP, ...restPayload } = payload
+  const enhancedPayload = buildEnhancedPayload(payload, supportsAdaptive)
 
-  // For Opus 4.6+, always use adaptive thinking with max effort
-  const enhancedPayload = {
-    ...restPayload,
-    temperature: 1,
-    ...(isOpus46Model && {
-      thinking: { type: "adaptive" as const },
-      output_config: { effort: "max" as const },
-    }),
-  }
-
-  if (isOpus46Model) {
-    consola.debug("Opus 4.6 detected: using adaptive thinking with max effort")
+  if (supportsAdaptive) {
+    consola.debug(
+      `Adaptive thinking enabled for ${payload.model}, effort: ${getAnthropicEffortForModel(payload.model)}`,
+    )
   }
 
   consola.debug("Native Messages API request:", {
@@ -138,49 +228,9 @@ export const createMessages = async (
     stream: payload.stream,
   })
 
-  // First attempt: passthrough unchanged
-  const response = await fetch(`${copilotBaseUrl(state)}/v1/messages`, {
-    method: "POST",
+  return sendWithSignatureRetry(
+    `${copilotBaseUrl(state)}/v1/messages`,
     headers,
-    body: JSON.stringify(enhancedPayload),
-  })
-
-  if (response.ok) {
-    return response
-  }
-
-  // On error, check if it's an invalid signature error
-  // Clone response so we can read body and still throw original error if needed
-  const errorBody = await response
-    .clone()
-    .json()
-    .catch(() => null)
-
-  if (response.status === 400 && isInvalidSignatureError(errorBody)) {
-    consola.warn(
-      "Invalid signature in thinking block detected, retrying with thinking blocks stripped",
-    )
-
-    // Retry with thinking blocks stripped
-    const strippedPayload = stripThinkingBlocks(enhancedPayload)
-    const retryResponse = await fetch(`${copilotBaseUrl(state)}/v1/messages`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(strippedPayload),
-    })
-
-    if (!retryResponse.ok) {
-      consola.error("Retry also failed", retryResponse.status)
-      throw new HTTPError(
-        "Failed to create native messages (after retry)",
-        retryResponse,
-      )
-    }
-
-    return retryResponse
-  }
-
-  // Not a signature error, throw original error
-  consola.error("Failed to create native messages", response.status)
-  throw new HTTPError("Failed to create native messages", response)
+    enhancedPayload,
+  )
 }

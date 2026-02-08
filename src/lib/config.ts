@@ -29,6 +29,8 @@ const defaultConfig: AppConfig = {
   smallModel: "gpt-5-mini",
   modelReasoningEfforts: {
     "gpt-5-mini": "low",
+    "claude-opus-4.6": "xhigh",
+    "claude-opus-4.6-fast": "xhigh",
   },
   useFunctionApplyPatch: true,
   compactUseSmallModel: true,
