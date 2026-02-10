@@ -184,6 +184,55 @@ export const createHandlerLogger = (name: string): ConsolaInstance => {
 }
 
 // Stream progress logging utilities
+export function shouldUseColor(): boolean {
+  if (process.env.NO_COLOR !== undefined) return false
+  if (!process.stdout.isTTY) return false
+  return true
+}
+
+// 23 visually distinct ANSI 256 colors (prime count for better hash distribution)
+const MODEL_COLOR_CODES: Array<number> = [
+  196, // red
+  202, // dark orange
+  208, // orange
+  214, // gold
+  220, // bright yellow
+  226, // yellow
+  46, // green
+  82, // bright green
+  34, // forest green
+  48, // sea green
+  51, // cyan
+  45, // turquoise
+  39, // sky blue
+  33, // azure
+  27, // blue
+  21, // deep blue
+  57, // indigo
+  93, // violet
+  129, // bright purple
+  165, // magenta
+  201, // hot pink
+  213, // pink
+  175, // mauve
+]
+
+// FNV-1a hash — better distribution than djb2 for short strings
+function fnv1a(input: string): number {
+  let hash = 0x811c9dc5
+  for (let i = 0; i < input.length; i++) {
+    hash ^= input.codePointAt(i) ?? 0
+    hash = Math.imul(hash, 0x01000193) >>> 0
+  }
+  return hash
+}
+
+export function colorizeModel(name: string): string {
+  const hash = fnv1a(name)
+  const colorCode = MODEL_COLOR_CODES[hash % MODEL_COLOR_CODES.length]
+  return `\x1b[38;5;${colorCode}m${name}\x1b[0m`
+}
+
 export interface StreamLogOptions {
   model: string
   chunks: number
@@ -197,7 +246,8 @@ export const formatStreamLog = ({
   done,
   premium,
 }: StreamLogOptions): string => {
-  const base = `\x1b[2K\r↪ ${model} ${chunks}${done ? " ✓" : ""}`
+  const displayModel = shouldUseColor() ? colorizeModel(model) : model
+  const base = `\x1b[2K\r↪ ${displayModel} ${chunks}${done ? " ✓" : ""}`
   if (done && premium) {
     // Color based on remaining percentage: green > 50%, yellow 20-50%, red < 20%
     const pct = premium.remaining / premium.total

@@ -30,3 +30,9 @@ claude-mem-setup-guide.md
 
 # plan documents (local only)
 docs/plans/
+.beads/.jsonl.lock
+.beads/.local_version
+.sisyphus/notepads/log-improvements/decisions.md
+.sisyphus/notepads/log-improvements/issues.md
+.sisyphus/notepads/log-improvements/learnings.md
+.sisyphus/notepads/log-improvements/problems.md

@@ -7,9 +7,11 @@ import { streamSSE } from "hono/streaming"
 import { awaitApproval } from "~/lib/approval"
 import { getSmallModel, shouldCompactUseSmallModel } from "~/lib/config"
 import {
+  colorizeModel,
   createHandlerLogger,
   formatStreamLog,
   getPremiumInfo,
+  shouldUseColor,
 } from "~/lib/logger"
 import { checkRateLimit } from "~/lib/rate-limit"
 import { state } from "~/lib/state"
@@ -49,6 +51,8 @@ import {
 import { translateChunkToAnthropicEvents } from "./stream-translation"
 
 const logger = createHandlerLogger("messages-handler")
+
+const cm = (model: string) => (shouldUseColor() ? colorizeModel(model) : model)
 
 const compactSystemPromptStart =
   "You are a helpful AI assistant tasked with summarizing conversations"
@@ -152,7 +156,9 @@ const handleWithNativeMessages = async (
 ): Promise<Response> => {
   const anthropicBeta = c.req.header("anthropic-beta")
 
-  consola.info(`IN ${originalModel} → native /v1/messages`)
+  consola.info(
+    `IN ${cm(originalModel)} → ${cm(anthropicPayload.model)} (native)`,
+  )
   logger.debug("Using native Messages API passthrough")
 
   if (state.manualApprove) {
@@ -167,11 +173,59 @@ const handleWithNativeMessages = async (
   // Stream: use raw body passthrough (NOT streamSSE reconstruction)
   if (anthropicPayload.stream && response.body) {
     const premium = await getPremiumInfo()
-    consola.info(`IN ${originalModel} → native /v1/messages (stream)`)
-    process.stdout.write(
-      `${formatStreamLog({ model: originalModel, chunks: 0, done: true, premium })}\n`,
-    )
-    return c.body(response.body, response.status as ContentfulStatusCode, {
+    let chunkCount = 0
+    let buffer = ""
+    const decoder = new TextDecoder()
+    const reader = response.body.getReader()
+
+    const countedBody = new ReadableStream<Uint8Array>({
+      async pull(controller) {
+        const result = await reader.read()
+
+        if (result.done) {
+          // flush remaining buffer
+          buffer += decoder.decode()
+          buffer = buffer.replaceAll("\r\n", "\n")
+          if (buffer.trim().length > 0) {
+            chunkCount++
+          }
+
+          process.stdout.write(
+            `${formatStreamLog({ model: originalModel, chunks: chunkCount, done: true, premium })}\n`,
+          )
+          controller.close()
+          return
+        }
+
+        const chunk = result.value as Uint8Array
+
+        // byte-for-byte passthrough
+        controller.enqueue(chunk)
+
+        // count SSE events (separated by \n\n)
+        buffer += decoder.decode(chunk, { stream: true })
+        buffer = buffer.replaceAll("\r\n", "\n")
+        const parts = buffer.split("\n\n")
+        buffer = parts.pop() ?? ""
+
+        const newEvents = parts.filter((e) => e.trim().length > 0).length
+        if (newEvents > 0) {
+          chunkCount += newEvents
+          process.stdout.write(
+            formatStreamLog({
+              model: originalModel,
+              chunks: chunkCount,
+              done: false,
+            }),
+          )
+        }
+      },
+      cancel() {
+        void reader.cancel()
+      },
+    })
+
+    return c.body(countedBody, response.status as ContentfulStatusCode, {
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache",
       Connection: "keep-alive",
@@ -193,7 +247,7 @@ const handleWithChatCompletions = async (
   originalModel: string,
 ) => {
   const openAIPayload = translateToOpenAI(anthropicPayload)
-  consola.info(`IN ${originalModel} → ${openAIPayload.model}`)
+  consola.info(`IN ${cm(originalModel)} → ${cm(openAIPayload.model)}`)
   logger.debug(
     "Translated OpenAI request payload:",
     JSON.stringify(openAIPayload),
@@ -279,7 +333,7 @@ const handleWithResponsesApi = async (
 ) => {
   const responsesPayload =
     translateAnthropicMessagesToResponsesPayload(anthropicPayload)
-  consola.info(`IN ${originalModel} → ${responsesPayload.model}`)
+  consola.info(`IN ${cm(originalModel)} → ${cm(responsesPayload.model)}`)
   logger.debug(
     "Translated Responses payload:",
     JSON.stringify(responsesPayload),

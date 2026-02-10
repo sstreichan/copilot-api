@@ -6,9 +6,11 @@ import { streamSSE } from "hono/streaming"
 import { awaitApproval } from "~/lib/approval"
 import { getConfig } from "~/lib/config"
 import {
+  colorizeModel,
   createHandlerLogger,
   formatStreamLog,
   getPremiumInfo,
+  shouldUseColor,
 } from "~/lib/logger"
 import { checkRateLimit } from "~/lib/rate-limit"
 import { state } from "~/lib/state"
@@ -22,6 +24,8 @@ import { createStreamIdTracker, fixStreamIds } from "./stream-id-sync"
 import { getResponsesRequestOptions } from "./utils"
 
 const logger = createHandlerLogger("responses-handler")
+
+const cm = (model: string) => (shouldUseColor() ? colorizeModel(model) : model)
 
 const RESPONSES_ENDPOINT = "/responses"
 
@@ -57,7 +61,7 @@ export const handleResponses = async (c: Context) => {
 
   const { vision, initiator } = getResponsesRequestOptions(payload)
 
-  consola.info(`IN ${payload.model}`)
+  consola.info(`IN ${cm(payload.model)}`)
 
   if (state.manualApprove) {
     await awaitApproval()

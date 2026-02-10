@@ -6,6 +6,12 @@ import {
   type SmartAgentDecision,
 } from "~/services/github/get-copilot-usage"
 
+let lastQuotaLogTime = 0
+
+export function resetQuotaLogThrottle(): void {
+  lastQuotaLogTime = 0
+}
+
 export interface ResolveInitiatorResult {
   initiator: "agent" | "user"
   decision?: SmartAgentDecision
@@ -108,9 +114,15 @@ export async function resolveInitiatorWithSmartAgent(
         `[quota] Smart agent: API error, defaulting to agent mode - ${decision.error}`,
       )
     } else {
-      consola.info(
-        `[quota] Smart agent: remaining ${decision.remaining} < expected ${decision.expected} → using agent mode`,
-      )
+      const quotaMessage = `[quota] Smart agent: remaining ${decision.remaining} < expected ${decision.expected} → using agent mode`
+      const nowMs = Date.now()
+
+      if (nowMs - lastQuotaLogTime >= 300_000) {
+        consola.info(quotaMessage)
+        lastQuotaLogTime = nowMs
+      } else {
+        consola.debug(quotaMessage)
+      }
     }
     return { initiator: "agent", decision }
   }
