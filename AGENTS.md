@@ -90,6 +90,8 @@ bun run dev -- --proxy-env  # 从环境变量读取代理配置
 
 ### 原生 Messages 流程 (`-M` 标志)
 
+**重要约束**：native messages 分支必须在其他 payload 修改之前执行（避免 OpenAI 格式转换污染原始 Anthropic payload）。
+
 ```
 handleCompletion (handler.ts)
   → if nativeMessages && isClaudeModel → handleWithNativeMessages
@@ -100,6 +102,11 @@ handleCompletion (handler.ts)
   → else if responsesApi → handleWithResponsesApi
   → else → handleWithChatCompletions
 ```
+
+Native messages 的隐含行为：
+- 强制 `temperature=1`（optimal for reasoning），移除 `top_p`（Anthropic 不允许同时传 temperature 和 top_p）
+- Adaptive thinking 通过模型能力检测（`supports.adaptive_thinking`）而非硬编码模型名
+- Vision 自动检测：消息中包含 image 内容时自动添加 `copilot-vision-request: true` header
 
 ### Smart Agent (`-F` 标志)
 
@@ -169,6 +176,9 @@ handleCompletion (handler.ts)
 | SSE ping 导致 `AI_JSONParseError` | ping 事件必须发 `data: '{"type":"ping"}'`，不能发空字符串 |
 | **Vertex AI block 顺序** | assistant 消息中 text blocks 必须在 tool_use blocks 之前。Vertex AI 拒绝 text 出现在 tool_use 之后（返回 400）。由 `create-messages.ts` 中的 `reorderAssistantBlocks` 修复。不影响 chat completions 路径。 |
 | **Thinking block 内容问题** | 空 thinking、`"Thinking..."` 占位符、含 `"@"` 的签名可能导致 400。可考虑预防性过滤（参考 caozhiyuan fork）。 |
+| **tool_result + text 混合导致 premium 计费** | skill invocations、edit hooks、todo reminders 会在 user 消息中混入 text blocks。`mergeToolResultForClaude` 将它们合并到 tool_result 中，避免额外 premium 消耗。 |
+| **Responses API stream ID 不一致** | Copilot 在 added/done 事件返回不同 ID，`@ai-sdk/openai` 会报 "text part not found"。由 `stream-id-sync.ts` 同步 ID。 |
+| **`web_search` tool 不被 Copilot 支持** | responses 路径在发送前自动移除 `web_search` tool。 |
 
 ## 调试 Copilot 后端
 
