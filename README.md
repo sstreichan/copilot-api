@@ -183,6 +183,9 @@ The following command line options are available for the `start` command:
 - **Default shape:**
   ```json
   {
+    "auth": {
+      "apiKeys": []
+    },
     "extraPrompts": {
       "gpt-5-mini": "<built-in exploration prompt>",
       "gpt-5.1-codex-max": "<built-in exploration prompt>"
@@ -195,6 +198,7 @@ The following command line options are available for the `start` command:
     "compactUseSmallModel": true
   }
   ```
+- **auth.apiKeys:** API keys used for request authentication. Supports multiple keys for rotation. Requests can authenticate with either `x-api-key: <key>` or `Authorization: Bearer <key>`. If empty or omitted, authentication is disabled.
 - **extraPrompts:** Map of `model -> prompt` appended to the first system prompt when translating Anthropic-style requests to Copilot. Use this to inject guardrails or guidance per model. Missing default entries are auto-added without overwriting your custom prompts.
 - **smallModel:** Fallback model used for tool-less warmup messages (e.g., Claude Code probe requests) to avoid spending premium requests; defaults to `gpt-5-mini`.
 - **modelReasoningEfforts:** Per-model `reasoning.effort` sent to the Copilot Responses API. Allowed values are `none`, `minimal`, `low`, `medium`, `high`, and `xhigh`. If a model isn’t listed, `high` is used by default.
@@ -202,6 +206,22 @@ The following command line options are available for the `start` command:
 - **compactUseSmallModel:** When `true`, detected "compact" requests (e.g., from Claude Code or Opencode compact mode) will automatically use the configured `smallModel` to avoid consuming premium model usage for short/background tasks. Defaults to `true`.
 
 Edit this file to customize prompts or swap in your own fast model. Restart the server (or rerun the command) after changes so the cached config is refreshed.
+
+## API Authentication
+
+- **Protected routes:** All routes except `/` require authentication when `auth.apiKeys` is configured and non-empty.
+- **Allowed auth headers:**
+  - `x-api-key: <your_key>`
+  - `Authorization: Bearer <your_key>`
+- **CORS preflight:** `OPTIONS` requests are always allowed.
+- **When no keys are configured:** Server starts normally and allows requests (authentication disabled).
+
+Example request:
+
+```sh
+curl http://localhost:4141/v1/models \
+  -H "x-api-key: your_api_key"
+```
 
 ## API Endpoints
 
@@ -337,7 +357,6 @@ Here is an example `.claude/settings.json` file:
     "ANTHROPIC_MODEL": "gpt-5.2",
     "ANTHROPIC_DEFAULT_SONNET_MODEL": "gpt-5.2",
     "ANTHROPIC_DEFAULT_HAIKU_MODEL": "gpt-5-mini",
-    "CLAUDE_CODE_SUBAGENT_MODEL": "gpt-5-mini",
     "DISABLE_NON_ESSENTIAL_MODEL_CALLS": "1",
     "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
     "BASH_MAX_TIMEOUT_MS": "600000",
@@ -355,6 +374,45 @@ Here is an example `.claude/settings.json` file:
 You can find more options here: [Claude Code settings](https://docs.anthropic.com/en/docs/claude-code/settings#environment-variables)
 
 You can also read more about IDE integration here: [Add Claude Code to your IDE](https://docs.anthropic.com/en/docs/claude-code/ide-integrations)
+
+### Subagent Marker Integration (Optional)
+
+This project supports `X-Initiator: agent` for subagent-originated requests
+
+#### Claude Code hook producer
+
+Use the included hook script to inject marker context on `SubagentStart`.
+If you place the script under your user Claude directory (`~/.claude/hooks`), use this cross-platform command in `.claude/settings.json`:
+
+- `.claude/hooks/subagent-start-marker.js`
+
+And enable it from `.claude/settings.json`:
+
+```json
+{
+  "hooks": {
+    "SubagentStart": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node --input-type=module -e \"import { homedir } from 'node:os'; import { join } from 'node:path'; import { readFile } from 'node:fs/promises'; const file = join(homedir(), '.claude', 'hooks', 'subagent-start-marker.js'); const source = await readFile(file, 'utf8'); const url = 'data:text/javascript;base64,' + Buffer.from(source).toString('base64'); await import(url);\""
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+#### Opencode plugin producer
+
+For opencode, use the plugin implementation at:
+
+- `.opencode/plugins/subagent-marker.js`
+
+This plugin tracks sub-sessions and prepends a marker system reminder to subagent chat messages.
 
 ## Running from Source
 

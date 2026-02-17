@@ -2,6 +2,7 @@ import { Hono } from "hono"
 import { cors } from "hono/cors"
 import { logger } from "hono/logger"
 
+import { createAuthMiddleware } from "./lib/request-auth"
 import { completionRoutes } from "./routes/chat-completions/route"
 import { embeddingRoutes } from "./routes/embeddings/route"
 import { geminiRouter } from "./routes/generate-content/route"
@@ -22,6 +23,7 @@ server.use("*", async (c, next) => {
   return logger()(c as any, next)
 })
 server.use(cors())
+server.use("*", createAuthMiddleware())
 
 server.get("/", (c) => c.text("Server running"))
 
