@@ -112,6 +112,25 @@ const resolveAnthropicBetaHeader = (
 }
 
 /**
+ * Reorder assistant message content blocks: [thinking, text, tool_use].
+ * Vertex AI rejects requests where text blocks follow tool_use blocks
+ * in assistant messages, reporting "tool_use without tool_result".
+ */
+const reorderAssistantBlocks = (payload: AnthropicMessagesPayload): void => {
+  for (const msg of payload.messages) {
+    if (msg.role !== "assistant" || !Array.isArray(msg.content)) continue
+    msg.content.sort((a, b) => {
+      const order: Record<string, number> = {
+        thinking: 0,
+        text: 1,
+        tool_use: 2,
+      }
+      return (order[a.type] ?? 1) - (order[b.type] ?? 1)
+    })
+  }
+}
+
+/**
  * Build the enhanced payload: strip top_p, force temperature=1,
  * and add adaptive thinking config for capable models.
  */
@@ -214,6 +233,9 @@ export const createMessages = async (
   if (betaHeader) {
     headers["anthropic-beta"] = betaHeader
   }
+
+  // Reorder assistant blocks: Vertex AI requires tool_use at end
+  reorderAssistantBlocks(payload)
 
   const enhancedPayload = buildEnhancedPayload(payload, supportsAdaptive)
 

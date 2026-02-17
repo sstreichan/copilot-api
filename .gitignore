@@ -32,10 +32,7 @@ claude-mem-setup-guide.md
 docs/plans/
 .beads/.jsonl.lock
 .beads/.local_version
-.sisyphus/notepads/log-improvements/decisions.md
-.sisyphus/notepads/log-improvements/issues.md
-.sisyphus/notepads/log-improvements/learnings.md
-.sisyphus/notepads/log-improvements/problems.md
+.sisyphus/
 .beads/daemon-error
 .beads/issues.jsonl
 .beads/last-touched
