@@ -17,138 +17,212 @@ Keep this managed block so 'openspec update' can refresh the instructions.
 
 <!-- OPENSPEC:END -->
 
-## Issue Tracking with bd (beads)
+## 基本规则
 
-**IMPORTANT**: This project uses **bd (beads)** for ALL issue tracking. Do NOT use markdown TODOs, task lists, or other tracking methods.
+- 不要猜测或臆断。不确定时用搜索工具验证，无法验证就明确说明。
+- 收到 skill 或明确任务指令时立即执行，除非关键信息确实缺失，否则不要问澄清问题。
+- 不要声称自己是特定模型，除非已验证。
+- 默认给出详尽、全面的回答。
+- 有多个搜索/MCP 工具时，全部使用，跨源对比结果。
+- 语言策略：默认中文回复。
 
-### Why bd?
+## 项目概述
 
-- Dependency-aware: Track blockers and relationships between issues
-- Git-friendly: Auto-syncs to JSONL for version control
-- Agent-optimized: JSON output, ready work detection, discovered-from links
-- Prevents duplicate tracking systems and confusion
+GitHub Copilot API 的反向代理，基于 **Hono** 框架（非 Express），暴露 OpenAI/Anthropic/Gemini 兼容端点。使用**三层架构**做格式转换：
 
-### Quick Start
-
-**Check for ready work:**
-```bash
-bd ready --json
+```
+客户端 API (Anthropic/Gemini/OpenAI) → OpenAI 格式 → GitHub Copilot API
 ```
 
-**Create new issues:**
+**例外**：使用 `-M` 标志时，Claude 模型绕过转换，直接使用 Copilot 的原生 `/v1/messages` 端点。请求走 **Vertex AI** 后端（非 Anthropic 原生 API），验证规则更严格。
+
+## 快速参考
+
 ```bash
-bd create "Issue title" -t bug|feature|task -p 0-4 --json
-bd create "Issue title" -p 1 --deps discovered-from:bd-123 --json
+# 开发
+bun run dev              # 带 watch 的开发服务器
+bun test                 # 运行所有测试
+bun test tests/file.ts   # 运行指定测试
+
+# 质量检查
+bun run lint:all --fix   # Lint 并修复
+bun run typecheck        # 类型检查
+
+# CLI 标志 (start 命令)
+bun run dev -- -M           # Claude 模型使用原生 Messages API（推荐）
+bun run dev -- -F           # Smart agent：超出配额预算时自动切换 agent 模式
+bun run dev -- -a business  # 使用 business 账户类型
+bun run dev -- -v           # 详细日志
+bun run dev -- -m           # 手动审批每个请求
+bun run dev -- -r 5         # 速率限制（秒）
+bun run dev -- -w           # 超出速率限制时等待而非报错
+bun run dev -- -s           # 显示 token
+bun run dev -- -c           # Claude Code 模式
+bun run dev -- -g TOKEN     # 指定 GitHub token
+bun run dev -- --proxy-env  # 从环境变量读取代理配置
 ```
 
-**Claim and update:**
+## 架构
+
+### 路由结构
+- `src/routes/messages/` - Anthropic `/v1/messages`（支持 Responses API 的 vision/tools）
+- `src/routes/generate-content/` - Gemini API
+- `src/routes/chat-completions/` - OpenAI 透传
+- `src/routes/responses/` - GitHub Copilot Responses API
+- `src/routes/models/` - 增强版 `/v1/models`，含能力、限制、计费信息
+
+**路由双注册**：所有路由同时注册在 `/` 和 `/v1/` 前缀下（如 `/chat/completions` 和 `/v1/chat/completions`），添加新路由时需同步注册。
+
+### 中间件执行顺序（Hono）
+
+`src/server.ts` 中间件按以下顺序执行：
+1. **Logger** — 对 `/v1/messages` 之外的路径启用 Hono logger（messages 路由有自己的日志）
+2. **CORS** — 全局跨域
+3. **Auth** — API Key 认证中间件（`createAuthMiddleware`，来自 caozhiyuan fork）
+
+### 核心服务
+- `src/services/copilot/create-chat-completions.ts` - Copilot API 核心调用器（token 刷新、headers、签名重试）
+- `src/services/copilot/create-messages.ts` - Claude 模型的原生 Messages API 透传；**同时也是后端适配层**（block 重排、thinking 剥离）
+- `src/services/copilot/get-models.ts` - 模型元数据（vision/thinking 限制）
+- `src/lib/state.ts` - **运行时状态唯一真相源**（tokens、models、config）
+- `src/lib/config.ts` - 应用配置（见下方配置选项）
+- `src/lib/smart-agent.ts` - Smart agent 决策逻辑与缓存
+
+### 原生 Messages 流程 (`-M` 标志)
+
+```
+handleCompletion (handler.ts)
+  → if nativeMessages && isClaudeModel → handleWithNativeMessages
+    → createMessages (create-messages.ts)
+      → reorderAssistantBlocks(payload)   // Vertex AI block 顺序修复
+      → buildEnhancedPayload              // adaptive thinking, temperature
+      → sendWithSignatureRetry            // 含 stripThinkingBlocks 重试
+  → else if responsesApi → handleWithResponsesApi
+  → else → handleWithChatCompletions
+```
+
+### Smart Agent (`-F` 标志)
+
+监控配额使用量，超出预算时自动切换 agent 模式：
+- 只缓存 `forceAgent=true` 的决策（超预算就是超预算）
+- 用 `<=` 而非 `<` 判断阈值，精确触发
+- `Math.max(5, ...)` 确保月末至少保留 5 个配额
+
+### 关键模式
+
+**流式状态机**：所有流式翻译使用状态机，遵循以下不变量：
+- `tool_calls` finish_reason = 中间态（保留累加器）
+- `stop`/`length`/`content_filter` = 终态（清空累加器）
+- 必须在 `finally` 块中关闭 stream
+
+**翻译流程**：每个路由有 `handler.ts` + 可选的 `*-translation.ts` 做格式转换。
+
+**签名重试**：`create-chat-completions.ts` 和 `create-messages.ts` 都会在遇到 "Invalid signature in thinking block" 错误时自动剥离 thinking/reasoning 字段并重试。
+
+**后端适配（SRP）**：所有 Vertex AI / Copilot 后端的 workaround 都放在 `create-messages.ts`，不放 `handler.ts`。Handler 只做路由分发。适配包括：
+- `reorderAssistantBlocks` — 将 text blocks 移到 tool_use blocks 之前
+- `stripThinkingBlocks` — 签名重试时移除 thinking 内容
+
+**错误处理约定**：使用 `HTTPError`（`~/lib/error.ts`）包装底层 Response，保持原始 HTTP status。无全局 error handler，未捕获的错误由 Hono 返回 500。`forwardError` 用于透传上游错误响应。
+
+**无通用重试**：除签名重试外，没有通用 retry/backoff 机制。rate limit 的 `-w` 等待模式使用 sleep 延迟，不是重试。
+
+**Token 刷新**：`src/lib/token.ts` 中按 `refresh_in - 60s` 提前定时刷新 Copilot token。刷新失败会直接 throw（可能中断服务）。
+
+## 配置选项
+
+位于 `~/.local/share/copilot-api/config.json`：
+
+| 选项 | 类型 | 默认值 | 说明 |
+|:-----|:-----|:-------|:-----|
+| `extraPrompts` | `Record<string, string>` | gpt-5 exploration | 按模型添加额外系统提示 |
+| `smallModel` | `string` | `"gpt-5-mini"` | 预热/compact 请求使用的小模型 |
+| `compactUseSmallModel` | `boolean` | `true` | compact 请求是否使用小模型 |
+| `useFunctionApplyPatch` | `boolean` | `true` | 将自定义 apply_patch 转为 function 类型 |
+| `modelReasoningEfforts` | `Record<string, string>` | - | 按模型设置推理努力程度 |
+
+## 关键规则
+
+1. **状态**：不要创建并行状态缓存；只用 `src/lib/state.ts`
+2. **流**：必须 `try/finally` + `stream.close()`；4 条清理路径必须同步
+3. **工具调用**：chunk 间 ID 必须稳定；`tool_calls` finish_reason 是非终态
+4. **日志**：使用 `consola`（禁止 `console.log`）；`LOG_LEVEL=debug` 开详细日志
+5. **导入**：使用 `~` 别名引用 `src/` 路径
+
+## 测试
+
+- Mock 模式：`mock.module("~/services/copilot/create-chat-completions", ...)`
+- 使用 `tests/fixtures/` 中的录制数据，不要打真实 API
+- 不要硬编码 token 数量（使用 `expect.any(Number)`）
+
+## 已知坑点
+
+| 问题 | 解决方案 |
+|:-----|:---------|
+| Tool calls 消失 | 不要过滤空的 scaffold chunks；让累加器处理 |
+| 多轮工具调用失败 | `finish_reason: "tool_calls"` 是中间态，不要清空 |
+| Stream 挂起 | 必须在 finally 块中关闭 |
+| Thinking 签名错误 | 自动剥离字段重试；检查日志中的 warning |
+| CLI `-ab` 被解析为 `-a -b` | citty 用 mri；短选项别名必须是单字符 |
+| Smart agent 缓存了错误状态 | 只缓存 `forceAgent=true`；不要缓存"在预算内" |
+| Smart agent 阈值过冲 | 用 `<=` 而非 `<`；用 `Math.max(5, ...)` 保证最低储备 |
+| SSE ping 导致 `AI_JSONParseError` | ping 事件必须发 `data: '{"type":"ping"}'`，不能发空字符串 |
+| **Vertex AI block 顺序** | assistant 消息中 text blocks 必须在 tool_use blocks 之前。Vertex AI 拒绝 text 出现在 tool_use 之后（返回 400）。由 `create-messages.ts` 中的 `reorderAssistantBlocks` 修复。不影响 chat completions 路径。 |
+| **Thinking block 内容问题** | 空 thinking、`"Thinking..."` 占位符、含 `"@"` 的签名可能导致 400。可考虑预防性过滤（参考 caozhiyuan fork）。 |
+
+## 调试 Copilot 后端
+
+使用 `copilot-backend-tester` skill（`.claude/skills/copilot-backend-tester/SKILL.md`）直接测试 Copilot 后端，绕过本地代理。关键要求：必须使用 `X-Initiator: agent` header。
+
+### 调试环境变量
+
+| 变量 | 说明 |
+|:-----|:-----|
+| `DEBUG_GEMINI_REQUESTS=true` | 打印 Gemini 请求/响应详情（handler + translation） |
+| `DEBUG_LOG_DIR` | 自定义 debug 日志目录（默认 `./debug-logs`） |
+| `NO_COLOR` | 禁用日志彩色输出 |
+
+## 问题追踪：bd (beads)
+
+本项目使用 **bd (beads)** 进行所有问题追踪。不要使用 markdown TODO 或其他追踪方式。
+
 ```bash
+bd ready --json          # 查看可开始的工作
+bd create "标题" -t bug|feature|task -p 0-4 --json
 bd update bd-42 --status in_progress --json
-bd update bd-42 --priority 1 --json
+bd close bd-42 --reason "完成" --json
 ```
 
-**Complete work:**
-```bash
-bd close bd-42 --reason "Completed" --json
-```
+工作流：`bd ready` → 认领 → 实现 → 发现新工作？`bd create ... --deps discovered-from:<parent-id>` → `bd close` → 将 `.beads/issues.jsonl` 与代码一起提交。
 
-### Issue Types
+### 规则
 
-- `bug` - Something broken
-- `feature` - New functionality
-- `task` - Work item (tests, docs, refactoring)
-- `epic` - Large feature with subtasks
-- `chore` - Maintenance (dependencies, tooling)
+- ✅ 所有任务追踪用 bd；始终加 `--json` 标志
+- ✅ 用 `discovered-from` 关联发现的新工作
+- ✅ AI 生成的规划文档放 `history/` 目录（不要放项目根目录）
+- ❌ 不要创建 markdown TODO 列表或使用外部问题追踪器
 
-### Priorities
+## 近期变更 (02/2026)
 
-- `0` - Critical (security, data loss, broken builds)
-- `1` - High (major features, important bugs)
-- `2` - Medium (default, nice-to-have)
-- `3` - Low (polish, optimization)
-- `4` - Backlog (future ideas)
+- **Vertex AI block 顺序修复**：`create-messages.ts` 中的 `reorderAssistantBlocks`
+- **caozhiyuan/all 合并**：吸收 API key 认证、codex phase、subagent marker；所有冲突选 ours
+- **Smart Agent** (`-F`)：超出配额预算时自动切换 agent 模式
 
-### Workflow for AI Agents
+## 近期变更 (01/2026)
 
-1. **Check ready work**: `bd ready` shows unblocked issues
-2. **Claim your task**: `bd update <id> --status in_progress`
-3. **Work on it**: Implement, test, document
-4. **Discover new work?** Create linked issue:
-   - `bd create "Found bug" -p 1 --deps discovered-from:<parent-id>`
-5. **Complete**: `bd close <id> --reason "Done"`
-6. **Commit together**: Always commit the `.beads/issues.jsonl` file together with the code changes so issue state stays in sync with code state
+- **原生 Messages API** (`-M`)：Claude 模型直接透传到 Copilot `/v1/messages`
+- **Compact 检测**：自动检测摘要请求，可选使用小模型
+- **Models API 增强**：`/v1/models` 返回 thinking_budget、vision 限制、计费信息
+- **Thinking 兼容性**：`THINKING_TEXT = "Thinking..."` 默认值，兼容 opencode
 
-### Auto-Sync
+## 决策日志
 
-bd automatically syncs with git:
-- Exports to `.beads/issues.jsonl` after changes (5s debounce)
-- Imports from JSONL when newer (e.g., after `git pull`)
-- No manual export/import needed!
-
-### GitHub Copilot Integration
-
-If using GitHub Copilot, also create `.github/copilot-instructions.md` for automatic instruction loading.
-Run `bd onboard` to get the content, or see step 2 of the onboard instructions.
-
-### MCP Server (Recommended)
-
-If using Claude or MCP-compatible clients, install the beads MCP server:
-
-```bash
-pip install beads-mcp
-```
-
-Add to MCP config (e.g., `~/.config/claude/config.json`):
-```json
-{
-  "beads": {
-    "command": "beads-mcp",
-    "args": []
-  }
-}
-```
-
-Then use `mcp__beads__*` functions instead of CLI commands.
-
-### Managing AI-Generated Planning Documents
-
-AI assistants often create planning and design documents during development:
-- PLAN.md, IMPLEMENTATION.md, ARCHITECTURE.md
-- DESIGN.md, CODEBASE_SUMMARY.md, INTEGRATION_PLAN.md
-- TESTING_GUIDE.md, TECHNICAL_DESIGN.md, and similar files
-
-**Best Practice: Use a dedicated directory for these ephemeral files**
-
-**Recommended approach:**
-- Create a `history/` directory in the project root
-- Store ALL AI-generated planning/design docs in `history/`
-- Keep the repository root clean and focused on permanent project files
-- Only access `history/` when explicitly asked to review past planning
-
-**Example .gitignore entry (optional):**
-```
-# AI planning documents (ephemeral)
-history/
-```
-
-**Benefits:**
-- ✅ Clean repository root
-- ✅ Clear separation between ephemeral and permanent documentation
-- ✅ Easy to exclude from version control if desired
-- ✅ Preserves planning history for archeological research
-- ✅ Reduces noise when browsing the project
-
-### Important Rules
-
-- ✅ Use bd for ALL task tracking
-- ✅ Always use `--json` flag for programmatic use
-- ✅ Link discovered work with `discovered-from` dependencies
-- ✅ Check `bd ready` before asking "what should I work on?"
-- ✅ Store AI planning docs in `history/` directory
-- ✅ Language policy: Respond in Chinese (简体中文) by default
-- ❌ Do NOT create markdown TODO lists
-- ❌ Do NOT use external issue trackers
-- ❌ Do NOT duplicate tracking systems
-- ❌ Do NOT clutter repo root with planning documents
-
-For more details, see README.md and QUICKSTART.md.
+| 日期 | 变更 | 回滚方式 |
+|:-----|:-----|:---------|
+| 2026-02-17 | Vertex AI block 顺序修复：create-messages.ts 中的 reorderAssistantBlocks | 回退 create-messages.ts 的 reorderAssistantBlocks 函数 |
+| 2026-02-17 | 合并 caozhiyuan/all：API key 认证、codex phase、subagent marker | `git revert <merge-commit>` |
+| 2026-02-02 | Smart agent：只缓存 forceAgent=true，用 <=，最低储备 5 | 回退 smart-agent.ts、get-copilot-usage.ts |
+| 2026-01-31 | Models API 增强（能力、限制、厂商分组） | 回退 routes/models/route.ts、get-models.ts |
+| 2026-01-29 | Compact 请求检测 + anthropic-beta 自动添加 | 回退 handler.ts、config.ts |
+| 2026-01-28 | 原生 Messages API (`-M` 标志) | 删除 create-messages.ts，回退 handler.ts |
+| 2026-01-10 | interleaved_thinking + useFunctionApplyPatch | 回退 translation 文件 |
