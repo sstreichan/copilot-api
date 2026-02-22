@@ -17,16 +17,18 @@ export interface CreateMessagesOptions {
 }
 
 /**
- * Check if error response indicates invalid signature in thinking block.
- * Example: { error: { message: "messages.1.content.0: Invalid signature in thinking block" } }
+ * Check if error response indicates a thinking block issue that can be
+ * resolved by stripping thinking blocks and retrying.
+ * Matches: invalid signature errors AND "thinking blocks cannot be modified" errors.
  */
-const isInvalidSignatureError = (errorBody: unknown): boolean => {
+const isThinkingBlockError = (errorBody: unknown): boolean => {
   if (typeof errorBody !== "object" || errorBody === null) return false
   const err = errorBody as { error?: { message?: string } }
   const msg = err.error?.message ?? ""
   return (
     msg.includes("Invalid signature in thinking block")
     || msg.includes("Invalid `signature` in `thinking` block")
+    || msg.includes("cannot be modified")
   )
 }
 
@@ -112,21 +114,44 @@ const resolveAnthropicBetaHeader = (
 }
 
 /**
- * Reorder assistant message content blocks: [thinking, text, tool_use].
+ * Reorder assistant message content blocks so text comes before tool_use.
  * Vertex AI rejects requests where text blocks follow tool_use blocks
  * in assistant messages, reporting "tool_use without tool_result".
+ *
+ * CRITICAL: thinking/redacted_thinking blocks must NOT be moved.
+ * Vertex AI validates that thinking blocks remain in their original
+ * positions — reordering them triggers:
+ *   "thinking or redacted_thinking blocks in the latest assistant
+ *    message cannot be modified"
  */
 const reorderAssistantBlocks = (payload: AnthropicMessagesPayload): void => {
   for (const msg of payload.messages) {
     if (msg.role !== "assistant" || !Array.isArray(msg.content)) continue
-    msg.content.sort((a, b) => {
-      const order: Record<string, number> = {
-        thinking: 0,
-        text: 1,
-        tool_use: 2,
-      }
-      return (order[a.type] ?? 1) - (order[b.type] ?? 1)
+    // Separate thinking blocks (preserve positions) from reorderable blocks
+    const entries = msg.content.map((block, index) => ({
+      index,
+      isThinking:
+        block.type === "thinking" || block.type === "redacted_thinking",
+      block,
+    }))
+
+    const thinkingEntries = entries.filter((e) => e.isThinking)
+    const reorderable = entries.filter((e) => !e.isThinking)
+
+    // Sort only non-thinking blocks: text before tool_use
+    reorderable.sort((a, b) => {
+      const order: Record<string, number> = { text: 0, tool_use: 1 }
+      return (order[a.block.type] ?? 0) - (order[b.block.type] ?? 0)
     })
+
+    // Reconstruct: thinking blocks at original indices, sorted non-thinking fill remaining slots
+    const thinkingIndexSet = new Set(thinkingEntries.map((e) => e.index))
+    let ri = 0
+    const result = msg.content.map((_, i) =>
+      thinkingIndexSet.has(i) ? entries[i].block : reorderable[ri++].block,
+    )
+
+    msg.content = result
   }
 }
 
@@ -151,7 +176,7 @@ const buildEnhancedPayload = (
 }
 
 /**
- * Send request to native /v1/messages and handle invalid signature retry.
+ * Send request to native /v1/messages and handle thinking block error retry.
  */
 const sendWithSignatureRetry = async (
   url: string,
@@ -171,9 +196,9 @@ const sendWithSignatureRetry = async (
     .json()
     .catch(() => null)
 
-  if (response.status === 400 && isInvalidSignatureError(errorBody)) {
+  if (response.status === 400 && isThinkingBlockError(errorBody)) {
     consola.warn(
-      "Invalid signature in thinking block detected, retrying with thinking blocks stripped",
+      "Thinking block error detected, retrying with thinking blocks stripped",
     )
     const strippedPayload = stripThinkingBlocks(enhancedPayload)
     const retryResponse = await fetch(url, {

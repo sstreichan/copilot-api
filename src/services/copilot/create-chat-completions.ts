@@ -7,16 +7,18 @@ import { resolveInitiatorWithSmartAgent } from "~/lib/smart-agent"
 import { state } from "~/lib/state"
 
 /**
- * Check if error response indicates invalid signature in thinking block.
- * Example: { error: { message: "messages.1.content.0: Invalid signature in thinking block" } }
+ * Check if error response indicates a thinking block issue that can be
+ * resolved by stripping thinking/reasoning fields and retrying.
+ * Matches: invalid signature errors AND "thinking blocks cannot be modified" errors.
  */
-const isInvalidSignatureError = (errorBody: unknown): boolean => {
+const isThinkingBlockError = (errorBody: unknown): boolean => {
   if (typeof errorBody !== "object" || errorBody === null) return false
   const err = errorBody as { error?: { message?: string } }
   const msg = err.error?.message ?? ""
   return (
     msg.includes("Invalid signature in thinking block")
     || msg.includes("Invalid `signature` in `thinking` block")
+    || msg.includes("cannot be modified")
   )
 }
 
@@ -89,9 +91,9 @@ export const createChatCompletions = async (
     .json()
     .catch(() => null)
 
-  if (response.status === 400 && isInvalidSignatureError(errorBody)) {
+  if (response.status === 400 && isThinkingBlockError(errorBody)) {
     consola.warn(
-      "Invalid signature in thinking block detected, retrying with reasoning fields stripped",
+      "Thinking block error detected, retrying with reasoning fields stripped",
     )
 
     // Retry with reasoning fields stripped

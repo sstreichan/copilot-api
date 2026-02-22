@@ -127,7 +127,7 @@ Native messages 的隐含行为：
 **签名重试**：`create-chat-completions.ts` 和 `create-messages.ts` 都会在遇到 "Invalid signature in thinking block" 错误时自动剥离 thinking/reasoning 字段并重试。
 
 **后端适配（SRP）**：所有 Vertex AI / Copilot 后端的 workaround 都放在 `create-messages.ts`，不放 `handler.ts`。Handler 只做路由分发。适配包括：
-- `reorderAssistantBlocks` — 将 text blocks 移到 tool_use blocks 之前
+ `reorderAssistantBlocks` — 将 text blocks 移到 tool_use blocks 之前，**但保留 thinking/redacted_thinking blocks 原位**（Vertex AI 同时要求两者）
 - `stripThinkingBlocks` — 签名重试时移除 thinking 内容
 
 **错误处理约定**：使用 `HTTPError`（`~/lib/error.ts`）包装底层 Response，保持原始 HTTP status。无全局 error handler，未捕获的错误由 Hono 返回 500。`forwardError` 用于透传上游错误响应。
@@ -174,7 +174,7 @@ Native messages 的隐含行为：
 | Smart agent 缓存了错误状态 | 只缓存 `forceAgent=true`；不要缓存"在预算内" |
 | Smart agent 阈值过冲 | 用 `<=` 而非 `<`；用 `Math.max(5, ...)` 保证最低储备 |
 | SSE ping 导致 `AI_JSONParseError` | ping 事件必须发 `data: '{"type":"ping"}'`，不能发空字符串 |
-| **Vertex AI block 顺序** | assistant 消息中 text blocks 必须在 tool_use blocks 之前。Vertex AI 拒绝 text 出现在 tool_use 之后（返回 400）。由 `create-messages.ts` 中的 `reorderAssistantBlocks` 修复。不影响 chat completions 路径。 |
+| **Vertex AI block 顺序** | assistant 消息中 text blocks 必须在 tool_use blocks 之前（未文档化的 Vertex AI 约束）。由 `reorderAssistantBlocks` 修复。**注意**：thinking/redacted_thinking blocks 不能参与排序——Vertex AI 会校验 "thinking blocks must remain as they were in the original response"（[官方文档](https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking#preserving-thinking-blocks)）。两个约束冲突，修复方案：thinking blocks 保持原位，只在非 thinking slots 中排序 text→tool_use。 |
 | **Thinking block 内容问题** | 空 thinking、`"Thinking..."` 占位符、含 `"@"` 的签名可能导致 400。可考虑预防性过滤（参考 caozhiyuan fork）。 |
 | **tool_result + text 混合导致 premium 计费** | skill invocations、edit hooks、todo reminders 会在 user 消息中混入 text blocks。`mergeToolResultForClaude` 将它们合并到 tool_result 中，避免额外 premium 消耗。 |
 | **Responses API stream ID 不一致** | Copilot 在 added/done 事件返回不同 ID，`@ai-sdk/openai` 会报 "text part not found"。由 `stream-id-sync.ts` 同步 ID。 |
@@ -214,9 +214,10 @@ bd close bd-42 --reason "完成" --json
 
 ## 近期变更 (02/2026)
 
-- **Vertex AI block 顺序修复**：`create-messages.ts` 中的 `reorderAssistantBlocks`
-- **caozhiyuan/all 合并**：吸收 API key 认证、codex phase、subagent marker；所有冲突选 ours
-- **Smart Agent** (`-F`)：超出配额预算时自动切换 agent 模式
+ **Thinking block 保留修复**：`reorderAssistantBlocks` 不再移动 thinking/redacted_thinking blocks，修复多轮对话中 Vertex AI 返回 400 "thinking blocks cannot be modified" 的问题
+ **Vertex AI block 顺序修复**：`create-messages.ts` 中的 `reorderAssistantBlocks`
+ **caozhiyuan/all 合并**：吸收 API key 认证、codex phase、subagent marker；所有冲突选 ours
+ **Smart Agent** (`-F`)：超出配额预算时自动切换 agent 模式
 
 ## 近期变更 (01/2026)
 
@@ -229,6 +230,7 @@ bd close bd-42 --reason "完成" --json
 
 | 日期 | 变更 | 回滚方式 |
 |:-----|:-----|:---------|
+| 2026-02-22 | reorderAssistantBlocks 保留 thinking blocks 原位：修复 Vertex AI "thinking blocks cannot be modified" 400 错误（两个 Vertex AI 约束冲突：text-before-tool_use vs thinking-immutability） | 回退 create-messages.ts 的 reorderAssistantBlocks 函数到 830e7d8 |
 | 2026-02-17 | Vertex AI block 顺序修复：create-messages.ts 中的 reorderAssistantBlocks | 回退 create-messages.ts 的 reorderAssistantBlocks 函数 |
 | 2026-02-17 | 合并 caozhiyuan/all：API key 认证、codex phase、subagent marker | `git revert <merge-commit>` |
 | 2026-02-02 | Smart agent：只缓存 forceAgent=true，用 <=，最低储备 5 | 回退 smart-agent.ts、get-copilot-usage.ts |
