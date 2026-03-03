@@ -10,6 +10,12 @@ import { getReasoningEffortForModel } from "~/lib/config"
 import { HTTPError } from "~/lib/error"
 import { resolveInitiatorWithSmartAgent } from "~/lib/smart-agent"
 import { state } from "~/lib/state"
+import {
+  trackRequestSent,
+  trackResponseSuccess,
+  trackResponseError,
+  scheduleFeedbackEvents,
+} from "~/services/telemetry/telemetry"
 
 export interface CreateMessagesOptions {
   initiator?: "user" | "agent"
@@ -245,6 +251,12 @@ export const createMessages = async (
     "X-Initiator": initiator,
   }
 
+  // Extract requestId from already-built headers (do NOT re-generate)
+  const requestId = headers["x-request-id"]
+
+  const start = Date.now()
+  trackRequestSent(payload.model, state.accountType, requestId)
+
   // Resolve model capabilities and build enhanced payload
   const selectedModel = state.models?.data.find((m) => m.id === payload.model)
   const supportsAdaptive =
@@ -275,9 +287,30 @@ export const createMessages = async (
     stream: payload.stream,
   })
 
-  return sendWithSignatureRetry(
-    `${copilotBaseUrl(state)}/v1/messages`,
-    headers,
-    enhancedPayload,
-  )
+  let result: Response
+  try {
+    result = await sendWithSignatureRetry(
+      `${copilotBaseUrl(state)}/v1/messages`,
+      headers,
+      enhancedPayload,
+    )
+  } catch (error) {
+    if (error instanceof HTTPError) {
+      trackResponseError({
+        model: payload.model,
+        durationMs: Date.now() - start,
+        statusCode: error.response.status,
+        requestId,
+      })
+    }
+    throw error
+  }
+
+  scheduleFeedbackEvents(requestId)
+  trackResponseSuccess({
+    model: payload.model,
+    durationMs: Date.now() - start,
+    requestId,
+  })
+  return result
 }

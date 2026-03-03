@@ -5,6 +5,12 @@ import { copilotBaseUrl, copilotHeaders } from "~/lib/api-config"
 import { HTTPError } from "~/lib/error"
 import { resolveInitiatorWithSmartAgent } from "~/lib/smart-agent"
 import { state } from "~/lib/state"
+import {
+  scheduleFeedbackEvents,
+  trackRequestSent,
+  trackResponseError,
+  trackResponseSuccess,
+} from "~/services/telemetry/telemetry"
 
 export interface ResponsesPayload {
   model: string
@@ -343,6 +349,11 @@ export const createResponses = async (
     "X-Initiator": effectiveInitiator,
   }
 
+  // Extract requestId from already-built headers (do NOT re-generate)
+  const requestId = headers["x-request-id"]
+  const start = Date.now()
+  trackRequestSent(payload.model, state.accountType, requestId)
+
   // service_tier is not supported by github copilot
   payload.service_tier = null
 
@@ -354,12 +365,38 @@ export const createResponses = async (
 
   if (!response.ok) {
     consola.error("Failed to create responses", response)
+    trackResponseError({
+      model: payload.model,
+      durationMs: Date.now() - start,
+      statusCode: response.status,
+      requestId,
+    })
     throw new HTTPError("Failed to create responses", response)
   }
 
+  scheduleFeedbackEvents(requestId)
+
   if (payload.stream) {
+    trackResponseSuccess({
+      model: payload.model,
+      durationMs: Date.now() - start,
+      requestId,
+      finishReason: "stream",
+    })
     return events(response)
   }
 
-  return (await response.json()) as ResponsesResult
+  const result = (await response.json()) as ResponsesResult
+  const finishReason = result.incomplete_details?.reason ?? "stop"
+  const serialized = JSON.stringify(result)
+  trackResponseSuccess({
+    model: payload.model,
+    durationMs: Date.now() - start,
+    requestId,
+    finishReason,
+    promptTokens: result.usage?.input_tokens,
+    completionTokens: result.usage?.output_tokens,
+    bytesReceived: serialized.length,
+  })
+  return result
 }

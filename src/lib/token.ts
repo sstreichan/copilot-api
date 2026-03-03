@@ -6,6 +6,10 @@ import { getCopilotToken } from "~/services/github/get-copilot-token"
 import { getDeviceCode } from "~/services/github/get-device-code"
 import { getGitHubUser } from "~/services/github/get-user"
 import { pollAccessToken } from "~/services/github/poll-access-token"
+import {
+  initTelemetry,
+  trackAuthNewToken,
+} from "~/services/telemetry/telemetry"
 
 import { HTTPError } from "./error"
 import { state } from "./state"
@@ -16,21 +20,24 @@ const writeGithubToken = (token: string) =>
   fs.writeFile(PATHS.GITHUB_TOKEN_PATH, token)
 
 export const setupCopilotToken = async () => {
-  const { token, refresh_in } = await getCopilotToken()
-  state.copilotToken = token
+  const tokenResponse = await getCopilotToken()
+  state.copilotToken = tokenResponse.token
+  initTelemetry(tokenResponse.token, tokenResponse.endpoints?.telemetry)
+  trackAuthNewToken()
 
   // Display the Copilot token to the screen
   consola.debug("GitHub Copilot Token fetched successfully!")
   if (state.showToken) {
-    consola.info("Copilot token:", token)
+    consola.info("Copilot token:", tokenResponse.token)
   }
 
-  const refreshInterval = (refresh_in - 60) * 1000
+  const refreshInterval = (tokenResponse.refresh_in - 60) * 1000
   setInterval(async () => {
     consola.debug("Refreshing Copilot token")
     try {
       const { token } = await getCopilotToken()
       state.copilotToken = token
+      trackAuthNewToken()
       consola.debug("Copilot token refreshed")
       if (state.showToken) {
         consola.info("Refreshed Copilot token:", token)

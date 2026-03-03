@@ -15,6 +15,7 @@ export interface AppConfig {
   >
   useFunctionApplyPatch?: boolean
   compactUseSmallModel?: boolean
+  telemetry?: boolean
 }
 
 const gpt5ExplorationPrompt = `## Exploration and reading files

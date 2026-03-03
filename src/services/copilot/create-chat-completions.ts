@@ -5,6 +5,12 @@ import { copilotBaseUrl, copilotHeaders } from "~/lib/api-config"
 import { HTTPError } from "~/lib/error"
 import { resolveInitiatorWithSmartAgent } from "~/lib/smart-agent"
 import { state } from "~/lib/state"
+import {
+  trackRequestSent,
+  trackResponseSuccess,
+  trackResponseError,
+  scheduleFeedbackEvents,
+} from "~/services/telemetry/telemetry"
 
 /**
  * Check if error response indicates a thinking block issue that can be
@@ -39,6 +45,28 @@ const stripReasoningFields = (
   }),
 })
 
+/** Track telemetry for a successful non-streaming response. */
+function trackNonStreamSuccess(opts: {
+  result: ChatCompletionResponse
+  model: string
+  start: number
+  requestId?: string
+}): void {
+  const { result, model, start, requestId } = opts
+  const finishReason =
+    result.choices.length > 0 ? result.choices[0].finish_reason : "stop"
+  const serialized = JSON.stringify(result)
+  trackResponseSuccess({
+    model,
+    durationMs: Date.now() - start,
+    requestId,
+    finishReason,
+    promptTokens: result.usage?.prompt_tokens,
+    completionTokens: result.usage?.completion_tokens,
+    bytesReceived: serialized.length,
+  })
+}
+
 export const createChatCompletions = async (
   payload: ChatCompletionsPayload,
 ) => {
@@ -50,16 +78,11 @@ export const createChatCompletions = async (
       && x.content?.some((x) => x.type === "image_url"),
   )
 
-  // Agent/user check for X-Initiator header
-  // Determine if any message is from an agent ("assistant" or "tool")
-  // Refactor `isAgentCall` logic to check only the last message in the history rather than any message. This prevents valid user messages from being incorrectly flagged as agent calls due to previous assistant history, ensuring proper credit consumption for multi-turn conversations.
-  let isAgentCall = false
-  if (payload.messages.length > 0) {
-    const lastMessage = payload.messages.at(-1)
-    if (lastMessage) {
-      isAgentCall = ["assistant", "tool"].includes(lastMessage.role)
-    }
-  }
+  // Agent/user check: only the last message determines initiator
+  const lastMessage = payload.messages.at(-1)
+  const isAgentCall =
+    lastMessage !== undefined
+    && ["assistant", "tool"].includes(lastMessage.role)
 
   // Determine X-Initiator value
   const dynamicInitiator = isAgentCall ? "agent" : "user"
@@ -71,6 +94,12 @@ export const createChatCompletions = async (
     "X-Initiator": initiator,
   }
 
+  // Extract requestId from already-built headers (do NOT re-generate)
+  const requestId = headers["x-request-id"]
+
+  const start = Date.now()
+  trackRequestSent(payload.model, state.accountType, requestId)
+
   // First attempt: passthrough unchanged
   const response = await fetch(`${copilotBaseUrl(state)}/chat/completions`, {
     method: "POST",
@@ -79,10 +108,19 @@ export const createChatCompletions = async (
   })
 
   if (response.ok) {
+    scheduleFeedbackEvents(requestId)
     if (payload.stream) {
+      trackResponseSuccess({
+        model: payload.model,
+        durationMs: Date.now() - start,
+        requestId,
+        finishReason: "stream",
+      })
       return events(response)
     }
-    return (await response.json()) as ChatCompletionResponse
+    const result = (await response.json()) as ChatCompletionResponse
+    trackNonStreamSuccess({ result, model: payload.model, start, requestId })
+    return result
   }
 
   // On error, check if it's an invalid signature error
@@ -109,20 +147,46 @@ export const createChatCompletions = async (
 
     if (!retryResponse.ok) {
       consola.error("Retry also failed", retryResponse.status)
+      trackResponseError({
+        model: payload.model,
+        durationMs: Date.now() - start,
+        statusCode: retryResponse.status,
+        requestId,
+      })
       throw new HTTPError(
         "Failed to create chat completions (after retry)",
         retryResponse,
       )
     }
 
+    scheduleFeedbackEvents(requestId)
     if (payload.stream) {
+      trackResponseSuccess({
+        model: payload.model,
+        durationMs: Date.now() - start,
+        requestId,
+        finishReason: "stream",
+      })
       return events(retryResponse)
     }
-    return (await retryResponse.json()) as ChatCompletionResponse
+    const retryResult = (await retryResponse.json()) as ChatCompletionResponse
+    trackNonStreamSuccess({
+      result: retryResult,
+      model: payload.model,
+      start,
+      requestId,
+    })
+    return retryResult
   }
 
   // Not a signature error, throw original error
   consola.error("Failed to create chat completions", response.status)
+  trackResponseError({
+    model: payload.model,
+    durationMs: Date.now() - start,
+    statusCode: response.status,
+    requestId,
+  })
   throw new HTTPError("Failed to create chat completions", response)
 }
 
