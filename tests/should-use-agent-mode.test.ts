@@ -1,6 +1,11 @@
 import { test, expect, describe, mock, afterEach } from "bun:test"
 
 import {
+  clearSmartAgentCache,
+  resolveInitiatorWithSmartAgent,
+} from "../src/lib/smart-agent"
+import { state } from "../src/lib/state"
+import {
   shouldUseAgentMode,
   getSmartAgentDecision,
 } from "../src/services/github/get-copilot-usage"
@@ -132,6 +137,134 @@ describe("shouldUseAgentMode", () => {
       daysInMonth: 30,
     })
     expect(result).toBe(true)
+  })
+})
+
+describe("hysteresis - cross-day protection", () => {
+  const originalFetch = globalThis.fetch
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch
+    clearSmartAgentCache()
+    state.forceAgent = false
+  })
+
+  test("maintains protection when remaining within hysteresis margin (cross-day scenario)", async () => {
+    // Setup: 之前在保护中（forceAgent=true）
+    state.forceAgent = true
+    state.smartAgentDecision = {
+      forceAgent: true,
+      remaining: 1233,
+      expected: 1258,
+    }
+    state.smartAgentCacheTimestamp = 0 // 强制过期
+
+    // 跨天后: entitlement=1450, dayOfMonth=5, daysInMonth=30
+    // idealDaily = 1450/30 ≈ 48.3
+    // expected = 1450 - 5*48.3 ≈ 1208.5 → 1209
+    // remaining = 1233, exitThreshold = 1209 + 48 ≈ 1257
+    // 1233 <= 1257 → 维持保护
+    // @ts-expect-error - Mock fetch
+    globalThis.fetch = mock(() =>
+      Promise.resolve({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            quota_reset_date: "2026-03-31",
+            quota_snapshots: {
+              premium_interactions: {
+                entitlement: 1450,
+                remaining: 1233,
+              },
+            },
+          }),
+      }),
+    )
+
+    const result = await resolveInitiatorWithSmartAgent(
+      "user",
+      new Date("2026-03-05"),
+    )
+    expect(result.initiator).toBe("agent")
+  })
+
+  test("exits protection when remaining exceeds hysteresis margin", async () => {
+    // Setup: 之前在保护中（forceAgent=true）
+    state.forceAgent = true
+    state.smartAgentDecision = {
+      forceAgent: true,
+      remaining: 1233,
+      expected: 1258,
+    }
+    state.smartAgentCacheTimestamp = 0
+
+    // remaining=1350 >> exitThreshold=1257 → 退出保护
+    // @ts-expect-error - Mock fetch
+    globalThis.fetch = mock(() =>
+      Promise.resolve({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            quota_reset_date: "2026-03-31",
+            quota_snapshots: {
+              premium_interactions: {
+                entitlement: 1450,
+                remaining: 1350,
+              },
+            },
+          }),
+      }),
+    )
+
+    const result = await resolveInitiatorWithSmartAgent(
+      "user",
+      new Date("2026-03-05"),
+    )
+    expect(result.initiator).toBe("user")
+  })
+
+  test("enters protection normally without hysteresis on first trigger", async () => {
+    // 无缓存状态，需要清空
+    state.forceAgent = true
+    clearSmartAgentCache()
+
+    // remaining=1100 < expected → 正常进入保护
+    // entitlement=1450, dayOfMonth=5, daysInMonth=30
+    // idealDaily=1450/30≈48.3, expected=1450-5*48.3≈1208.5 → 1209
+    // remaining=1100 < 1209 → 触发保护
+    // @ts-expect-error - Mock fetch
+    globalThis.fetch = mock(() =>
+      Promise.resolve({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            quota_reset_date: "2026-03-31",
+            quota_snapshots: {
+              premium_interactions: {
+                entitlement: 1450,
+                remaining: 1100,
+              },
+            },
+          }),
+      }),
+    )
+
+    const result = await resolveInitiatorWithSmartAgent(
+      "user",
+      new Date("2026-03-05"),
+    )
+    expect(result.initiator).toBe("agent")
+  })
+
+  test("defaults to agent on API error regardless of cache state", async () => {
+    state.forceAgent = true
+    clearSmartAgentCache()
+
+    // @ts-expect-error - Mock fetch
+    globalThis.fetch = mock(() => Promise.resolve({ ok: false, status: 500 }))
+
+    const result = await resolveInitiatorWithSmartAgent("user")
+    expect(result.initiator).toBe("agent")
   })
 })
 

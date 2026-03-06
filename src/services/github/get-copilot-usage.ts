@@ -33,6 +33,7 @@ export interface SmartAgentDecision {
   forceAgent: boolean
   remaining?: number
   expected?: number
+  idealDaily?: number
   error?: string
 }
 
@@ -75,6 +76,7 @@ export async function getSmartAgentDecision(
       forceAgent,
       remaining: quota.remaining,
       expected: Math.round(expectedRemaining),
+      idealDaily: quota.entitlement / daysInMonth,
     }
   } catch (error) {
     consola.warn("[quota] Failed to fetch usage, defaulting to agent mode")

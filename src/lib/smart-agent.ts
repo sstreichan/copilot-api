@@ -69,12 +69,33 @@ async function getDecisionWithSmartCache(
 
   const decision = await getSmartAgentDecision(now)
 
-  // Only cache when over budget (forceAgent=true)
-  // Don't cache when on budget - need to check every time
+  // Hysteresis: 如果之前在保护中，退出需要更大的 margin
+  if (
+    !decision.forceAgent
+    && state.smartAgentDecision?.forceAgent
+    && decision.remaining !== undefined
+    && decision.expected !== undefined
+    && decision.idealDaily !== undefined
+  ) {
+    const exitThreshold = decision.expected + decision.idealDaily
+    if (decision.remaining <= exitThreshold) {
+      // remaining 不够多，维持保护
+      consola.debug(
+        `[quota] Smart agent: hysteresis active — remaining ${decision.remaining} <= expected ${decision.expected} + margin ${Math.round(decision.idealDaily)} = ${Math.round(exitThreshold)}, maintaining protection`,
+      )
+      const hysteresisDecision = { ...decision, forceAgent: true as const }
+      updateSmartAgentCache(hysteresisDecision, currentTime)
+      return hysteresisDecision
+    }
+    // remaining 足够多，真正退出保护
+    consola.warn(
+      `[quota] Smart agent: protection DISABLED — remaining ${decision.remaining} > expected ${decision.expected} + margin ${Math.round(decision.idealDaily)} = ${Math.round(exitThreshold)}`,
+    )
+  }
+
   if (decision.forceAgent) {
     updateSmartAgentCache(decision, currentTime)
   } else {
-    // Clear cache when on budget to ensure fresh checks
     updateSmartAgentCache(null, 0)
   }
 

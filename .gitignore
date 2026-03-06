@@ -28,6 +28,9 @@ ai-memory-solutions.md
 claude-mem-setup-guide.md
 .debates/
 
+# ai-generated planning documents (local only)
+history/
+
 # plan documents (local only)
 docs/plans/
 .beads/.jsonl.lock
