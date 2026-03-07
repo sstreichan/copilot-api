@@ -36,6 +36,22 @@ GitHub Copilot API 的反向代理，基于 **Hono** 框架（非 Express），�
 
 **例外**：使用 `-M` 标志时，Claude 模型绕过转换，直接使用 Copilot 的原生 `/v1/messages` 端点。请求走 **Vertex AI** 后端（非 Anthropic 原生 API），验证规则更严格。
 
+## 分层 AGENTS 导航
+
+- `src/AGENTS.md` - 运行时代码总览；路由、服务、共享状态、配置入口
+- `src/lib/AGENTS.md` - 共享状态、配置、token 生命周期、smart agent、路径与日志约束
+- `src/routes/messages/AGENTS.md` - Anthropic `/v1/messages` 分支顺序、流式不变量、native messages 限制
+- `src/routes/generate-content/AGENTS.md` - Gemini 路由分流、Responses/codex 分支、流式关闭要求
+- `src/services/copilot/AGENTS.md` - 上游 Copilot 调用、native messages 后端适配、telemetry 与 header 规则
+- `tests/AGENTS.md` - Bun 测试布局、mock 约定、fixtures 与断言风格
+- `claude-plugin/AGENTS.md` - Claude Code plugin/marketplace 目录与 `__SUBAGENT_MARKER__` 约束
+- `openspec/AGENTS.md` - 提案、delta spec、validate / archive 工作流
+
+## 工作区噪音目录
+
+- `.vendor/`、`.sisyphus/`、`.debates/`、`history/`、`experiments/` 默认不是主运行时逻辑；除非任务明确涉及，否则优先查看 `src/`、`tests/`、`claude-plugin/`、`openspec/`
+- `.github/instructions/`、`.cursor/rules/`、`README.md` 提供补充流程约束，但实现真相仍以 `src/`、测试与 OpenSpec 为准
+
 ## 快速参考
 
 ```bash

@@ -1,0 +1,35 @@
+# Anthropic Messages Route Guide
+
+## Overview
+
+这里是最敏感的兼容层：Anthropic `/v1/messages` 既能走 OpenAI chat completions，也能走 Responses API，还能在 `-M` 模式下直通 Copilot native messages。
+
+## Where To Look
+
+| Task | Location | Notes |
+|------|----------|-------|
+| Branch ordering | `handler.ts` | compact detection → native messages → warmup/small model → mergeToolResult → responses/chat |
+| Native passthrough | `handler.ts`, `~/services/copilot/create-messages.ts` | raw SSE passthrough，不能重建事件语义 |
+| OpenAI translation | `non-stream-translation.ts`, `stream-translation.ts` | chat completions 路径 |
+| Responses translation | `responses-translation.ts`, `responses-stream-translation.ts` | Copilot Responses API 路径 |
+| Token counting | `count-tokens-handler.ts` | Claude/Grok 工具 token 补偿逻辑 |
+
+## Critical Invariants
+
+- `state.nativeMessages && isClaudeModel(...)` 分支必须早于其他 payload 改写；compact detection 是唯一允许在前面的例外
+- native messages 流式响应走 **raw body passthrough**，不要把它重建成 `streamSSE()` 的 Anthropic 事件序列
+- `mergeToolResultForClaude()` 只在非 compact 请求上跑，用来避免 skill / hook / todo 文字块额外消耗 premium
+- `tool_calls` finish_reason 是中间态；stream accumulator 不能在这里清空
+- ping 事件必须写 `data: '{"type":"ping"}'`，不能发空字符串
+
+## Project-Specific Rules
+
+- `anthropic-beta` 请求头在 native messages 路径会继续传给 `createMessages()`，但真正转发值会被 service 层过滤
+- `getInitiatorFromPayload()` 会把 tool_result 上下文识别为 `agent`
+- 针对 Claude Code/OpenCode 的 compact 请求，小模型切换逻辑先发生，再决定是否 native passthrough
+
+## Anti-Patterns
+
+- 调整 native branch 顺序，让 payload 先被 OpenAI/mergeToolResult 逻辑污染
+- 在这里实现 Vertex AI block 顺序修复；那属于 `create-messages.ts`
+- 把 raw native stream 改成翻译后再输出，破坏上游 SSE 兼容性
