@@ -69,10 +69,10 @@ bun run dev -- -M           # Claude 模型使用原生 Messages API（推荐）
 bun run dev -- -F           # Smart agent：超出配额预算时自动切换 agent 模式
 bun run dev -- -a business  # 使用 business 账户类型
 bun run dev -- -v           # 详细日志
-bun run dev -- -m           # 手动审批每个请求
+bun run dev -- --manual     # 手动审批每个请求
 bun run dev -- -r 5         # 速率限制（秒）
 bun run dev -- -w           # 超出速率限制时等待而非报错
-bun run dev -- -s           # 显示 token
+bun run dev -- --show-token # 显示 token
 bun run dev -- -c           # Claude Code 模式
 bun run dev -- -g TOKEN     # 指定 GitHub token
 bun run dev -- --proxy-env  # 从环境变量读取代理配置
@@ -83,7 +83,7 @@ bun run dev -- --proxy-env  # 从环境变量读取代理配置
 ### 路由结构
 - `src/routes/messages/` - Anthropic `/v1/messages`（支持 Responses API 的 vision/tools）
 - `src/routes/generate-content/` - Gemini API
-- `src/routes/chat-completions/` - OpenAI 透传
+- `src/routes/chat-completions/` - OpenAI-compatible chat completions
 - `src/routes/responses/` - GitHub Copilot Responses API
 - `src/routes/models/` - 增强版 `/v1/models`，含能力、限制、计费信息
 
@@ -94,7 +94,7 @@ bun run dev -- --proxy-env  # 从环境变量读取代理配置
 `src/server.ts` 中间件按以下顺序执行：
 1. **Logger** — 对 `/v1/messages` 之外的路径启用 Hono logger（messages 路由有自己的日志）
 2. **CORS** — 全局跨域
-3. **Auth** — API Key 认证中间件（`createAuthMiddleware`，来自 caozhiyuan fork）
+3. **Auth** — API Key 认证中间件（`createAuthMiddleware`，来自 caozhiyuan fork）；`/`、`/usage-viewer`、`/usage-viewer/` 允许未鉴权访问
 
 ### 核心服务
 - `src/services/copilot/create-chat-completions.ts` - Copilot API 核心调用器（token 刷新、headers、签名重试）
@@ -130,6 +130,7 @@ Native messages 的隐含行为：
 - 只缓存 `forceAgent=true` 的决策（超预算就是超预算）
 - 用 `<=` 而非 `<` 判断阈值，精确触发
 - `Math.max(5, ...)` 确保月末至少保留 5 个配额
+- 退出保护时有 hysteresis：remaining 必须明显高于 expected + daily margin，避免跨日抖动
 
 ### 关键模式
 
@@ -148,9 +149,9 @@ Native messages 的隐含行为：
 
 **错误处理约定**：使用 `HTTPError`（`~/lib/error.ts`）包装底层 Response，保持原始 HTTP status。无全局 error handler，未捕获的错误由 Hono 返回 500。`forwardError` 用于透传上游错误响应。
 
-**无通用重试**：除签名重试外，没有通用 retry/backoff 机制。rate limit 的 `-w` 等待模式使用 sleep 延迟，不是重试。
+**无通用重试**：除签名重试外，没有跨请求的通用 retry/backoff 机制。rate limit 的 `-w` 等待模式使用 sleep 延迟；Copilot token 刷新循环失败时会记录错误并在 15 秒后重试。
 
-**Token 刷新**：`src/lib/token.ts` 中按 `refresh_in - 60s` 提前定时刷新 Copilot token。刷新失败会直接 throw（可能中断服务）。
+**Token 刷新**：`src/lib/token.ts` 中按 `refresh_in - 60s` 提前定时刷新 Copilot token；首次获取失败会抛错，循环内刷新失败则保留进程并在 15 秒后重试。
 
 ## 配置选项
 
@@ -158,18 +159,18 @@ Native messages 的隐含行为：
 
 | 选项 | 类型 | 默认值 | 说明 |
 |:-----|:-----|:-------|:-----|
-| `extraPrompts` | `Record<string, string>` | gpt-5 exploration | 按模型添加额外系统提示 |
+| `extraPrompts` | `Record<string, string>` | 内置 `gpt-5-mini` exploration + `gpt-5.3-codex` / `gpt-5.4` commentary prompts | 按模型添加额外系统提示 |
 | `smallModel` | `string` | `"gpt-5-mini"` | 预热/compact 请求使用的小模型 |
 | `compactUseSmallModel` | `boolean` | `true` | compact 请求是否使用小模型 |
 | `useFunctionApplyPatch` | `boolean` | `true` | 将自定义 apply_patch 转为 function 类型 |
-| `modelReasoningEfforts` | `Record<string, string>` | - | 按模型设置推理努力程度 |
+| `modelReasoningEfforts` | `Record<string, string>` | `gpt-5-mini=low`, `claude-opus-4.6=xhigh`, `claude-opus-4.6-fast=xhigh`, `gpt-5.3-codex=xhigh` | 按模型设置推理努力程度 |
 
 ## 关键规则
 
 1. **状态**：不要创建并行状态缓存；只用 `src/lib/state.ts`
 2. **流**：必须 `try/finally` + `stream.close()`；4 条清理路径必须同步
 3. **工具调用**：chunk 间 ID 必须稳定；`tool_calls` finish_reason 是非终态
-4. **日志**：使用 `consola`（禁止 `console.log`）；`LOG_LEVEL=debug` 开详细日志
+4. **日志**：默认使用 `consola`；`src/lib/debug-logger.ts` 目前仍有 `console.*` 调试输出，调整日志体系时要一并处理；`LOG_LEVEL=debug` 开详细日志
 5. **导入**：使用 `~` 别名引用 `src/` 路径
 
 ## 测试
@@ -232,7 +233,7 @@ bd close bd-42 --reason "完成" --json
 
  **Thinking block 保留修复**：`reorderAssistantBlocks` 不再移动 thinking/redacted_thinking blocks，修复多轮对话中 Vertex AI 返回 400 "thinking blocks cannot be modified" 的问题
  **Vertex AI block 顺序修复**：`create-messages.ts` 中的 `reorderAssistantBlocks`
- **caozhiyuan/all 合并**：吸收 API key 认证、codex phase、subagent marker；所有冲突选 ours
+ **caozhiyuan/all 合并**：吸收 API key 认证、codex phase、subagent marker，并按文件择优保留本地 telemetry / native messages 兼容逻辑
  **Smart Agent** (`-F`)：超出配额预算时自动切换 agent 模式
 
 ## 近期变更 (01/2026)
@@ -248,7 +249,7 @@ bd close bd-42 --reason "完成" --json
 |:-----|:-----|:---------|
 | 2026-02-22 | reorderAssistantBlocks 保留 thinking blocks 原位：修复 Vertex AI "thinking blocks cannot be modified" 400 错误（两个 Vertex AI 约束冲突：text-before-tool_use vs thinking-immutability） | 回退 create-messages.ts 的 reorderAssistantBlocks 函数到 830e7d8 |
 | 2026-02-17 | Vertex AI block 顺序修复：create-messages.ts 中的 reorderAssistantBlocks | 回退 create-messages.ts 的 reorderAssistantBlocks 函数 |
-| 2026-02-17 | 合并 caozhiyuan/all：API key 认证、codex phase、subagent marker | `git revert <merge-commit>` |
+| 2026-02-17 | 合并 caozhiyuan/all：API key 认证、codex phase、subagent marker，并按文件择优保留本地兼容改动 | `git revert <merge-commit>` |
 | 2026-02-02 | Smart agent：只缓存 forceAgent=true，用 <=，最低储备 5 | 回退 smart-agent.ts、get-copilot-usage.ts |
 | 2026-01-31 | Models API 增强（能力、限制、厂商分组） | 回退 routes/models/route.ts、get-models.ts |
 | 2026-01-29 | Compact 请求检测 + anthropic-beta 自动添加 | 回退 handler.ts、config.ts |
