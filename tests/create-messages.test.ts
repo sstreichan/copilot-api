@@ -1,12 +1,16 @@
-import { test, expect, mock, beforeEach } from "bun:test"
+import { test, expect, mock, spyOn, afterEach, beforeEach } from "bun:test"
 
 import type { AnthropicMessagesPayload } from "../src/routes/messages/anthropic-types"
 
 import { clearSmartAgentCache } from "../src/lib/smart-agent"
 import { state } from "../src/lib/state"
 import { createMessages } from "../src/services/copilot/create-messages"
+import * as telemetryModule from "../src/services/telemetry/telemetry"
 
 /* eslint-disable @typescript-eslint/no-non-null-assertion */
+
+// Telemetry mock (captures modelCallId for assertions)
+let capturedModelCallId: string | undefined
 
 // Mock state
 state.copilotToken = "test-token"
@@ -17,6 +21,8 @@ state.accountType = "individual"
 let fetchMock: ReturnType<typeof mock>
 
 beforeEach(() => {
+  capturedModelCallId = undefined
+  state.interactionId = "test-interaction-id"
   state.forceAgent = false
   clearSmartAgentCache() // Clear cache between tests
   fetchMock = mock(
@@ -40,6 +46,25 @@ beforeEach(() => {
   )
   // @ts-expect-error - Mock fetch doesn't implement all fetch properties
   ;(globalThis as unknown as { fetch: typeof fetch }).fetch = fetchMock
+
+  // Capture modelCallId using spyOn (can be restored by mock.restore())
+  spyOn(telemetryModule, "trackRequestSent").mockImplementation(
+    (
+      _model: string,
+      _accountType: string,
+      _requestId?: string,
+      modelCallId?: string,
+      // eslint-disable-next-line max-params
+    ) => {
+      capturedModelCallId = modelCallId
+    },
+  )
+  spyOn(telemetryModule, "trackResponseSuccess").mockImplementation(() => {})
+  spyOn(telemetryModule, "trackResponseError").mockImplementation(() => {})
+})
+
+afterEach(() => {
+  mock.restore()
 })
 
 test("calls /v1/messages endpoint", async () => {
@@ -315,4 +340,59 @@ test("does not set copilot-vision-request header for text-only messages", async 
     fetchMock.mock.calls[0][1] as { headers: Record<string, string> }
   ).headers
   expect(headers["copilot-vision-request"]).toBeUndefined()
+})
+
+test("includes X-Interaction-Id from state.interactionId (Wave 1/2)", async () => {
+  const originalInteractionId = state.interactionId
+  state.interactionId = "test-interaction-id"
+  const payload: AnthropicMessagesPayload = {
+    model: "claude-sonnet-4-20250514",
+    max_tokens: 1024,
+    messages: [{ role: "user", content: "hi" }],
+  }
+  await createMessages(payload)
+  const headers = (
+    fetchMock.mock.calls[0][1] as { headers: Record<string, string> }
+  ).headers
+  expect(headers["X-Interaction-Id"]).toBe("test-interaction-id")
+  // eslint-disable-next-line require-atomic-updates
+  state.interactionId = originalInteractionId
+})
+
+test("X-Agent-Task-Id equals x-request-id (Wave 1/2)", async () => {
+  const payload: AnthropicMessagesPayload = {
+    model: "claude-sonnet-4-20250514",
+    max_tokens: 1024,
+    messages: [{ role: "user", content: "hi" }],
+  }
+  await createMessages(payload)
+  const headers = (
+    fetchMock.mock.calls[0][1] as { headers: Record<string, string> }
+  ).headers
+  expect(headers["X-Agent-Task-Id"]).toBe(headers["x-request-id"])
+})
+
+test("passes non-empty modelCallId to telemetry (Wave 1/2)", async () => {
+  const payload: AnthropicMessagesPayload = {
+    model: "claude-sonnet-4-20250514",
+    max_tokens: 1024,
+    messages: [{ role: "user", content: "hi" }],
+  }
+  await createMessages(payload)
+  expect(capturedModelCallId).toBeDefined()
+  expect(typeof capturedModelCallId).toBe("string")
+  expect(capturedModelCallId!.length).toBeGreaterThan(0)
+})
+
+test("X-Interaction-Type equals openai-intent (Wave 1/2)", async () => {
+  const payload: AnthropicMessagesPayload = {
+    model: "claude-sonnet-4-20250514",
+    max_tokens: 1024,
+    messages: [{ role: "user", content: "hi" }],
+  }
+  await createMessages(payload)
+  const headers = (
+    fetchMock.mock.calls[0][1] as { headers: Record<string, string> }
+  ).headers
+  expect(headers["X-Interaction-Type"]).toBe(headers["openai-intent"])
 })

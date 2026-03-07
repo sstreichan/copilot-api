@@ -1,5 +1,6 @@
 import consola from "consola"
 import { events } from "fetch-event-stream"
+import { randomUUID } from "node:crypto"
 
 import { copilotBaseUrl, copilotHeaders } from "~/lib/api-config"
 import { HTTPError } from "~/lib/error"
@@ -340,6 +341,8 @@ export const createResponses = async (
 ): Promise<CreateResponsesReturn> => {
   if (!state.copilotToken) throw new Error("Copilot token not found")
 
+  const modelCallId = randomUUID()
+
   // Determine X-Initiator value
   const { initiator: effectiveInitiator } =
     await resolveInitiatorWithSmartAgent(initiator)
@@ -352,7 +355,7 @@ export const createResponses = async (
   // Extract requestId from already-built headers (do NOT re-generate)
   const requestId = headers["x-request-id"]
   const start = Date.now()
-  trackRequestSent(payload.model, state.accountType, requestId)
+  trackRequestSent(payload.model, state.accountType, requestId, modelCallId)
 
   // service_tier is not supported by github copilot
   payload.service_tier = null
@@ -370,6 +373,7 @@ export const createResponses = async (
       durationMs: Date.now() - start,
       statusCode: response.status,
       requestId,
+      modelCallId,
     })
     throw new HTTPError("Failed to create responses", response)
   }
@@ -382,6 +386,7 @@ export const createResponses = async (
       durationMs: Date.now() - start,
       requestId,
       finishReason: "stream",
+      modelCallId,
     })
     return events(response)
   }
@@ -397,6 +402,7 @@ export const createResponses = async (
     promptTokens: result.usage?.input_tokens,
     completionTokens: result.usage?.output_tokens,
     bytesReceived: serialized.length,
+    modelCallId,
   })
   return result
 }

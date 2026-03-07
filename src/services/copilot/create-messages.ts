@@ -1,4 +1,5 @@
 import consola from "consola"
+import { randomUUID } from "node:crypto"
 
 import type {
   AnthropicAssistantMessage,
@@ -258,6 +259,8 @@ export const createMessages = async (
 ): Promise<Response> => {
   if (!state.copilotToken) throw new Error("Copilot token not found")
 
+  const modelCallId = randomUUID()
+
   const enableVision = hasImageContent(payload)
 
   // Determine X-Initiator value
@@ -273,7 +276,7 @@ export const createMessages = async (
   const requestId = headers["x-request-id"]
 
   const start = Date.now()
-  trackRequestSent(payload.model, state.accountType, requestId)
+  trackRequestSent(payload.model, state.accountType, requestId, modelCallId)
 
   // Resolve model capabilities and build enhanced payload
   const selectedModel = state.models?.data.find((m) => m.id === payload.model)
@@ -319,6 +322,7 @@ export const createMessages = async (
         durationMs: Date.now() - start,
         statusCode: error.response.status,
         requestId,
+        modelCallId,
       })
     }
     throw error
@@ -329,6 +333,7 @@ export const createMessages = async (
     model: payload.model,
     durationMs: Date.now() - start,
     requestId,
+    modelCallId,
   })
   return result
 }

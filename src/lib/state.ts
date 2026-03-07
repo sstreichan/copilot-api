@@ -1,7 +1,10 @@
+import { randomUUID } from "node:crypto"
+
 import type { ModelsResponse } from "~/services/copilot/get-models"
 import type { SmartAgentDecision } from "~/services/github/get-copilot-usage"
 
 export interface State {
+  interactionId: string
   githubToken?: string
   copilotToken?: string
 
@@ -26,6 +29,7 @@ export interface State {
 }
 
 export const state: State = {
+  interactionId: randomUUID(),
   accountType: "individual",
   manualApprove: false,
   rateLimitWait: false,

@@ -17,7 +17,12 @@ export const copilotBaseUrl = (state: State) =>
   state.accountType === "individual" ?
     "https://api.githubcopilot.com"
   : `https://api.${state.accountType}.githubcopilot.com`
-export const copilotHeaders = (state: State, vision: boolean = false) => {
+export const copilotHeaders = (
+  state: State,
+  vision: boolean = false,
+  intent: string = "conversation-agent",
+) => {
+  const requestId = randomUUID()
   const headers: Record<string, string> = {
     Authorization: `Bearer ${state.copilotToken}`,
     "content-type": standardHeaders()["content-type"],
@@ -25,10 +30,13 @@ export const copilotHeaders = (state: State, vision: boolean = false) => {
     "editor-version": `vscode/${state.vsCodeVersion}`,
     "editor-plugin-version": EDITOR_PLUGIN_VERSION,
     "user-agent": USER_AGENT,
-    "openai-intent": "conversation-agent",
+    "openai-intent": intent,
     "x-github-api-version": API_VERSION,
-    "x-request-id": randomUUID(),
+    "x-request-id": requestId,
     "x-vscode-user-agent-library-version": "electron-fetch",
+    "X-Interaction-Id": state.interactionId,
+    "X-Agent-Task-Id": requestId,
+    "X-Interaction-Type": intent,
   }
 
   if (vision) headers["copilot-vision-request"] = "true"

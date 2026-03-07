@@ -1,5 +1,6 @@
 import consola from "consola"
 import { events } from "fetch-event-stream"
+import { randomUUID } from "node:crypto"
 
 import { copilotBaseUrl, copilotHeaders } from "~/lib/api-config"
 import { HTTPError } from "~/lib/error"
@@ -67,10 +68,70 @@ function trackNonStreamSuccess(opts: {
   })
 }
 
+/** Handle a successful Copilot response, returning stream events or parsed JSON. */
+async function handleOkResponse(
+  response: Response,
+  payload: ChatCompletionsPayload,
+  opts: { start: number; requestId?: string },
+) {
+  if (opts.requestId) {
+    scheduleFeedbackEvents(opts.requestId)
+  }
+  if (payload.stream) {
+    trackResponseSuccess({
+      model: payload.model,
+      durationMs: Date.now() - opts.start,
+      requestId: opts.requestId,
+      finishReason: "stream",
+    })
+    return events(response)
+  }
+  const result = (await response.json()) as ChatCompletionResponse
+  trackNonStreamSuccess({
+    result,
+    model: payload.model,
+    start: opts.start,
+    requestId: opts.requestId,
+  })
+  return result
+}
+
+/** Retry the request with reasoning fields stripped after a thinking block error. */
+async function retryWithStrippedReasoningFields(
+  payload: ChatCompletionsPayload,
+  headers: Record<string, string>,
+  opts: { start: number; requestId?: string },
+) {
+  consola.warn(
+    "Thinking block error detected, retrying with reasoning fields stripped",
+  )
+  const strippedPayload = stripReasoningFields(payload)
+  const retryResponse = await fetch(
+    `${copilotBaseUrl(state)}/chat/completions`,
+    { method: "POST", headers, body: JSON.stringify(strippedPayload) },
+  )
+  if (!retryResponse.ok) {
+    consola.error("Retry also failed", retryResponse.status)
+    trackResponseError({
+      model: payload.model,
+      durationMs: Date.now() - opts.start,
+      statusCode: retryResponse.status,
+      requestId: opts.requestId,
+    })
+    throw new HTTPError(
+      "Failed to create chat completions (after retry)",
+      retryResponse,
+    )
+  }
+  return handleOkResponse(retryResponse, payload, opts)
+}
+
 export const createChatCompletions = async (
   payload: ChatCompletionsPayload,
 ) => {
   if (!state.copilotToken) throw new Error("Copilot token not found")
+
+  const modelCallId = randomUUID()
 
   const enableVision = payload.messages.some(
     (x) =>
@@ -98,7 +159,7 @@ export const createChatCompletions = async (
   const requestId = headers["x-request-id"]
 
   const start = Date.now()
-  trackRequestSent(payload.model, state.accountType, requestId)
+  trackRequestSent(payload.model, state.accountType, requestId, modelCallId)
 
   // First attempt: passthrough unchanged
   const response = await fetch(`${copilotBaseUrl(state)}/chat/completions`, {
@@ -108,19 +169,7 @@ export const createChatCompletions = async (
   })
 
   if (response.ok) {
-    scheduleFeedbackEvents(requestId)
-    if (payload.stream) {
-      trackResponseSuccess({
-        model: payload.model,
-        durationMs: Date.now() - start,
-        requestId,
-        finishReason: "stream",
-      })
-      return events(response)
-    }
-    const result = (await response.json()) as ChatCompletionResponse
-    trackNonStreamSuccess({ result, model: payload.model, start, requestId })
-    return result
+    return handleOkResponse(response, payload, { start, requestId })
   }
 
   // On error, check if it's an invalid signature error
@@ -130,53 +179,10 @@ export const createChatCompletions = async (
     .catch(() => null)
 
   if (response.status === 400 && isThinkingBlockError(errorBody)) {
-    consola.warn(
-      "Thinking block error detected, retrying with reasoning fields stripped",
-    )
-
-    // Retry with reasoning fields stripped
-    const strippedPayload = stripReasoningFields(payload)
-    const retryResponse = await fetch(
-      `${copilotBaseUrl(state)}/chat/completions`,
-      {
-        method: "POST",
-        headers,
-        body: JSON.stringify(strippedPayload),
-      },
-    )
-
-    if (!retryResponse.ok) {
-      consola.error("Retry also failed", retryResponse.status)
-      trackResponseError({
-        model: payload.model,
-        durationMs: Date.now() - start,
-        statusCode: retryResponse.status,
-        requestId,
-      })
-      throw new HTTPError(
-        "Failed to create chat completions (after retry)",
-        retryResponse,
-      )
-    }
-
-    scheduleFeedbackEvents(requestId)
-    if (payload.stream) {
-      trackResponseSuccess({
-        model: payload.model,
-        durationMs: Date.now() - start,
-        requestId,
-        finishReason: "stream",
-      })
-      return events(retryResponse)
-    }
-    const retryResult = (await retryResponse.json()) as ChatCompletionResponse
-    trackNonStreamSuccess({
-      result: retryResult,
-      model: payload.model,
+    return retryWithStrippedReasoningFields(payload, headers, {
       start,
       requestId,
     })
-    return retryResult
   }
 
   // Not a signature error, throw original error

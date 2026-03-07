@@ -144,10 +144,12 @@ export function trackEvent(
 
 // --- Convenience wrappers ---
 
+// eslint-disable-next-line max-params
 export function trackRequestSent(
   model: string,
   accountType: string,
   requestId?: string,
+  modelCallId?: string,
 ): void {
   trackEvent(
     EVENT_REQUEST_SENT,
@@ -160,6 +162,7 @@ export function trackRequestSent(
       transport: "http",
       headerRequestId: requestId ?? "",
       "request.option.model": `"${model}"`,
+      ...(modelCallId !== undefined ? { modelCallId } : {}),
     },
     { maxTokenWindow: 128000 },
   )
@@ -170,6 +173,7 @@ export interface TrackResponseSuccessOptions {
   model: string
   durationMs: number
   requestId?: string
+  modelCallId?: string
   finishReason?: string
   promptTokens?: number
   completionTokens?: number
@@ -189,6 +193,9 @@ export function trackResponseSuccess(opts: TrackResponseSuccessOptions): void {
       apiType: "chat_completions",
       requestId: opts.requestId ?? "",
       transport: "http",
+      ...(opts.modelCallId !== undefined ?
+        { modelCallId: opts.modelCallId }
+      : {}),
     },
     {
       totalTokenMax: 128000,
@@ -208,6 +215,7 @@ export interface TrackResponseErrorOptions {
   durationMs: number
   statusCode: number
   requestId?: string
+  modelCallId?: string
 }
 
 export function trackResponseError(opts: TrackResponseErrorOptions): void {
@@ -222,6 +230,9 @@ export function trackResponseError(opts: TrackResponseErrorOptions): void {
       apiType: "chat_completions",
       requestId: opts.requestId ?? "",
       transport: "http",
+      ...(opts.modelCallId !== undefined ?
+        { modelCallId: opts.modelCallId }
+      : {}),
     },
     {
       duration_ms: opts.durationMs,
