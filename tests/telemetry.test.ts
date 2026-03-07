@@ -58,33 +58,9 @@ void mock.module("~/lib/config", () => ({
   mergeConfigWithDefaults: getMockConfig,
 }))
 
-// Mock identity: deterministic values
-void mock.module("~/services/telemetry/identity", () => ({
-  SESSION_ID: "test-session-id-1234",
-  getMachineId: () => "mock-machine-id-sha256hex",
-  getDevDeviceId: () => "mock-device-id-uuid",
-  getCommonProperties: (
-    machineId: string,
-    sessionId: string,
-    vsCodeVersion: string = "",
-  ) => ({
-    common_vscodemachineid: machineId,
-    common_vscodesessionid: sessionId,
-    client_machineid: machineId,
-    client_deviceid: "mock-device-id-uuid",
-    common_os: "linux",
-    common_platformversion: "6.1.0",
-    common_arch: "x64",
-    common_extname: "copilot-chat",
-    common_extversion: "0.37.6",
-    common_vscodeversion: vsCodeVersion,
-    common_uikind: "desktop",
-    common_editorsession_id: sessionId,
-  }),
-}))
-
 import type { TelemetryEnvelope } from "../src/services/telemetry/types"
 
+import { SESSION_ID, getMachineId } from "../src/services/telemetry/identity"
 import {
   initTelemetry,
   trackEvent,
@@ -117,6 +93,7 @@ beforeEach(() => {
 
 afterEach(() => {
   globalThis.fetch = originalFetch
+  mock.restore()
 })
 
 function installFetchMock(
@@ -271,7 +248,7 @@ describe("telemetry: trackEvent", () => {
     expect(typeof env.time).toBe("string")
 
     expect(env.tags["ai.user.id"]).toBe("envelope-test")
-    expect(env.tags["ai.session.id"]).toBe("test-session-id-1234")
+    expect(env.tags["ai.session.id"]).toBe(SESSION_ID)
     expect(env.tags["ai.cloud.roleInstance"]).toBe("REDACTED")
     expect(env.tags["ai.internal.sdkVersion"]).toBe(TELEMETRY_SDK_VERSION)
 
@@ -281,7 +258,7 @@ describe("telemetry: trackEvent", () => {
     expect(env.data.baseData.properties.model).toBe("gpt-4")
     expect(env.data.baseData.properties.status_code).toBe("200")
     expect(env.data.baseData.properties.common_vscodemachineid).toBe(
-      "mock-machine-id-sha256hex",
+      getMachineId(),
     )
     expect(env.data.baseData.measurements).toEqual({ response_time: 1500 })
   })

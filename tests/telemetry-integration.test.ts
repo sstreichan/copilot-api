@@ -53,30 +53,6 @@ void mock.module("~/lib/config", () => ({
   mergeConfigWithDefaults: getMockConfig,
 }))
 
-void mock.module("~/services/telemetry/identity", () => ({
-  SESSION_ID: "test-session-id-1234",
-  getMachineId: () => "mock-machine-id-sha256hex",
-  getDevDeviceId: () => "mock-device-id-uuid",
-  getCommonProperties: (
-    machineId: string,
-    sessionId: string,
-    vsCodeVersion: string = "",
-  ) => ({
-    common_vscodemachineid: machineId,
-    common_vscodesessionid: sessionId,
-    client_machineid: machineId,
-    client_deviceid: "mock-device-id-uuid",
-    common_os: "linux",
-    common_platformversion: "6.1.0",
-    common_arch: "x64",
-    common_extname: "copilot-chat",
-    common_extversion: "0.37.6",
-    common_vscodeversion: vsCodeVersion,
-    common_uikind: "desktop",
-    common_editorsession_id: sessionId,
-  }),
-}))
-
 import { state } from "~/lib/state"
 import {
   createChatCompletions,
@@ -175,6 +151,7 @@ beforeEach(() => {
 
 afterEach(() => {
   globalThis.fetch = originalFetch
+  mock.restore()
 })
 
 describe("telemetry integration with create-chat-completions", () => {
