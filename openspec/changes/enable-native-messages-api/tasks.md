@@ -54,7 +54,7 @@
 **文件**: `src/routes/messages/handler.ts`
 **变更**:
 - 新增 `handleWithNativeMessages()` 函数
-- 透传 `anthropic-beta` header
+- 读取 `anthropic-beta` header，并在 `createMessages()` 中按 allowlist 过滤后转发
 - 流式响应使用 `c.body(response.body)` 直接转发（不用 `streamSSE`）
 - 非流式响应直接返回 JSON
 **验证**: 函数可被调用并返回响应
@@ -92,7 +92,8 @@ if (state.nativeMessages && isClaudeModel(anthropicPayload.model)) {
 **文件**: `tests/messages/native-messages.test.ts`
 **内容**:
 - 验证 payload 不被修改（model、content 保持原样）
-- 验证 `anthropic-beta` header 被透传
+- 验证 allowlisted `anthropic-beta` header 被转发
+- 验证非 allowlisted `anthropic-beta` header 被过滤
 **验证**: 测试通过
 
 #### Task 4.4: 编写 streaming 透传测试

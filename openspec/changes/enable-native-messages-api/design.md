@@ -104,13 +104,14 @@ const handleWithNativeMessages = async (
   anthropicPayload: AnthropicMessagesPayload,
   originalModel: string,
 ) => {
-  // Get anthropic-beta header for passthrough
+  // Read caller-supplied anthropic-beta header.
+  // createMessages() forwards only allowlisted beta values.
   const anthropicBeta = c.req.header("anthropic-beta")
 
   // Call native /v1/messages endpoint
   const response = await createMessages(anthropicPayload, {
     initiator: getInitiator(anthropicPayload),
-    anthropicBeta,  // ⚠️ Must forward this header
+    anthropicBeta,
   })
 
   // Stream: use raw body passthrough (NOT streamSSE reconstruction)
@@ -187,7 +188,8 @@ const isClaudeModel = (model: string): boolean =>
 
 3. **请求透传**
    - payload 不被修改（包括 model、content）
-   - `anthropic-beta` header 被透传
+   - allowlisted `anthropic-beta` header 被转发
+   - 非 allowlisted `anthropic-beta` header 被过滤
 
 4. **响应透传**
    - 非流式：JSON 直接返回

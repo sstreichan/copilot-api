@@ -96,24 +96,42 @@ const getAnthropicEffortForModel = (
 
 /**
  * Resolve the anthropic-beta header value based on options and model capabilities.
+ * Uses a whitelist to only pass known-safe betas to the Copilot backend.
  */
+const INTERLEAVED_THINKING_BETA = "interleaved-thinking-2025-05-14"
+const allowedAnthropicBetas = new Set([
+  INTERLEAVED_THINKING_BETA,
+  "context-management-2025-06-27",
+  "advanced-tool-use-2025-11-20",
+])
+
 const resolveAnthropicBetaHeader = (
   options: CreateMessagesOptions,
   supportsAdaptive: boolean,
   payload: AnthropicMessagesPayload,
 ): string | undefined => {
   if (options.anthropicBeta) {
-    // align with vscode copilot extension anthropic-beta
     const filteredBeta = options.anthropicBeta
       .split(",")
       .map((item) => item.trim())
-      .filter((item) => item !== "claude-code-20250219")
-      .join(",")
-    return filteredBeta || undefined
+      .filter((item) => item.length > 0)
+      .filter((item) => allowedAnthropicBetas.has(item))
+    const uniqueFilteredBetas = [...new Set(filteredBeta)]
+    // Adaptive thinking conflicts with interleaved-thinking beta
+    const finalFilteredBetas =
+      supportsAdaptive ?
+        uniqueFilteredBetas.filter((item) => item !== INTERLEAVED_THINKING_BETA)
+      : uniqueFilteredBetas
+
+    if (finalFilteredBetas.length > 0) {
+      return finalFilteredBetas.join(",")
+    }
+
+    return undefined
   }
 
   if (!supportsAdaptive && payload.thinking?.budget_tokens) {
-    return "interleaved-thinking-2025-05-14"
+    return INTERLEAVED_THINKING_BETA
   }
 
   return undefined

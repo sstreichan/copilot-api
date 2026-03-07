@@ -148,12 +148,16 @@ export const getInitiatorFromPayload = (
   return lastMessage?.role === "assistant" ? "agent" : "user"
 }
 
-// Handle requests using Copilot's native /v1/messages endpoint (passthrough)
+// Handle requests using Copilot's native /v1/messages endpoint.
+// Payload is passed through directly; createMessages() still applies
+// backend-specific safety handling for headers and retries.
 const handleWithNativeMessages = async (
   c: Context,
   anthropicPayload: AnthropicMessagesPayload,
   originalModel: string,
 ): Promise<Response> => {
+  // Preserve the caller-supplied header; createMessages() filters it to
+  // the backend-supported anthropic-beta values before forwarding.
   const anthropicBeta = c.req.header("anthropic-beta")
 
   consola.info(

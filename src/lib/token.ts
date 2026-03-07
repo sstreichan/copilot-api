@@ -1,5 +1,6 @@
 import consola from "consola"
 import fs from "node:fs/promises"
+import { setTimeout as delay } from "node:timers/promises"
 
 import { PATHS } from "~/lib/paths"
 import { getCopilotToken } from "~/services/github/get-copilot-token"
@@ -14,39 +15,77 @@ import {
 import { HTTPError } from "./error"
 import { state } from "./state"
 
+let copilotRefreshLoopController: AbortController | null = null
+
+export const stopCopilotRefreshLoop = () => {
+  if (!copilotRefreshLoopController) {
+    return
+  }
+
+  copilotRefreshLoopController.abort()
+  copilotRefreshLoopController = null
+}
+
 const readGithubToken = () => fs.readFile(PATHS.GITHUB_TOKEN_PATH, "utf8")
 
 const writeGithubToken = (token: string) =>
   fs.writeFile(PATHS.GITHUB_TOKEN_PATH, token)
 
 export const setupCopilotToken = async () => {
-  const tokenResponse = await getCopilotToken()
-  state.copilotToken = tokenResponse.token
-  initTelemetry(tokenResponse.token, tokenResponse.endpoints?.telemetry)
+  const { token, refresh_in, endpoints } = await getCopilotToken()
+  state.copilotToken = token
+  initTelemetry(token, endpoints?.telemetry)
   trackAuthNewToken()
 
   // Display the Copilot token to the screen
   consola.debug("GitHub Copilot Token fetched successfully!")
   if (state.showToken) {
-    consola.info("Copilot token:", tokenResponse.token)
+    consola.info("Copilot token:", token)
   }
 
-  const refreshInterval = (tokenResponse.refresh_in - 60) * 1000
-  setInterval(async () => {
+  stopCopilotRefreshLoop()
+
+  const controller = new AbortController()
+  copilotRefreshLoopController = controller
+
+  runCopilotRefreshLoop(refresh_in, controller.signal)
+    .catch(() => {
+      consola.warn("Copilot token refresh loop stopped")
+    })
+    .finally(() => {
+      if (copilotRefreshLoopController === controller) {
+        copilotRefreshLoopController = null
+      }
+    })
+}
+
+const runCopilotRefreshLoop = async (
+  refreshIn: number,
+  signal: AbortSignal,
+) => {
+  let nextRefreshDelayMs = (refreshIn - 60) * 1000
+
+  while (!signal.aborted) {
+    await delay(nextRefreshDelayMs, undefined, { signal })
+
     consola.debug("Refreshing Copilot token")
+
     try {
-      const { token } = await getCopilotToken()
+      const { token, refresh_in } = await getCopilotToken()
       state.copilotToken = token
       trackAuthNewToken()
       consola.debug("Copilot token refreshed")
       if (state.showToken) {
         consola.info("Refreshed Copilot token:", token)
       }
+
+      nextRefreshDelayMs = (refresh_in - 60) * 1000
     } catch (error) {
       consola.error("Failed to refresh Copilot token:", error)
-      throw error
+      nextRefreshDelayMs = 15_000
+      consola.warn(`Retrying Copilot token refresh in ${nextRefreshDelayMs}ms`)
     }
-  }, refreshInterval)
+  }
 }
 
 interface SetupGitHubTokenOptions {

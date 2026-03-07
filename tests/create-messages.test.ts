@@ -102,7 +102,22 @@ test("forces X-Initiator to agent when state.forceAgent is true", async () => {
   expect(headers["X-Initiator"]).toBe("agent")
 })
 
-test("forwards anthropic-beta header when provided", async () => {
+test("forwards allowed anthropic-beta header when provided", async () => {
+  const payload: AnthropicMessagesPayload = {
+    model: "claude-sonnet-4-20250514",
+    max_tokens: 1024,
+    messages: [{ role: "user", content: "hi" }],
+  }
+  await createMessages(payload, {
+    anthropicBeta: "context-management-2025-06-27",
+  })
+  const headers = (
+    fetchMock.mock.calls[0][1] as { headers: Record<string, string> }
+  ).headers
+  expect(headers["anthropic-beta"]).toBe("context-management-2025-06-27")
+})
+
+test("filters unsupported anthropic-beta header when provided", async () => {
   const payload: AnthropicMessagesPayload = {
     model: "claude-sonnet-4-20250514",
     max_tokens: 1024,
@@ -114,7 +129,7 @@ test("forwards anthropic-beta header when provided", async () => {
   const headers = (
     fetchMock.mock.calls[0][1] as { headers: Record<string, string> }
   ).headers
-  expect(headers["anthropic-beta"]).toBe("max-tokens-3-5-sonnet-2024-07-15")
+  expect(headers["anthropic-beta"]).toBeUndefined()
 })
 
 test("does not include anthropic-beta header when not provided", async () => {
