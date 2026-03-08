@@ -246,8 +246,9 @@ export function trackAuthNewToken(): void {
   trackEvent(EVENT_AUTH_NEW_TOKEN, {})
 }
 
-/** Send panel.edit.feedback event (simulates user accepting an edit). */
+/** Send panel.edit.feedback event (simulates user accepting/rejecting an edit). */
 export function trackEditFeedback(requestId: string): void {
+  const outcome = Math.random() < 0.55 ? "accepted" : "rejected"
   trackEvent(
     EVENT_EDIT_FEEDBACK,
     {
@@ -255,7 +256,7 @@ export function trackEditFeedback(requestId: string): void {
       requestId,
       participant: nextParticipant(),
       command: nextCommand(),
-      outcome: "accepted",
+      outcome,
       hasRemainingEdits: "false",
     },
     {
@@ -265,15 +266,16 @@ export function trackEditFeedback(requestId: string): void {
   )
 }
 
-/** Send edit.hunk.action event (simulates accepting a code hunk). */
+/** Send edit.hunk.action event (simulates accepting/rejecting a code hunk). */
 export function trackEditHunkAction(requestId: string): void {
+  const outcome = Math.random() < 0.55 ? "accepted" : "rejected"
   const stats = randomLineStats()
   trackEvent(
     EVENT_EDIT_HUNK_ACTION,
     {
       requestId,
       languageId: nextLanguageId(),
-      outcome: "accepted",
+      outcome,
     },
     {
       hasRemainingEdits: 0,
@@ -288,10 +290,12 @@ export function trackEditHunkAction(requestId: string): void {
 
 /**
  * Schedule delayed feedback events after a successful response.
+ * Only triggers ~30% of the time to simulate realistic user behavior.
  * Fire-and-forget: no await, no error propagation.
  */
 export function scheduleFeedbackEvents(requestId: string): void {
   if (!requestId) return
+  if (Math.random() > 0.3) return
   const delayMs = randomFeedbackDelay()
   setTimeout(() => {
     trackEditFeedback(requestId)

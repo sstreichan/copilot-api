@@ -404,7 +404,13 @@ describe("telemetry: feedback wrappers", () => {
     mockTelemetryEnabled = true
     installFetchMock()
 
+    // Mock Math.random to deterministically produce "accepted" (< 0.55)
+    const origRandom = Math.random
+    Math.random = () => 0.1
+
     trackEditFeedback("req-feedback-001")
+
+    Math.random = origRandom
     await flushMicrotasks()
 
     expect(fetchCalls.length).toBe(1)
@@ -428,7 +434,13 @@ describe("telemetry: feedback wrappers", () => {
     mockTelemetryEnabled = true
     installFetchMock()
 
+    // Mock Math.random to deterministically produce "accepted" (< 0.55)
+    const origRandom = Math.random
+    Math.random = () => 0.1
+
     trackEditHunkAction("req-hunk-002")
+
+    Math.random = origRandom
     await flushMicrotasks()
 
     expect(fetchCalls.length).toBe(1)
@@ -466,10 +478,15 @@ describe("telemetry: feedback wrappers", () => {
       return 0 as unknown as ReturnType<typeof setTimeout>
     }) as typeof setTimeout
 
+    // Mock Math.random to pass the 30% gate (< 0.3) and produce "accepted" (< 0.55)
+    const origRandom = Math.random
+    Math.random = () => 0.1
+
     scheduleFeedbackEvents("req-sched-003")
 
-    // Restore real setTimeout immediately so it doesn't leak
+    // Restore mocks immediately so they don't leak
     globalThis.setTimeout = origTimeout
+    Math.random = origRandom
 
     // Callback was captured but not yet invoked
     expect(fetchCalls.length).toBe(0)
