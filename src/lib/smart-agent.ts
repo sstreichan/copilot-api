@@ -135,7 +135,7 @@ export async function resolveInitiatorWithSmartAgent(
         `[quota] Smart agent: API error, defaulting to agent mode - ${decision.error}`,
       )
     } else {
-      const quotaMessage = `[quota] Smart agent: remaining ${decision.remaining} < expected ${decision.expected} → using agent mode`
+      const quotaMessage = `[quota] Smart agent: remaining ${decision.remaining} <= expected ${decision.expected} → using agent mode`
       const nowMs = Date.now()
 
       if (nowMs - lastQuotaLogTime >= 300_000) {
