@@ -29,12 +29,15 @@ export function shouldUseAgentMode(params: ShouldUseAgentModeParams): boolean {
   return remaining <= expectedRemaining
 }
 
+export type SmartAgentReason = "over_budget" | "hysteresis" | "error"
+
 export interface SmartAgentDecision {
   forceAgent: boolean
   remaining?: number
   expected?: number
   idealDaily?: number
   error?: string
+  reason?: SmartAgentReason
 }
 
 /**
@@ -77,12 +80,14 @@ export async function getSmartAgentDecision(
       remaining: quota.remaining,
       expected: Math.round(expectedRemaining),
       idealDaily: quota.entitlement / daysInMonth,
+      reason: forceAgent ? "over_budget" : undefined,
     }
   } catch (error) {
     consola.warn("[quota] Failed to fetch usage, defaulting to agent mode")
     return {
       forceAgent: true,
       error: error instanceof Error ? error.message : String(error),
+      reason: "error" as const,
     }
   }
 }

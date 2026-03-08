@@ -83,7 +83,11 @@ async function getDecisionWithSmartCache(
       consola.debug(
         `[quota] Smart agent: hysteresis active — remaining ${decision.remaining} <= expected ${decision.expected} + margin ${Math.round(decision.idealDaily)} = ${Math.round(exitThreshold)}, maintaining protection`,
       )
-      const hysteresisDecision = { ...decision, forceAgent: true as const }
+      const hysteresisDecision: SmartAgentDecision = {
+        ...decision,
+        forceAgent: true,
+        reason: "hysteresis",
+      }
       updateSmartAgentCache(hysteresisDecision, currentTime)
       return hysteresisDecision
     }
@@ -135,7 +139,14 @@ export async function resolveInitiatorWithSmartAgent(
         `[quota] Smart agent: API error, defaulting to agent mode - ${decision.error}`,
       )
     } else {
-      const quotaMessage = `[quota] Smart agent: remaining ${decision.remaining} <= expected ${decision.expected} → using agent mode`
+      const quotaMessage =
+        (
+          decision.reason === "hysteresis"
+          && decision.expected !== undefined
+          && decision.idealDaily !== undefined
+        ) ?
+          `[quota] Smart agent: hysteresis — remaining ${decision.remaining} <= expected ${decision.expected} + margin ${Math.round(decision.idealDaily)} = ${Math.round(decision.expected + decision.idealDaily)}, maintaining agent mode`
+        : `[quota] Smart agent: remaining ${decision.remaining} <= expected ${decision.expected} → using agent mode`
       const nowMs = Date.now()
 
       if (nowMs - lastQuotaLogTime >= 300_000) {
