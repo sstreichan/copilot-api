@@ -1,0 +1,5 @@
+[
+  { "name": "personal", "port": 4141, "token": "ghu_test_legacy_1" },
+  { "name": "company", "port": 4142, "token": "ghu_test_legacy_2" },
+  { "name": "xianyu", "port": 4143, "token": "ghu_test_legacy_3" }
+]

@@ -1,0 +1,23 @@
+[
+  {
+    "name": "personal",
+    "port": 4141,
+    "token": "ghu_test_personal_token_12345",
+    "accountType": "individual",
+    "flags": ["-M", "-v"]
+  },
+  {
+    "name": "company",
+    "port": 4142,
+    "token": "ghu_test_company_token_67890",
+    "accountType": "business",
+    "flags": ["-M", "-F"]
+  },
+  {
+    "name": "xianyu",
+    "port": 4143,
+    "token": "ghu_test_xianyu_token_abcde",
+    "accountType": "individual",
+    "flags": []
+  }
+]

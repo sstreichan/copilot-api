@@ -7,11 +7,13 @@ const APP_DIR = process.env.COPILOT_API_HOME || DEFAULT_DIR
 
 const GITHUB_TOKEN_PATH = path.join(APP_DIR, "github_token")
 const CONFIG_PATH = path.join(APP_DIR, "config.json")
+const TOKENS_PATH = path.join(APP_DIR, "tokens.json")
 
 export const PATHS = {
   APP_DIR,
   GITHUB_TOKEN_PATH,
   CONFIG_PATH,
+  TOKENS_PATH,
 }
 
 export async function ensurePaths(): Promise<void> {

@@ -1,0 +1,8 @@
+[
+  {
+    "name": "bad-flags",
+    "port": 4141,
+    "token": "ghu_test_forbidden_1",
+    "flags": ["--manual", "-M"]
+  }
+]
