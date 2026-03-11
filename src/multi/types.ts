@@ -15,8 +15,18 @@ export type TUIAction =
 // Constants
 export const FORBIDDEN_FLAGS = [
   "--manual",
+  "-c",
   "--claude-code",
   "--show-token",
+] as const
+
+export const SUPERVISOR_CONTROLLED_FLAGS = [
+  "-p",
+  "--port",
+  "-a",
+  "--account-type",
+  "-g",
+  "--github-token",
 ] as const
 
 // Interfaces
@@ -45,9 +55,4 @@ export interface InstanceProcess {
 export interface SupervisorState {
   instances: Map<string, InstanceProcess>
   selectedIndex: number
-}
-
-export interface TUIState {
-  selectedIndex: number
-  layoutMode: "split" | "full"
 }

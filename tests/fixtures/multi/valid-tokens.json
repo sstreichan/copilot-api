@@ -1,0 +1,16 @@
+[
+  {
+    "name": "integration-test-1",
+    "token": "ghu_test_token_integration_01",
+    "port": 59100,
+    "accountType": "individual",
+    "flags": []
+  },
+  {
+    "name": "integration-test-2",
+    "token": "ghu_test_token_integration_02",
+    "port": 59101,
+    "accountType": "individual",
+    "flags": []
+  }
+]

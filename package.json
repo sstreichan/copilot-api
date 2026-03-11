@@ -42,7 +42,6 @@
     "*": "bun run lint --fix"
   },
   "dependencies": {
-    "@anthropic-ai/claude-code": "2.1.69",
     "@opentui/core": "^0.1.87",
     "citty": "^0.2.0",
     "clipboardy": "^5.1.0",

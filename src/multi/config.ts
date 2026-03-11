@@ -1,9 +1,14 @@
 import { readFileSync } from "node:fs"
 
-import { FORBIDDEN_FLAGS, type InstanceConfig } from "~/multi/types"
+import {
+  FORBIDDEN_FLAGS,
+  SUPERVISOR_CONTROLLED_FLAGS,
+  type InstanceConfig,
+} from "~/multi/types"
 
 // Supervisor spawns each instance with:
-// ["-p", String(config.port), "-a", config.accountType, "-g", config.token, ...config.flags]
+// ["-p", String(config.port), "-a", config.accountType, ...config.flags]
+// Token is passed via COPILOT_API_GITHUB_TOKEN environment variable (not CLI arg)
 
 export function parseTokensConfig(filePath: string): Array<InstanceConfig> {
   let content: string
@@ -47,6 +52,11 @@ export function parseTokensConfig(filePath: string): Array<InstanceConfig> {
 
   return configs
 }
+
+const BLOCKED_FLAGS = new Set<string>([
+  ...FORBIDDEN_FLAGS,
+  ...SUPERVISOR_CONTROLLED_FLAGS,
+])
 
 export function applyDefaults(raw: unknown, index: number): InstanceConfig {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
@@ -100,7 +110,7 @@ export function validateConfig(configs: Array<InstanceConfig>): void {
     }
 
     for (const flag of config.flags ?? []) {
-      if (FORBIDDEN_FLAGS.includes(flag as (typeof FORBIDDEN_FLAGS)[number])) {
+      if (BLOCKED_FLAGS.has(flag)) {
         throw new Error(
           `Error: Instance "${config.name}" uses forbidden flag: ${flag}`,
         )
