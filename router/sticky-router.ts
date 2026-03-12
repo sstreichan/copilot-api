@@ -159,6 +159,7 @@ function pickPort(
 await discoverModels()
 
 Bun.serve({
+  idleTimeout: 0,
   port: PORT,
   async fetch(req) {
     const url = new URL(req.url)
