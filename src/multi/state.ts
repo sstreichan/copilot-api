@@ -1,4 +1,4 @@
-import type { TUIAction } from "~/multi/types"
+import type { TUIAction, InstanceRuntimeStats } from "~/multi/types"
 
 type OnQuit = () => void
 type OnRestart = (name: string) => void
@@ -17,7 +17,11 @@ export class TUIStateManager {
   private onQuit?: OnQuit
   private onRestart?: OnRestart
   private onRestartAll?: OnRestartAll
+  private autoSelectEnabled = true
+  private manualLockUntil: number | null = null
+  private lastAutoSelectAt: number | null = null
   selectedIndex = 1
+  private stats: Map<string, InstanceRuntimeStats> = new Map()
 
   constructor(
     instanceNames: Array<string>,
@@ -52,6 +56,16 @@ export class TUIStateManager {
     return this.items[this.selectedIndex] ?? null
   }
 
+  selectName(name: string): boolean {
+    const nextIndex = this.items.indexOf(name)
+    if (nextIndex <= 0 || nextIndex === this.selectedIndex) {
+      return false
+    }
+
+    this.selectedIndex = nextIndex
+    return true
+  }
+
   isAllSelected(): boolean {
     return this.selectedIndex === 0
   }
@@ -62,6 +76,40 @@ export class TUIStateManager {
 
   getLayoutMode(termWidth: number): "narrow" | "wide" {
     return termWidth >= 75 ? "wide" : "narrow"
+  }
+
+  isAutoSelectEnabled(): boolean {
+    return this.autoSelectEnabled
+  }
+
+  toggleAutoSelect(): boolean {
+    this.autoSelectEnabled = !this.autoSelectEnabled
+    return this.autoSelectEnabled
+  }
+
+  lockManualSelection(now = Date.now(), durationMs = 10_000): void {
+    this.manualLockUntil = now + durationMs
+  }
+
+  isManualLockActive(now = Date.now()): boolean {
+    if (this.manualLockUntil === null) {
+      return false
+    }
+
+    if (now >= this.manualLockUntil) {
+      this.manualLockUntil = null
+      return false
+    }
+
+    return true
+  }
+
+  getLastAutoSelectAt(): number | null {
+    return this.lastAutoSelectAt
+  }
+
+  recordAutoSelect(now = Date.now()): void {
+    this.lastAutoSelectAt = now
   }
 
   dispatch(action: TUIAction): void {
@@ -110,5 +158,39 @@ export class TUIStateManager {
       const logs = supervisor.getLogBuffer(name)?.getAll() ?? []
       return logs.map((line) => `[${name}] ${line}`)
     })
+  }
+
+  incrementRequestCount(name: string): void {
+    const current = this.stats.get(name) ?? {
+      requestCount: 0,
+      lastActiveAt: null,
+    }
+    current.requestCount++
+    this.stats.set(name, current)
+  }
+
+  updateLastActive(name: string): void {
+    const current = this.stats.get(name) ?? {
+      requestCount: 0,
+      lastActiveAt: null,
+    }
+    current.lastActiveAt = Date.now()
+    this.stats.set(name, current)
+  }
+
+  clearStats(name: string): void {
+    this.stats.set(name, { requestCount: 0, lastActiveAt: null })
+  }
+
+  clearAllStats(): void {
+    this.stats.clear()
+  }
+
+  getStats(name: string): InstanceRuntimeStats {
+    const stats = this.stats.get(name)
+    if (!stats) {
+      return { requestCount: 0, lastActiveAt: null }
+    }
+    return { ...stats }
   }
 }

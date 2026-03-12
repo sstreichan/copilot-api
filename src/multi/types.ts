@@ -56,3 +56,8 @@ export interface SupervisorState {
   instances: Map<string, InstanceProcess>
   selectedIndex: number
 }
+
+export interface InstanceRuntimeStats {
+  requestCount: number
+  lastActiveAt: number | null
+}
