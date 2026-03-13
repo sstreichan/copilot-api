@@ -191,6 +191,7 @@ init_tmux_target() {
 
   tmux set-window-option -t "$WINDOW_ID" pane-border-status top >/dev/null
   tmux set-window-option -t "$WINDOW_ID" pane-border-format ' #{pane_title} ' >/dev/null
+  tmux set-option -t "$SESSION_NAME" mouse on >/dev/null
 }
 
 reserve_router_pane() {
