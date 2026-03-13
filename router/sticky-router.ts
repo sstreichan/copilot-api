@@ -2,10 +2,22 @@ import { readFileSync, appendFileSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
 
-const ROUTER_PORT = 4140
-const DASHBOARD_PORT = 4139
-const TOKENS_PATH = join(homedir(), ".local/share/copilot-api/tokens.json")
-const LOG_FILE = "/tmp/sticky-router.log"
+function readPort(name: string, fallback: number): number {
+  const raw = process.env[name]
+  if (!raw) {
+    return fallback
+  }
+
+  const value = Number.parseInt(raw, 10)
+  return Number.isFinite(value) && value > 0 ? value : fallback
+}
+
+const ROUTER_PORT = readPort("ROUTER_PORT", 4140)
+const DASHBOARD_PORT = readPort("DASHBOARD_PORT", 4139)
+const TOKENS_PATH =
+  process.env.TOKENS_PATH
+  || join(homedir(), ".local/share/copilot-api/tokens.json")
+const LOG_FILE = process.env.STICKY_ROUTER_LOG_FILE || "/tmp/sticky-router.log"
 const MAX_LINES = 200
 const TRIM_TO = 150
 const HISTORY_LIMIT = 200
