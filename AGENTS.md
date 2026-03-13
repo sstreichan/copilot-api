@@ -25,7 +25,6 @@ Keep this managed block so 'openspec update' can refresh the instructions.
 - 默认给出详尽、全面的回答。
 - 有多个搜索/MCP 工具时，全部使用，跨源对比结果。
 - 语言策略：默认中文回复。
-- **Lint 真相源**：lint 结论只以 `bun run lint:all` / `bun run lint:all --fix` 为准；不要用 LSP diagnostics 代替 lint 验证，LSP 只可作 IDE/TS 辅助信号。
 
 ## 项目概述
 
@@ -64,7 +63,6 @@ bun test tests/file.ts   # 运行指定测试
 # 质量检查
 bun run lint:all --fix   # Lint 并修复
 bun run typecheck        # 类型检查
-# ⚠️ lint 真相源是 bun run lint:all，LSP diagnostics 不能代替 lint 验证
 
 # CLI 标志 (start 命令)
 bun run dev -- -M           # Claude 模型使用原生 Messages API（推荐）

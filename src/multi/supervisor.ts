@@ -1,9 +1,7 @@
 import { consola } from "consola"
-import { randomUUID } from "node:crypto"
 import {
   existsSync,
   mkdirSync,
-  readdirSync,
   readFileSync,
   unlinkSync,
   writeFileSync,
@@ -20,49 +18,12 @@ import type {
 } from "~/multi/types"
 
 const PID_DIR_PATH = join(homedir(), ".copilot-api")
-const LEGACY_PID_FILE_NAME = "multi.pid"
-const PID_FILE_NAME_PREFIX = "multi-"
-const PID_FILE_NAME_SUFFIX = ".pid"
-const ACTIVE_PID_FILE_PATHS = new Set<string>()
+const PID_FILE_PATH = join(PID_DIR_PATH, "multi.pid")
 const PROCESS_EXIT_TIMEOUT_MS = 5_000
 const PROCESS_FORCE_KILL_TIMEOUT_MS = 1_000
 
-function createPidFilePath(): string {
-  return join(
-    PID_DIR_PATH,
-    `${PID_FILE_NAME_PREFIX}${process.pid}-${randomUUID()}${PID_FILE_NAME_SUFFIX}`,
-  )
-}
-
-function getPidFileOwnerPid(fileName: string): number | undefined {
-  if (
-    !fileName.startsWith(PID_FILE_NAME_PREFIX)
-    || !fileName.endsWith(PID_FILE_NAME_SUFFIX)
-  ) {
-    return undefined
-  }
-
-  const pidToken = fileName
-    .slice(PID_FILE_NAME_PREFIX.length, -PID_FILE_NAME_SUFFIX.length)
-    .split("-")[0]
-  const pid = Number.parseInt(pidToken, 10)
-
-  return Number.isInteger(pid) && pid > 0 ? pid : undefined
-}
-
-function isManagedPidFileName(fileName: string): boolean {
-  return (
-    fileName === LEGACY_PID_FILE_NAME
-    || getPidFileOwnerPid(fileName) !== undefined
-  )
-}
-
 type SpawnedProcess = ReturnType<typeof Bun.spawn>
 type SupervisorListener = (...arguments_: Array<unknown>) => void
-
-export function isRequestActivityLogLine(line: string): boolean {
-  return /^<--\s+[A-Z]+\s+\S+/.test(line)
-}
 
 interface ManagedInstance extends InstanceProcess {
   proc?: SpawnedProcess
@@ -111,11 +72,9 @@ export class Supervisor {
   private restartingSet = new Set<string>()
   private commandBuilder: (config: InstanceConfig) => Array<string>
   private configs: Array<InstanceConfig>
-  private readonly pidFilePath = createPidFilePath()
 
   constructor(configs: Array<InstanceConfig>) {
     this.configs = configs
-    ACTIVE_PID_FILE_PATHS.add(this.pidFilePath)
 
     this.commandBuilder = (config) => [
       "bun",
@@ -147,22 +106,6 @@ export class Supervisor {
     return this
   }
 
-  off(eventName: string | symbol, listener: SupervisorListener): this {
-    const listeners = this.listeners.get(eventName)
-    if (!listeners) {
-      return this
-    }
-
-    const nextListeners = listeners.filter((entry) => entry !== listener)
-    if (nextListeners.length === 0) {
-      this.listeners.delete(eventName)
-      return this
-    }
-
-    this.listeners.set(eventName, nextListeners)
-    return this
-  }
-
   removeAllListeners(eventName?: string | symbol): this {
     if (eventName === undefined) {
       this.listeners.clear()
@@ -174,7 +117,6 @@ export class Supervisor {
   }
 
   async startAll(): Promise<void> {
-    ACTIVE_PID_FILE_PATHS.add(this.pidFilePath)
     await this.cleanupOrphans()
     await Promise.all(this.configs.map((config) => this.spawnInstance(config)))
     this.emit("all-started")
@@ -216,7 +158,6 @@ export class Supervisor {
     )
 
     this.cleanupPidFile()
-    ACTIVE_PID_FILE_PATHS.delete(this.pidFilePath)
   }
 
   getState(): SupervisorState {
@@ -451,10 +392,6 @@ export class Supervisor {
     const maskedLine = buffer.getAll().at(-1)
     if (maskedLine) {
       this.emit("log", name, maskedLine)
-
-      if (isRequestActivityLogLine(line)) {
-        this.emit("request-activity", name)
-      }
     }
   }
 
@@ -475,55 +412,26 @@ export class Supervisor {
   }
 
   private async cleanupOrphans(): Promise<void> {
-    if (!existsSync(PID_DIR_PATH)) {
+    if (!existsSync(PID_FILE_PATH)) {
       return
     }
 
-    const pidFileNames = readdirSync(PID_DIR_PATH).filter((fileName) =>
-      isManagedPidFileName(fileName),
-    )
+    const content = readFileSync(PID_FILE_PATH, "utf8")
+    const pids = content
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => {
+        const [, pidValue] = line.split(":")
+        return Number.parseInt(pidValue, 10)
+      })
+      .filter((pid) => Number.isInteger(pid) && pid > 0)
 
-    for (const fileName of pidFileNames) {
-      const filePath = join(PID_DIR_PATH, fileName)
-      if (
-        filePath === this.pidFilePath
-        || ACTIVE_PID_FILE_PATHS.has(filePath)
-      ) {
-        continue
-      }
-
-      const ownerPid = getPidFileOwnerPid(fileName)
-      if (
-        ownerPid !== undefined
-        && ownerPid !== process.pid
-        && this.isPidAlive(ownerPid)
-      ) {
-        continue
-      }
-
-      let content: string
-      try {
-        content = readFileSync(filePath, "utf8")
-      } catch {
-        continue
-      }
-
-      const pids = content
-        .split(/\r?\n/)
-        .map((line) => line.trim())
-        .filter(Boolean)
-        .map((line) => {
-          const [, pidValue] = line.split(":")
-          return Number.parseInt(pidValue, 10)
-        })
-        .filter((pid) => Number.isInteger(pid) && pid > 0)
-
-      for (const pid of pids) {
-        await this.killOrphan(pid)
-      }
-
-      this.cleanupPidFile(filePath)
+    for (const pid of pids) {
+      await this.killOrphan(pid)
     }
+
+    this.cleanupPidFile()
   }
 
   private async killOrphan(pid: number): Promise<void> {
@@ -612,12 +520,12 @@ export class Supervisor {
     }
 
     mkdirSync(PID_DIR_PATH, { recursive: true })
-    writeFileSync(this.pidFilePath, `${lines.join("\n")}\n`)
+    writeFileSync(PID_FILE_PATH, `${lines.join("\n")}\n`)
   }
 
-  private cleanupPidFile(filePath = this.pidFilePath): void {
+  private cleanupPidFile(): void {
     try {
-      unlinkSync(filePath)
+      unlinkSync(PID_FILE_PATH)
     } catch (error) {
       consola.debug("Failed to clean up PID file:", error)
     }
@@ -646,7 +554,6 @@ export class Supervisor {
       "COPILOT_API_GITHUB_TOKEN",
       config.token,
     ])
-    deduped.set("FORCE_COLOR", ["FORCE_COLOR", "1"])
 
     return Object.fromEntries(deduped.values())
   }
