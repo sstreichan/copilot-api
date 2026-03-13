@@ -145,7 +145,7 @@ describe("router handlers", () => {
 
     expect(first.status).toBe(200)
     expect(second.status).toBe(200)
-    expect(proxiedPorts).toEqual(["4141", "4141"])
+    expect(proxiedPorts[0]).toBe(proxiedPorts[1])
     expect(state.routeHistory.map((entry) => entry.reason)).toEqual([
       "new",
       "sticky",
@@ -154,7 +154,7 @@ describe("router handlers", () => {
     expect(logs[1]).toContain("reason=sticky")
   })
 
-  test("router handler round-robins nomodel requests and rejects unknown models", async () => {
+  test("router handler distributes nomodel requests by least-loaded and rejects unknown models", async () => {
     const state = createState()
     const proxiedPorts: Array<string> = []
 
@@ -209,7 +209,7 @@ describe("router handlers", () => {
 
     expect(first.status).toBe(200)
     expect(second.status).toBe(200)
-    expect(proxiedPorts).toEqual(["4141", "4142"])
+    expect(proxiedPorts.sort()).toEqual(["4141", "4142"])
     expect(state.routeHistory.slice(0, 2).map((entry) => entry.reason)).toEqual(
       ["nomodel", "nomodel"],
     )

@@ -52,7 +52,6 @@ export interface StickyRouterState {
   routeHistory: Array<RouteRecord>
   sseClients: Set<ReadableStreamDefaultController<Uint8Array>>
   portModelCounts: Map<number, Map<string, number>>
-  globalRoundRobin: number
 }
 
 export interface RouterHandlerOptions {
@@ -97,7 +96,6 @@ export function createStickyRouterState(
     routeHistory: [],
     sseClients: new Set<ReadableStreamDefaultController<Uint8Array>>(),
     portModelCounts: new Map<number, Map<string, number>>(),
-    globalRoundRobin: 0,
   }
 }
 
@@ -262,6 +260,39 @@ export async function discoverModels(
   )
 }
 
+export function getTotalRequestCount(
+  state: StickyRouterState,
+  port: number,
+): number {
+  const modelCounts = state.portModelCounts.get(port)
+  if (!modelCounts) return 0
+  let total = 0
+  for (const count of modelCounts.values()) {
+    total += count
+  }
+  return total
+}
+
+export function pickLeastLoaded(
+  state: StickyRouterState,
+  ports: Array<number>,
+): number {
+  let minCount = Number.POSITIVE_INFINITY
+  let candidates: Array<number> = []
+
+  for (const port of ports) {
+    const count = getTotalRequestCount(state, port)
+    if (count < minCount) {
+      minCount = count
+      candidates = [port]
+    } else if (count === minCount) {
+      candidates.push(port)
+    }
+  }
+
+  return candidates[Math.floor(Math.random() * candidates.length)]
+}
+
 export function pickPort(
   state: StickyRouterState,
   input: PortSelectionInput,
@@ -281,8 +312,7 @@ export function pickPort(
     }
   }
 
-  const port = ports[state.globalRoundRobin % ports.length]
-  state.globalRoundRobin++
+  const port = pickLeastLoaded(state, ports)
 
   const hadBinding = bindingKey ? state.sessionBindings.has(bindingKey) : false
   if (bindingKey) {
@@ -362,8 +392,7 @@ export function createRouterHandler(options: RouterHandlerOptions) {
 
     if (!model) {
       const allPorts = options.state.instances.map((instance) => instance.port)
-      const port = allPorts[options.state.globalRoundRobin % allPorts.length]
-      options.state.globalRoundRobin++
+      const port = pickLeastLoaded(options.state, allPorts)
       const instanceName = getInstanceName(options.state, port)
       const routeRecord: RouteRecord = {
         ts: now(),

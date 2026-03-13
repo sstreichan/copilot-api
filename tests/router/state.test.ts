@@ -6,6 +6,7 @@ import {
   clearSessionBindings,
   createStickyRouterState,
   getStatusPayload,
+  incrementCount,
   pickPort,
   recordRoute,
 } from "../../router/state"
@@ -18,25 +19,47 @@ function createState() {
 }
 
 describe("router state helpers", () => {
-  test("pickPort round-robins when no sticky binding is available", () => {
+  test("pickPort selects least-loaded port for new bindings", () => {
     const state = createState()
     state.modelToPorts.set("gpt-4.1", [4141, 4142])
 
-    expect(
-      pickPort(state, { sessionId: null, agent: "atlas", model: "gpt-4.1" }),
-    ).toEqual({
-      port: 4141,
-      reason: "new",
-      bindingKey: null,
+    // Give 4141 more load than 4142
+    incrementCount(state, 4141, "gpt-4.1")
+    incrementCount(state, 4141, "gpt-4.1")
+    incrementCount(state, 4141, "gpt-4.1")
+    incrementCount(state, 4142, "gpt-4.1")
+
+    const result = pickPort(state, {
+      sessionId: null,
+      agent: "atlas",
+      model: "gpt-4.1",
     })
-    expect(
-      pickPort(state, { sessionId: null, agent: "atlas", model: "gpt-4.1" }),
-    ).toEqual({
+
+    expect(result).toEqual({
       port: 4142,
       reason: "new",
       bindingKey: null,
     })
     expect(state.sessionBindings.size).toBe(0)
+  })
+
+  test("pickPort picks randomly among tied least-loaded ports", () => {
+    const ports = new Set<number>()
+
+    // Run enough times to observe both ports get picked
+    for (let i = 0; i < 50; i++) {
+      const state = createState()
+      state.modelToPorts.set("gpt-4.1", [4141, 4142])
+      const result = pickPort(state, {
+        sessionId: null,
+        agent: "atlas",
+        model: "gpt-4.1",
+      })
+      if (result) ports.add(result.port)
+    }
+
+    // With 50 trials, probability of seeing only one port = 2 * (0.5^50) ≈ 0
+    expect(ports.size).toBe(2)
   })
 
   test("pickPort creates and reuses sticky bindings", () => {
