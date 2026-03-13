@@ -66,9 +66,6 @@ export async function runServer(options: RunServerOptions): Promise<void> {
   if (options.githubToken) {
     state.githubToken = options.githubToken
     consola.info("Using provided GitHub token")
-  } else if (process.env.COPILOT_API_GITHUB_TOKEN) {
-    state.githubToken = process.env.COPILOT_API_GITHUB_TOKEN
-    consola.info("Using GitHub token from environment")
   } else {
     await setupGitHubToken()
   }

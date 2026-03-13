@@ -1,4 +1,0 @@
-[
-  { "name": "instance-a", "port": 4141, "token": "ghu_test_dup_port_1" },
-  { "name": "instance-b", "port": 4141, "token": "ghu_test_dup_port_2" }
-]
