@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sticky Router Dashboard</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0d1117;
+      --panel: #161b22;
+      --panel-2: #1f2630;
+      --border: #30363d;
+      --text: #e6edf3;
+      --muted: #8b949e;
+      --accent: #58a6ff;
+      --good: #3fb950;
+      --bad: #f85149;
+      --warn: #d29922;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      background: var(--bg);
+      color: var(--text);
+    }
+    .wrap {
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+    .topbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    h1, h2 { margin: 0; font-weight: 600; }
+    h1 { font-size: 18px; }
+    h2 { font-size: 14px; margin-bottom: 12px; }
+    .muted { color: var(--muted); }
+    .status {
+      border: 1px solid var(--border);
+      background: var(--panel);
+      border-radius: 999px;
+      padding: 6px 10px;
+      min-width: 130px;
+      text-align: center;
+    }
+    .status.connected { color: var(--good); border-color: rgba(63,185,80,.4); }
+    .status.disconnected { color: var(--bad); border-color: rgba(248,81,73,.4); }
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 16px;
+    }
+    .panel {
+      border: 1px solid var(--border);
+      background: var(--panel);
+      border-radius: 10px;
+      padding: 14px;
+      overflow: hidden;
+    }
+    .panel-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+    .stats {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+    .pill {
+      border: 1px solid var(--border);
+      background: var(--panel-2);
+      border-radius: 999px;
+      padding: 4px 10px;
+      color: var(--muted);
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    th, td {
+      padding: 8px 10px;
+      border-top: 1px solid var(--border);
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 500;
+      border-top: none;
+      padding-top: 0;
+    }
+    code {
+      color: var(--accent);
+      white-space: nowrap;
+    }
+    .tag {
+      display: inline-block;
+      border-radius: 999px;
+      padding: 2px 8px;
+      border: 1px solid var(--border);
+      font-size: 12px;
+    }
+    .tag.up { color: var(--good); border-color: rgba(63,185,80,.35); }
+    .tag.down { color: var(--warn); border-color: rgba(210,153,34,.35); }
+    .empty {
+      color: var(--muted);
+      padding: 16px 0;
+    }
+    .scroll { overflow-x: auto; }
+    .btn {
+      appearance: none;
+      border: 1px solid rgba(248,81,73,.35);
+      background: rgba(248,81,73,.10);
+      color: #ffb3ad;
+      border-radius: 8px;
+      padding: 6px 10px;
+      font: inherit;
+      cursor: pointer;
+      transition: background .15s ease, border-color .15s ease, opacity .15s ease;
+    }
+    .btn:hover { background: rgba(248,81,73,.18); border-color: rgba(248,81,73,.55); }
+    .btn:disabled { opacity: .6; cursor: wait; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="topbar">
+      <div>
+        <h1>Sticky Router Dashboard</h1>
+        <div class="muted">Live route stream on SSE, practical view only.</div>
+      </div>
+      <div id="sse-status" class="status disconnected">SSE disconnected</div>
+    </div>
+
+    <div class="grid">
+      <section class="panel">
+        <h2>Instances</h2>
+        <div class="stats">
+          <div class="pill">Instances: <span id="instance-count">0</span></div>
+          <div class="pill">Bindings: <span id="binding-count">0</span></div>
+          <div class="pill">History: <span id="history-count">0</span></div>
+        </div>
+        <div class="scroll">
+          <table>
+            <thead>
+              <tr><th>Name</th><th>Port</th><th>Status</th><th>Model Requests</th></tr>
+            </thead>
+            <tbody id="instances-body"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Active Bindings</h2>
+          <button id="clear-bindings" class="btn" type="button">Clear bindings</button>
+        </div>
+        <div class="scroll">
+          <table>
+            <thead>
+              <tr><th>Binding Key</th><th>Port</th></tr>
+            </thead>
+            <tbody id="bindings-body"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Route History</h2>
+          <button id="clear-history" class="btn" type="button">Clear history</button>
+        </div>
+        <div class="scroll">
+          <table>
+            <thead>
+              <tr><th>Time</th><th>Session</th><th>Agent</th><th>Model</th><th>Target</th><th>Reason</th></tr>
+            </thead>
+            <tbody id="history-body"></tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <script>
+    const state = { history: [] }
+    const byId = (id) => document.getElementById(id)
+    const cut = (value, size = 24) => {
+      const text = value || '-'
+      return text.length > size ? `${text.slice(0, size)}…` : text
+    }
+    const fmtTime = (value) => {
+      if (!value) return '-'
+      const date = new Date(value)
+      return Number.isNaN(date.getTime()) ? value : date.toLocaleTimeString('en-GB')
+    }
+
+    function renderInstances(instances) {
+      byId('instance-count').textContent = String(instances.length)
+      const body = byId('instances-body')
+      if (!instances.length) {
+        body.innerHTML = '<tr><td colspan="4" class="empty">No instances discovered.</td></tr>'
+        return
+      }
+      body.innerHTML = instances.map((item) => {
+        const counts = item.requestCounts || {}
+        const entries = Object.entries(counts).sort(([, a], [, b]) => b - a)
+        const countsHtml = entries.length
+          ? entries.map(([model, count]) => `<div>${model}: <strong>${count}</strong></div>`).join('')
+          : '<span class="muted">none</span>'
+        return `
+          <tr>
+            <td><strong>${item.name}</strong></td>
+            <td><code>${item.port}</code></td>
+            <td><span class="tag ${item.healthy ? 'up' : 'down'}">${item.healthy ? 'up' : 'down'}</span></td>
+            <td>${countsHtml}</td>
+          </tr>
+        `
+      }).join('')
+    }
+
+    function renderBindings(bindings) {
+      const entries = Object.entries(bindings || {})
+      byId('binding-count').textContent = String(entries.length)
+      const body = byId('bindings-body')
+      if (!entries.length) {
+        body.innerHTML = '<tr><td colspan="2" class="empty">No active bindings.</td></tr>'
+        return
+      }
+      body.innerHTML = entries.map(([key, port]) => `
+        <tr>
+          <td><code>${cut(key, 80)}</code></td>
+          <td><code>${port}</code></td>
+        </tr>
+      `).join('')
+    }
+
+    function historyRow(item) {
+      return `
+        <tr>
+          <td>${fmtTime(item.ts)}</td>
+          <td><code>${cut(item.sid, 18)}</code></td>
+          <td>${cut(item.agent, 18)}</td>
+          <td>${cut(item.model, 28)}</td>
+          <td><strong>${item.port || '-'}</strong></td>
+          <td>${item.reason || '-'}</td>
+        </tr>
+      `
+    }
+
+    function renderHistory(history) {
+      state.history = Array.isArray(history) ? [...history].sort((a, b) => (b.ts || '').localeCompare(a.ts || '')).slice(0, 50) : []
+      byId('history-count').textContent = String(state.history.length)
+      const body = byId('history-body')
+      if (!state.history.length) {
+        body.innerHTML = '<tr><td colspan="6" class="empty">No routes yet.</td></tr>'
+        return
+      }
+      body.innerHTML = state.history.map(historyRow).join('')
+    }
+
+    function prependHistory(item) {
+      state.history.unshift(item)
+      state.history = state.history.slice(0, 50)
+      renderHistory(state.history)
+    }
+
+    async function refreshAll() {
+      await Promise.all([loadStatus(), loadHistory()])
+    }
+
+    async function clearData(target) {
+      const config = target === 'bindings'
+        ? { button: byId('clear-bindings'), path: '/api/bindings/clear', label: 'Clear bindings' }
+        : { button: byId('clear-history'), path: '/api/history/clear', label: 'Clear history' }
+      const { button, path, label } = config
+      const confirmed = window.confirm(`Clear ${target} from router memory?`)
+      if (!confirmed) return
+
+      button.disabled = true
+      button.textContent = 'Clearing...'
+      try {
+        const response = await fetch(path, { method: 'POST' })
+        if (!response.ok) throw new Error(`HTTP ${response.status}`)
+        await refreshAll()
+      } catch (error) {
+        window.alert(`Failed to clear ${target}: ${error instanceof Error ? error.message : String(error)}`)
+      } finally {
+        button.disabled = false
+        button.textContent = label
+      }
+    }
+
+    async function loadStatus() {
+      const response = await fetch('/api/status')
+      const payload = await response.json()
+      renderInstances(payload.instances || [])
+      renderBindings(payload.sessionBindings || {})
+      if (typeof payload.routeHistorySize === 'number') {
+        byId('history-count').textContent = String(payload.routeHistorySize)
+      }
+    }
+
+    async function loadHistory() {
+      const response = await fetch('/api/history')
+      const payload = await response.json()
+      renderHistory(payload || [])
+    }
+
+    function connectSse() {
+      const badge = byId('sse-status')
+      const events = new EventSource('/api/events')
+      events.onopen = () => {
+        badge.textContent = 'SSE connected'
+        badge.className = 'status connected'
+      }
+      events.onerror = () => {
+        badge.textContent = 'SSE reconnecting'
+        badge.className = 'status disconnected'
+      }
+      events.onmessage = async (event) => {
+        try {
+          const payload = JSON.parse(event.data)
+          prependHistory(payload)
+          await loadStatus()
+        } catch (error) {
+          console.error('failed to parse SSE payload', error)
+        }
+      }
+      events.addEventListener('reset', async () => {
+        await refreshAll()
+      })
+    }
+
+    byId('clear-bindings').addEventListener('click', () => clearData('bindings'))
+    byId('clear-history').addEventListener('click', () => clearData('history'))
+
+    Promise.all([loadStatus(), loadHistory()]).finally(connectSse)
+  </script>
+</body>
+</html>
