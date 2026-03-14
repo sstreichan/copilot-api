@@ -21,6 +21,8 @@
 - `mergeToolResultForClaude()` 只在非 compact 请求上跑，用来避免 skill / hook / todo 文字块额外消耗 premium
 - `tool_calls` finish_reason 是中间态；stream accumulator 不能在这里清空
 - ping 事件必须写 `data: '{"type":"ping"}'`，不能发空字符串
+- Responses 翻译中 reasoning id >64 字符的 thinking block 不转为 `ResponseInputReasoning`（跨实例不可移植的 ID 会导致上游报错）
+- `shouldApplyPhase` 从 `extraPrompts` 动态检测 `"## Intermediary updates"` 字符串，不再硬编码模型名
 
 ## Project-Specific Rules
 

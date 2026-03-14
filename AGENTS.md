@@ -41,9 +41,14 @@ GitHub Copilot API 的反向代理，基于 **Hono** 框架（非 Express），�
 - `src/AGENTS.md` - 运行时代码总览；路由、服务、共享状态、配置入口
 - `src/lib/AGENTS.md` - 共享状态、配置、token 生命周期、smart agent、路径与日志约束
 - `src/routes/messages/AGENTS.md` - Anthropic `/v1/messages` 分支顺序、流式不变量、native messages 限制
+- `src/routes/models/AGENTS.md` - 增强版 `/v1/models`，过滤、排序与 limits/capability 映射规则
+- `src/routes/responses/AGENTS.md` - OpenAI Responses 路由、stream ID 同步、tool 预处理规则
 - `src/routes/generate-content/AGENTS.md` - Gemini 路由分流、Responses/codex 分支、流式关闭要求
 - `src/services/copilot/AGENTS.md` - 上游 Copilot 调用、native messages 后端适配、telemetry 与 header 规则
+- `src/services/github/AGENTS.md` - GitHub 认证、device flow、Copilot token 与 usage 获取边界
+- `src/services/telemetry/AGENTS.md` - telemetry envelope、identity、fire-and-forget 发送约束
 - `tests/AGENTS.md` - Bun 测试布局、mock 约定、fixtures 与断言风格
+- `tests/generate-content/AGENTS.md` - Gemini/codex 测试约束、stream fixture 与分流断言
 - `claude-plugin/AGENTS.md` - Claude Code plugin/marketplace 目录与 `__SUBAGENT_MARKER__` 约束
 - `openspec/AGENTS.md` - 提案、delta spec、validate / archive 工作流
 - `router/AGENTS.md` - Sticky router 多实例调度；session-sticky 路由、least-loaded 选择、dashboard、start.sh 编排
@@ -101,9 +106,10 @@ bun run dev -- --proxy-env  # 从环境变量读取代理配置
 - `src/services/copilot/create-chat-completions.ts` - Copilot API 核心调用器（token 刷新、headers、签名重试）
 - `src/services/copilot/create-messages.ts` - Claude 模型的原生 Messages API 透传；**同时也是后端适配层**（block 重排、thinking 剥离）
 - `src/services/copilot/get-models.ts` - 模型元数据（vision/thinking 限制）
-- `src/lib/state.ts` - **运行时状态唯一真相源**（tokens、models、config）
+- `src/lib/state.ts` - **运行时状态唯一真相源**（tokens、models、config、interactionId）
 - `src/lib/config.ts` - 应用配置（见下方配置选项）
 - `src/lib/smart-agent.ts` - Smart agent 决策逻辑与缓存
+- `src/lib/api-config.ts` - Copilot API 请求头组装（interaction headers、intent、request ID）
 
 ### Sticky Router（多实例调度）
 
@@ -153,7 +159,7 @@ Native messages 的隐含行为：
 
 **翻译流程**：每个路由有 `handler.ts` + 可选的 `*-translation.ts` 做格式转换。
 
-**签名重试**：`create-chat-completions.ts` 和 `create-messages.ts` 都会在遇到 "Invalid signature in thinking block" 错误时自动剥离 thinking/reasoning 字段并重试。
+**签名重试**：`create-chat-completions.ts` 和 `create-messages.ts` 使用 `isThinkingBlockError` 宽匹配——将响应体 JSON.stringify 后 toLowerCase，包含 "signature" 或 "cannot be modified" 即触发剥离 thinking/reasoning 字段重试。不再依赖精确错误消息字符串。
 
 **后端适配（SRP）**：所有 Vertex AI / Copilot 后端的 workaround 都放在 `create-messages.ts`，不放 `handler.ts`。Handler 只做路由分发。适配包括：
  `reorderAssistantBlocks` — 将 text blocks 移到 tool_use blocks 之前，**但保留 thinking/redacted_thinking blocks 原位**（Vertex AI 同时要求两者）
@@ -163,7 +169,7 @@ Native messages 的隐含行为：
 
 **无通用重试**：除签名重试外，没有跨请求的通用 retry/backoff 机制。rate limit 的 `-w` 等待模式使用 sleep 延迟；Copilot token 刷新循环失败时会记录错误并在 15 秒后重试。
 
-**Token 刷新**：`src/lib/token.ts` 中按 `refresh_in - 60s` 提前定时刷新 Copilot token；首次获取失败会抛错，循环内刷新失败则保留进程并在 15 秒后重试。
+**Token 刷新**：`src/lib/token.ts` 使用 AbortController 管理刷新循环生命周期。`setupCopilotToken` 先停止旧循环再启动新循环，避免并发泄漏。循环按 `refresh_in - 60s` 提前刷新；首次获取失败会抛错，循环内刷新失败则保留进程并在 15 秒后重试。
 
 ## 配置选项
 
@@ -198,7 +204,7 @@ Native messages 的隐含行为：
 | Tool calls 消失 | 不要过滤空的 scaffold chunks；让累加器处理 |
 | 多轮工具调用失败 | `finish_reason: "tool_calls"` 是中间态，不要清空 |
 | Stream 挂起 | 必须在 finally 块中关闭 |
-| Thinking 签名错误 | 自动剥离字段重试；检查日志中的 warning |
+| Thinking 签名错误 | `isThinkingBlockError` 宽匹配（JSON.stringify + toLowerCase + "signature" 或 "cannot be modified"）自动剥离字段重试 |
 | CLI `-ab` 被解析为 `-a -b` | citty 用 mri；短选项别名必须是单字符 |
 | Smart agent 缓存了错误状态 | 只缓存 `forceAgent=true`；不要缓存"在预算内" |
 | Smart agent 阈值过冲 | 用 `<=` 而非 `<`；用 `Math.max(5, ...)` 保证最低储备 |
@@ -241,6 +247,17 @@ bd close bd-42 --reason "完成" --json
 - ✅ AI 生成的规划文档放 `history/` 目录（不要放项目根目录）
 - ❌ 不要创建 markdown TODO 列表或使用外部问题追踪器
 
+## 近期变更 (03/2026)
+
+ **签名重试宽化**：`isThinkingBlockError` 改为 JSON.stringify + toLowerCase 宽匹配 "signature" 或 "cannot be modified"，不再依赖精确错误消息
+ **Token 刷新 AbortController**：`setupCopilotToken` 使用 AbortController 管理刷新循环生命周期，避免并发泄漏
+ **Interaction metadata**：`api-config.ts` 组装 `X-Interaction-Id` / `X-Agent-Task-Id` / `X-Interaction-Type` 请求头
+ **model_picker_enabled 过滤**：`start.ts` 和 `routes/models/route.ts` 过滤掉 `model_picker_enabled === false` 的模型
+ **Reasoning ID 长度限制**：Responses 翻译中 id >64 字符的 thinking block 不转为 ResponseInputReasoning
+ **Phase 动态检测**：`shouldApplyPhase` 从 `extraPrompts` 检测 `"## Intermediary updates"` 字符串，不再硬编码模型名
+ **modelCallId telemetry**：三个 `create-*` service 各自生成 `modelCallId`（UUID）传入 telemetry
+ **Usage viewer**：`/usage-viewer` 和 `/usage-viewer/` 路由豁免 auth，提供配额仪表盘
+
 ## 近期变更 (02/2026)
 
  **Thinking block 保留修复**：`reorderAssistantBlocks` 不再移动 thinking/redacted_thinking blocks，修复多轮对话中 Vertex AI 返回 400 "thinking blocks cannot be modified" 的问题
@@ -259,6 +276,11 @@ bd close bd-42 --reason "完成" --json
 
 | 日期 | 变更 | 回滚方式 |
 |:-----|:-----|:---------|
+| 2026-03-14 | isThinkingBlockError 宽化：JSON.stringify + toLowerCase 匹配 "signature" 或 "cannot be modified" | 回退 create-messages.ts 和 create-chat-completions.ts 的 isThinkingBlockError 函数 |
+| 2026-03-14 | Token 刷新 AbortController：setupCopilotToken 管理刷新循环生命周期 | 回退 token.ts 的 setupCopilotToken / runCopilotRefreshLoop |
+| 2026-03-14 | Interaction headers + modelCallId：api-config.ts 组装请求头，三个 create-* service 生成 modelCallId | 回退 api-config.ts 和三个 create-* service 的 telemetry 修改 |
+| 2026-03-14 | model_picker_enabled 过滤：start.ts 和 route.ts 过滤掉未启用模型 | 回退 start.ts 和 routes/models/route.ts 的过滤逻辑 |
+| 2026-03-14 | Reasoning ID >64 丢弃 + shouldApplyPhase 动态检测 | 回退 responses-translation.ts 的 MAX_RESPONSES_REASONING_ID_LENGTH 和 shouldApplyPhase |
 | 2026-02-22 | reorderAssistantBlocks 保留 thinking blocks 原位：修复 Vertex AI "thinking blocks cannot be modified" 400 错误（两个 Vertex AI 约束冲突：text-before-tool_use vs thinking-immutability） | 回退 create-messages.ts 的 reorderAssistantBlocks 函数到 830e7d8 |
 | 2026-02-17 | Vertex AI block 顺序修复：create-messages.ts 中的 reorderAssistantBlocks | 回退 create-messages.ts 的 reorderAssistantBlocks 函数 |
 | 2026-02-17 | 合并 caozhiyuan/all：API key 认证、codex phase、subagent marker，并按文件择优保留本地兼容改动 | `git revert <merge-commit>` |

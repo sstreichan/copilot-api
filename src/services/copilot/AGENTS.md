@@ -19,7 +19,9 @@
 - `create-messages.ts` 是 backend workaround 收口点：`reorderAssistantBlocks`、`stripThinkingBlocks`、`anthropic-beta` allowlist、adaptive thinking、vision header 都放这里
 - `X-Initiator` 由显式 options 与 smart-agent 决策共同决定；不要跳过 `resolveInitiatorWithSmartAgent()`
 - telemetry 发送、成功/失败打点、feedback scheduling 在 service 层做，不回推到 route handler
-- `create-messages.ts` 会在 thinking 签名错误时做一次 strip-thinking retry；项目里没有通用 retry/backoff 框架
+- `isThinkingBlockError` 宽匹配（JSON.stringify + toLowerCase + "signature" 或 "cannot be modified"）触发 strip-thinking retry；项目里没有通用 retry/backoff 框架
+- `api-config.ts` 组装 `X-Interaction-Id` / `X-Agent-Task-Id` / `X-Interaction-Type` 请求头，三个 `create-*` service 共享调用
+- 三个 `create-*` service 各自生成 `modelCallId`（UUID）传入 telemetry，用于单次调用追踪
 
 ## Native Messages Gotchas
 

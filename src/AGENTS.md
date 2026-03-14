@@ -17,8 +17,12 @@
 
 - `lib/AGENTS.md` - `state.ts`、`config.ts`、`token.ts`、`smart-agent.ts` 的共享基础设施约束
 - `routes/messages/AGENTS.md` - Anthropic messages / native messages 分支细节
+- `routes/models/AGENTS.md` - `/v1/models` 过滤、排序与增强字段映射规则
+- `routes/responses/AGENTS.md` - OpenAI Responses 路由、stream ID sync 与 tool 预处理约束
 - `routes/generate-content/AGENTS.md` - Gemini 路由与 codex/responses 分流
 - `services/copilot/AGENTS.md` - 上游 Copilot 请求、retry、telemetry、backend workaround
+- `services/github/AGENTS.md` - GitHub auth/device flow、Copilot token 与 usage 获取边界
+- `services/telemetry/AGENTS.md` - telemetry envelope、identity 与 fire-and-forget 发送规则
 
 ## Where To Look
 
@@ -30,6 +34,7 @@
 | Config defaults / prompts | `lib/config.ts` | `extraPrompts`、`smallModel`、`modelReasoningEfforts` |
 | Token / auth lifecycle | `lib/token.ts`, `services/github/*` | 刷新循环、GitHub token、Copilot token |
 | Endpoint-specific behavior | `routes/*`, `services/copilot/*` | 路由负责分发与翻译，service 负责上游调用 |
+| API request headers | `lib/api-config.ts` | Interaction headers、intent、request ID 组装 |
 
 ## Project-Specific Conventions
 
