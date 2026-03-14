@@ -19,14 +19,11 @@ import {
  * Matches: invalid signature errors AND "thinking blocks cannot be modified" errors.
  */
 const isThinkingBlockError = (errorBody: unknown): boolean => {
-  if (typeof errorBody !== "object" || errorBody === null) return false
-  const err = errorBody as { error?: { message?: string } }
-  const msg = err.error?.message ?? ""
-  return (
-    msg.includes("Invalid signature in thinking block")
-    || msg.includes("Invalid `signature` in `thinking` block")
-    || msg.includes("cannot be modified")
-  )
+  if (errorBody === null || errorBody === undefined) return false
+  const text =
+    typeof errorBody === "string" ? errorBody : JSON.stringify(errorBody)
+  const lower = text.toLowerCase()
+  return lower.includes("signature") || lower.includes("cannot be modified")
 }
 
 /**
