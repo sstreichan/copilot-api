@@ -8,6 +8,7 @@ import {
   parseInstances,
   parseModelFromBody,
   parseModelIds,
+  parseModelObjects,
   readPort,
 } from "../../router/lib"
 
@@ -71,6 +72,34 @@ describe("router/lib pure helpers", () => {
         data: [{ id: "gpt-4.1" }, { name: "ignored" }, { id: "claude-3.7" }],
       }),
     ).toEqual(["gpt-4.1", "claude-3.7"])
+  })
+
+  test("parseModelObjects extracts full model objects from OpenAI-style payloads", () => {
+    const input = {
+      data: [
+        { id: "gpt-4.1", object: "model", limits: { context_window: 128000 } },
+        { name: "no-id" },
+        {
+          id: "claude-3.7",
+          object: "model",
+          limits: { context_window: 200000 },
+        },
+      ],
+    }
+    const result = parseModelObjects(input)
+    expect(result).toHaveLength(2)
+    expect(result[0].id).toBe("gpt-4.1")
+    expect(result[1].id).toBe("claude-3.7")
+    expect((result[0].limits as Record<string, unknown>).context_window).toBe(
+      128000,
+    )
+  })
+
+  test("parseModelObjects returns empty array for invalid input", () => {
+    expect(parseModelObjects(null)).toEqual([])
+    expect(parseModelObjects("string")).toEqual([])
+    expect(parseModelObjects({ data: "not-array" })).toEqual([])
+    expect(parseModelObjects({ data: [{ name: "no-id" }] })).toEqual([])
   })
 
   test("parseModelFromBody returns model or empty string", () => {

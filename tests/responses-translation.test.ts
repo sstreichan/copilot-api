@@ -3,6 +3,7 @@ import { describe, expect, it } from "bun:test"
 import type { AnthropicMessagesPayload } from "~/routes/messages/anthropic-types"
 import type {
   ResponseInputMessage,
+  ResponseInputReasoning,
   ResponsesResult,
 } from "~/services/copilot/create-responses"
 
@@ -65,6 +66,101 @@ describe("translateAnthropicMessagesToResponsesPayload", () => {
       "hi",
       "<system-reminder>\nThe user opened the file c:\\Work2\\copilot-api\\src\\routes\\responses\\translation.ts in the IDE. This may or may not be related to the current task.\n</system-reminder>",
       "hi",
+    ])
+  })
+
+  it("keeps reasoning replay when the signature id length is 64 or less", () => {
+    const payload = {
+      model: "gpt-5.4",
+      max_tokens: 1024,
+      messages: [
+        {
+          role: "user",
+          content: [{ type: "text", text: "first question" }],
+        },
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "thinking",
+              thinking: "Thinking about the next answer.",
+              signature: `encrypted-content@${"a".repeat(64)}`,
+            },
+            {
+              type: "text",
+              text: "first answer",
+            },
+          ],
+        },
+      ],
+    } as unknown as AnthropicMessagesPayload
+
+    const result = translateAnthropicMessagesToResponsesPayload(payload)
+    const input = result.input as Array<
+      ResponseInputMessage | ResponseInputReasoning
+    >
+
+    expect(input).toHaveLength(3)
+
+    const reasoningItem = input[1] as ResponseInputReasoning
+    expect(reasoningItem.type).toBe("reasoning")
+    expect(reasoningItem.id).toBe("a".repeat(64))
+    expect(reasoningItem.encrypted_content).toBe("encrypted-content")
+    expect(reasoningItem.summary).toEqual([
+      { type: "summary_text", text: "Thinking about the next answer." },
+    ])
+
+    const assistantMessage = input[2] as ResponseInputMessage
+    expect(assistantMessage.role).toBe("assistant")
+    expect(assistantMessage.content).toEqual([
+      {
+        type: "output_text",
+        text: "first answer",
+      },
+    ])
+  })
+
+  it("drops reasoning replay when the signature id is longer than 64 characters", () => {
+    const payload = {
+      model: "gpt-5.4",
+      max_tokens: 1024,
+      messages: [
+        {
+          role: "user",
+          content: [{ type: "text", text: "first question" }],
+        },
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "thinking",
+              thinking: "Thinking about the next answer.",
+              signature: `encrypted-content@${"a".repeat(65)}`,
+            },
+            {
+              type: "text",
+              text: "first answer",
+            },
+          ],
+        },
+      ],
+    } as unknown as AnthropicMessagesPayload
+
+    const result = translateAnthropicMessagesToResponsesPayload(payload)
+    const input = result.input as Array<
+      ResponseInputMessage | ResponseInputReasoning
+    >
+
+    expect(input).toHaveLength(2)
+    expect(input.some((item) => item.type === "reasoning")).toBe(false)
+
+    const assistantMessage = input[1] as ResponseInputMessage
+    expect(assistantMessage.role).toBe("assistant")
+    expect(assistantMessage.content).toEqual([
+      {
+        type: "output_text",
+        text: "first answer",
+      },
     ])
   })
 })

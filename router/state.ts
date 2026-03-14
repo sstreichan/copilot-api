@@ -4,8 +4,10 @@ import {
   formatError,
   getBindingKey,
   getHeaderValue,
+  isRecord,
   parseModelFromBody,
   parseModelIds,
+  parseModelObjects,
 } from "./lib"
 
 const DEFAULT_ENCODER = new TextEncoder()
@@ -52,6 +54,7 @@ export interface StickyRouterState {
   routeHistory: Array<RouteRecord>
   sseClients: Set<ReadableStreamDefaultController<Uint8Array>>
   portModelCounts: Map<number, Map<string, number>>
+  modelDetails: Map<string, Record<string, unknown>>
 }
 
 export interface RouterHandlerOptions {
@@ -96,6 +99,7 @@ export function createStickyRouterState(
     routeHistory: [],
     sseClients: new Set<ReadableStreamDefaultController<Uint8Array>>(),
     portModelCounts: new Map<number, Map<string, number>>(),
+    modelDetails: new Map<string, Record<string, unknown>>(),
   }
 }
 
@@ -226,6 +230,12 @@ export function createSseResponse(
   })
 }
 
+function getContextWindow(model: Record<string, unknown>): number {
+  if (!isRecord(model.limits)) return 0
+  const ctx = model.limits.context_window
+  return typeof ctx === "number" ? ctx : 0
+}
+
 export async function discoverModels(
   state: StickyRouterState,
   logger: (line: string) => void,
@@ -233,6 +243,7 @@ export async function discoverModels(
 ) {
   state.portToModels.clear()
   state.modelToPorts.clear()
+  state.modelDetails.clear()
 
   for (const inst of state.instances) {
     try {
@@ -244,6 +255,14 @@ export async function discoverModels(
         const ports = state.modelToPorts.get(model) || []
         ports.push(inst.port)
         state.modelToPorts.set(model, ports)
+      }
+      const modelObjects = parseModelObjects(data)
+      for (const obj of modelObjects) {
+        const id = obj.id as string
+        const existing = state.modelDetails.get(id)
+        if (!existing || getContextWindow(obj) > getContextWindow(existing)) {
+          state.modelDetails.set(id, obj)
+        }
       }
       logger(
         `discovered ${inst.name}:${inst.port} → ${models.length} models: ${models.join(", ")}`,
@@ -378,7 +397,10 @@ export function createRouterHandler(options: RouterHandlerOptions) {
 
       return Response.json({
         object: "list",
-        data: [...allModels].map((id) => ({ id, object: "model" })),
+        data: [...allModels].map((id) => {
+          const details = options.state.modelDetails.get(id)
+          return details ?? { id, object: "model" }
+        }),
       })
     }
 

@@ -47,6 +47,8 @@ const MESSAGE_TYPE = "message"
 
 export const THINKING_TEXT = "Thinking..."
 
+const MAX_RESPONSES_REASONING_ID_LENGTH = 64
+
 export const translateAnthropicMessagesToResponsesPayload = (
   payload: AnthropicMessagesPayload,
 ): ResponsesPayload => {
@@ -165,17 +167,16 @@ const translateAssistantMessage = (
       continue
     }
 
-    if (
-      block.type === "thinking"
-      && block.signature
-      && block.signature.includes("@")
-    ) {
-      flushPendingContent(pendingContent, items, {
-        role: "assistant",
-        phase: assistantPhase,
-      })
-      items.push(createReasoningContent(block))
-      continue
+    if (block.type === "thinking" && block.signature) {
+      const reasoningContent = createReasoningContent(block)
+      if (reasoningContent) {
+        flushPendingContent(pendingContent, items, {
+          role: "assistant",
+          phase: assistantPhase,
+        })
+        items.push(reasoningContent)
+        continue
+      }
     }
 
     const converted = translateAssistantContentBlock(block)
@@ -298,13 +299,35 @@ const createImageContent = (
 
 const createReasoningContent = (
   block: AnthropicThinkingBlock,
-): ResponseInputReasoning => {
+): ResponseInputReasoning | undefined => {
+  if (!block.signature.includes("@")) {
+    return undefined
+  }
+
   // align with vscode-copilot-chat extractThinkingData, should add id, otherwise it will cause miss cache occasionally —— the usage input cached tokens to be 0
   // https://github.com/microsoft/vscode-copilot-chat/blob/main/src/platform/endpoint/node/responsesApi.ts#L162
   // when use in codex cli, reasoning id is empty, so it will cause miss cache occasionally
-  const array = block.signature.split("@")
-  const signature = array[0]
-  const id = array[1]
+  const separatorIndex = block.signature.lastIndexOf("@")
+  if (separatorIndex <= 0 || separatorIndex >= block.signature.length - 1) {
+    return undefined
+  }
+
+  const signature = block.signature.slice(0, separatorIndex)
+  const id = block.signature.slice(separatorIndex + 1)
+
+  // Cross-instance replay of Copilot reasoning is not safely portable.
+  // We verified with curl that the original long id succeeds when replayed
+  // back to the same backend instance, but cross-instance replay fails with
+  // "Invalid 'input[n].id': string too long". Replacing or truncating the id
+  // is not safe either: Copilot then rejects the encrypted_content/id pair as
+  // unverifiable. The least-wrong hotfix is to stop replaying oversized
+  // reasoning items entirely. Returning undefined here means this thinking
+  // block is not converted into ResponseInputReasoning and therefore is not
+  // replayed back to the Responses API on the next turn.
+  if (id.length > MAX_RESPONSES_REASONING_ID_LENGTH) {
+    return undefined
+  }
+
   const thinking = block.thinking === THINKING_TEXT ? "" : block.thinking
   return {
     id,

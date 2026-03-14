@@ -54,6 +54,22 @@ export function parseModelIds(value: unknown): Array<string> {
   })
 }
 
+export function parseModelObjects(
+  value: unknown,
+): Array<Record<string, unknown>> {
+  if (!isRecord(value) || !Array.isArray(value.data)) {
+    return []
+  }
+
+  return value.data.flatMap((entry) => {
+    if (!isRecord(entry) || typeof entry.id !== "string") {
+      return []
+    }
+
+    return [entry]
+  })
+}
+
 export function parseModelFromBody(bodyText: string): string {
   try {
     const payload: unknown = JSON.parse(bodyText)
