@@ -96,12 +96,15 @@ Router 只取 `name` 与 `port`，余者由各实例自行消费。
 
 ### `session-router` 插件
 
-OpenCode 侧插件，于 `chat.headers` 钩子中注入三个 header：
-- `x-session-id` — 会话标识（binding key 之首段）
-- `x-oc-agent` — 代理名称
-- `x-oc-model` — 模型 ID
+OpenCode 侧插件，位于 `~/.config/opencode/plugins/session-router.ts`。
+于 `chat.headers` 钩子中注入四个 header：
+- `x-session-id` — `input.sessionID`，会话标识（binding key 之首段）
+- `x-oc-agent` — `input.agent` 的 name，代理名称
+- `x-oc-model` — `input.model.id`，模型 ID
+- `x-oc-provider` — `input.provider.id`，提供商标识（仅入日志与 `RouteRecord`，**不入 binding key**）
 
-此三者乃 router 判定路由之全部信号。插件不在本目录，但行为与 router 紧密耦合。
+前三者构成 binding key（`{session}:{agent}:{model}`），为 router 判定路由之全部信号。
+插件自带日志轮转（写入同目录 `session-router.log`，上限 200 行，超限裁至 150 行）。
 
 ### Dashboard
 
