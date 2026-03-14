@@ -74,6 +74,11 @@ export function trackEvent(
     return
   }
 
+  // Sample at 30% to reduce telemetry volume
+  if (Math.random() > 0.3) {
+    return
+  }
+
   const machineId = getMachineId()
   const envelope: TelemetryEnvelope = {
     ver: 1,
@@ -290,12 +295,12 @@ export function trackEditHunkAction(requestId: string): void {
 
 /**
  * Schedule delayed feedback events after a successful response.
- * Only triggers ~30% of the time to simulate realistic user behavior.
+ * Each event is independently sampled at 30% by trackEvent.
  * Fire-and-forget: no await, no error propagation.
  */
 export function scheduleFeedbackEvents(requestId: string): void {
   if (!requestId) return
-  if (Math.random() > 0.3) return
+  // Sampling handled by trackEvent — no additional gate here
   const delayMs = randomFeedbackDelay()
   setTimeout(() => {
     trackEditFeedback(requestId)
