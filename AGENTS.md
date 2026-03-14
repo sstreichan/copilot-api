@@ -46,10 +46,11 @@ GitHub Copilot API 的反向代理，基于 **Hono** 框架（非 Express），�
 - `tests/AGENTS.md` - Bun 测试布局、mock 约定、fixtures 与断言风格
 - `claude-plugin/AGENTS.md` - Claude Code plugin/marketplace 目录与 `__SUBAGENT_MARKER__` 约束
 - `openspec/AGENTS.md` - 提案、delta spec、validate / archive 工作流
+- `router/AGENTS.md` - Sticky router 多实例调度；session-sticky 路由、least-loaded 选择、dashboard、start.sh 编排
 
 ## 工作区噪音目录
 
-- `.vendor/`、`.sisyphus/`、`.debates/`、`history/`、`experiments/` 默认不是主运行时逻辑；除非任务明确涉及，否则优先查看 `src/`、`tests/`、`claude-plugin/`、`openspec/`
+- `.vendor/`、`.sisyphus/`、`.debates/`、`history/`、`experiments/` 默认不是主运行时逻辑；除非任务明确涉及，否则优先查看 `src/`、`tests/`、`router/`、`claude-plugin/`、`openspec/`
 - `.github/instructions/`、`.cursor/rules/`、`README.md` 提供补充流程约束，但实现真相仍以 `src/`、测试与 OpenSpec 为准
 
 ## 快速参考
@@ -103,6 +104,17 @@ bun run dev -- --proxy-env  # 从环境变量读取代理配置
 - `src/lib/state.ts` - **运行时状态唯一真相源**（tokens、models、config）
 - `src/lib/config.ts` - 应用配置（见下方配置选项）
 - `src/lib/smart-agent.ts` - Smart agent 决策逻辑与缓存
+
+### Sticky Router（多实例调度）
+
+`router/` 目录实现多实例 copilot-api 的 session-sticky 路由：
+
+- **三层拆分**：`lib.ts`（纯函数）→ `state.ts`（状态与路由决策）→ `sticky-router.ts`（装配壳）
+- **Binding key**：`{x-session-id}:{x-oc-agent}:{x-oc-model}` 三元组决定 sticky 去向
+- **Least-loaded**：无已有绑定时，按各端口总请求数选最闲的实例
+- **Dashboard**：`:4139` 提供实时 SSE 仪表盘，可视化 binding 和路由历史
+- **start.sh**：tmux 编排脚本，一键起多实例 + router + dashboard
+- 测试在 `tests/router/`，注入 `fetchImpl`/`now` 参数 mock，不用全局 mock
 
 ### 原生 Messages 流程 (`-M` 标志)
 
