@@ -83,38 +83,40 @@ modelRoutes.get("/", async (c) => {
       await cacheModels()
     }
 
-    const models = state.models?.data.map((model) => ({
-      // Original fields (backward compatible)
-      id: model.id,
-      object: "model",
-      type: model.capabilities.type,
-      created: 0, // No date available from source
-      created_at: new Date(0).toISOString(), // No date available from source
-      owned_by: model.vendor,
-      display_name: model.name,
+    const models = state.models?.data
+      .filter((m) => m.model_picker_enabled)
+      .map((model) => ({
+        // Original fields (backward compatible)
+        id: model.id,
+        object: "model",
+        type: model.capabilities.type,
+        created: 0, // No date available from source
+        created_at: new Date(0).toISOString(), // No date available from source
+        owned_by: model.vendor,
+        display_name: model.name,
 
-      // New fields
-      family: model.capabilities.family,
-      preview: model.preview,
-      model_picker_enabled: model.model_picker_enabled,
-      endpoints: model.supported_endpoints ?? null,
+        // New fields
+        family: model.capabilities.family,
+        preview: model.preview,
+        model_picker_enabled: model.model_picker_enabled,
+        endpoints: model.supported_endpoints ?? null,
 
-      // Capability flags
-      supports_tool_calls: model.capabilities.supports.tool_calls ?? false,
-      supports_parallel_tool_calls:
-        model.capabilities.supports.parallel_tool_calls ?? false,
-      supports_streaming: model.capabilities.supports.streaming ?? false,
-      supports_structured_outputs:
-        model.capabilities.supports.structured_outputs ?? false,
+        // Capability flags
+        supports_tool_calls: model.capabilities.supports.tool_calls ?? false,
+        supports_parallel_tool_calls:
+          model.capabilities.supports.parallel_tool_calls ?? false,
+        supports_streaming: model.capabilities.supports.streaming ?? false,
+        supports_structured_outputs:
+          model.capabilities.supports.structured_outputs ?? false,
 
-      // Limits
-      limits: buildLimits(model),
+        // Limits
+        limits: buildLimits(model),
 
-      // Billing
-      is_premium: model.billing?.is_premium ?? false,
-      billing_multiplier: model.billing?.multiplier ?? 0,
-      available_to: model.billing?.restricted_to ?? null,
-    }))
+        // Billing
+        is_premium: model.billing?.is_premium ?? false,
+        billing_multiplier: model.billing?.multiplier ?? 0,
+        available_to: model.billing?.restricted_to ?? null,
+      }))
 
     const sortedModels = sortModels(models as Array<TransformedModel>)
 

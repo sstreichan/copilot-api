@@ -73,7 +73,10 @@ export async function runServer(options: RunServerOptions): Promise<void> {
   await setupCopilotToken()
   await cacheModels()
 
-  consola.info(formatModelsLog(state.models?.data ?? []))
+  const availableModels = (state.models?.data ?? []).filter(
+    (m) => m.model_picker_enabled,
+  )
+  consola.info(formatModelsLog(availableModels))
 
   const serverUrl = `http://localhost:${options.port}`
 
@@ -84,7 +87,7 @@ export async function runServer(options: RunServerOptions): Promise<void> {
       "Select a model to use with Claude Code",
       {
         type: "select",
-        options: state.models.data.map((model) => model.id),
+        options: availableModels.map((model) => model.id),
       },
     )
 
@@ -92,7 +95,7 @@ export async function runServer(options: RunServerOptions): Promise<void> {
       "Select a small model to use with Claude Code",
       {
         type: "select",
-        options: state.models.data.map((model) => model.id),
+        options: availableModels.map((model) => model.id),
       },
     )
 
