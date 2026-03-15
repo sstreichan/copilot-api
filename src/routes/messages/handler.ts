@@ -5,7 +5,11 @@ import consola from "consola"
 import { streamSSE } from "hono/streaming"
 
 import { awaitApproval } from "~/lib/approval"
-import { getSmallModel, shouldCompactUseSmallModel } from "~/lib/config"
+import {
+  getSmallModel,
+  isMessagesApiEnabled,
+  shouldCompactUseSmallModel,
+} from "~/lib/config"
 import {
   colorizeModel,
   createHandlerLogger,
@@ -111,7 +115,11 @@ export async function handleCompletion(c: Context) {
   // ⚠️ CRITICAL: Native Messages API branch MUST be BEFORE other payload modifications
   // This ensures payload is passed through unchanged to Copilot's /v1/messages endpoint
   // (compact detection above is the only exception - it must happen first)
-  if (state.nativeMessages && isClaudeModel(anthropicPayload.model)) {
+  if (
+    state.nativeMessages
+    && isMessagesApiEnabled()
+    && isClaudeModel(anthropicPayload.model)
+  ) {
     return await handleWithNativeMessages(c, anthropicPayload, {
       originalModel,
       subagentMarker,
