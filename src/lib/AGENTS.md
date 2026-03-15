@@ -20,14 +20,17 @@
 
 - `state.ts` 不只是方便访问；它是运行时可变状态的唯一位置
 - `config.ts` 会把默认 `extraPrompts` 与 `modelReasoningEfforts` 合并回用户配置文件，不只是内存 fallback
+- `config.ts` 同时承载 provider 配置：`providers.<name>.baseUrl/apiKey/models.<model>.{temperature,topP,topK}`；取用时统一走 `getProviderConfig()`，不要在路由里手动 trim/校验
 - `paths.ts` 支持 `COPILOT_API_HOME` 覆盖默认目录；改路径逻辑时要兼顾 Windows/WSL 使用方式
 - `token.ts` 的刷新循环和 telemetry 初始化耦合，改认证链路时别漏 `trackAuthNewToken()` / `initTelemetry()`
 - `smart-agent.ts` 只缓存 `forceAgent=true` 的决策；“还在预算内”不是缓存项
 - `api-config.ts` 组装请求头后被三个 `create-*` service 共享调用，不要在 service 内重复构造 header
+- `logger.ts` 的 `getPremiumInfo()` / `formatStreamLog()` 现在被 chat-completions、messages、responses 三条路由共用；progress log 可以失败，但不能改写 SSE/JSON 响应内容
 
 ## Anti-Patterns
 
 - 绕开 `state.ts`，在 handler/service 私自保存运行时副本
 - 把配置默认值散落到调用方，而不是统一收口到 `config.ts`
+- 在 provider route/service 里直接拼上游 headers 或 response header strip 逻辑，绕过 `getProviderConfig()` / `anthropic-proxy.ts`
 - 把 rate limit 的等待实现成隐式重试；项目语义是 sleep，不是 retry/backoff
 - 修改路径规则却不考虑 `COPILOT_API_HOME` 和本地数据目录兼容性

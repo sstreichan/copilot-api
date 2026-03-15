@@ -18,7 +18,7 @@
 - `initTelemetry()` 必须在拿到 Copilot token 后尽早执行；否则早期事件会缺 `ai.user.id`
 - `trackEvent()` 是 fire-and-forget：不 await、不 throw，只记 warning；不能影响主请求成功与否
 - `_endpoint` 需要规范化到单个 `/telemetry` 结尾；不能重复拼接，也不能把原始 endpoint 原封不动写进去
-- `scheduleFeedbackEvents()` 只在成功响应后、且约 30% 概率触发；不要把 edit feedback 变成同步副作用
+- `scheduleFeedbackEvents()` 只负责延迟调度；30% 采样统一由 `trackEvent()` 处理，避免双重采样把反馈比例压到 9%
 
 ## Project-Specific Rules
 

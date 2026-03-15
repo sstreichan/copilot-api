@@ -20,8 +20,10 @@
 - `routes/models/AGENTS.md` - `/v1/models` 过滤、排序与增强字段映射规则
 - `routes/responses/AGENTS.md` - OpenAI Responses 路由、stream ID sync 与 tool 预处理约束
 - `routes/generate-content/AGENTS.md` - Gemini 路由与 codex/responses 分流
+- `routes/provider/AGENTS.md` - Provider-scoped Anthropic 代理路由、messages/models/count_tokens 分流
 - `services/copilot/AGENTS.md` - 上游 Copilot 请求、retry、telemetry、backend workaround
 - `services/github/AGENTS.md` - GitHub auth/device flow、Copilot token 与 usage 获取边界
+- `services/providers/AGENTS.md` - 多 provider 转发、header allowlist、response 透传规则
 - `services/telemetry/AGENTS.md` - telemetry envelope、identity 与 fire-and-forget 发送规则
 
 ## Where To Look
@@ -33,6 +35,7 @@
 | Shared runtime state | `lib/state.ts` | 唯一真相源；不要复制缓存 |
 | Config defaults / prompts | `lib/config.ts` | `extraPrompts`、`smallModel`、`modelReasoningEfforts` |
 | Token / auth lifecycle | `lib/token.ts`, `services/github/*` | 刷新循环、GitHub token、Copilot token |
+| Provider proxy / multi-provider | `routes/provider/*`, `services/providers/*`, `lib/config.ts` | `/:provider/v1/*`、per-model temperature/topP/topK、x-api-key 透传 |
 | Endpoint-specific behavior | `routes/*`, `services/copilot/*` | 路由负责分发与翻译，service 负责上游调用 |
 | API request headers | `lib/api-config.ts` | Interaction headers、intent、request ID 组装 |
 
@@ -41,6 +44,7 @@
 - 导入 `src/` 下模块时使用 `~` 别名，不要退回长相对路径
 - 新增 OpenAI-compatible 路由时，通常要同时注册 `/foo` 和 `/v1/foo`
 - `handler.ts` 做分支与格式编排；Copilot / Vertex AI 后端 workaround 放在 `services/copilot/*`
+- provider-scoped 路由只暴露 `/:provider/v1/messages`、`/:provider/v1/models`；messages count_tokens 在 provider messages 子路由内部处理，不额外挂 `/v1` 兼容别名
 - 全局可变状态只放 `lib/state.ts`
 - 日志统一用 `consola` 或项目 logger helper，不用 `console.log`
 

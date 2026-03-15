@@ -19,16 +19,21 @@
 - `state.nativeMessages && isClaudeModel(...)` 分支必须早于其他 payload 改写；compact detection 是唯一允许在前面的例外
 - native messages 流式响应走 **raw body passthrough**，不要把它重建成 `streamSSE()` 的 Anthropic 事件序列
 - `mergeToolResultForClaude()` 只在非 compact 请求上跑，用来避免 skill / hook / todo 文字块额外消耗 premium
+- `mergeToolResultForClaude()` 的适用范围不能再被 `anthropic-beta` 短路；当前规则是“所有非 compact 请求都执行”
 - `tool_calls` finish_reason 是中间态；stream accumulator 不能在这里清空
 - ping 事件必须写 `data: '{"type":"ping"}'`，不能发空字符串
 - Responses 翻译中 reasoning id >64 字符的 thinking block 不转为 `ResponseInputReasoning`（跨实例不可移植的 ID 会导致上游报错）
 - `shouldApplyPhase` 从 `extraPrompts` 动态检测 `"## Intermediary updates"` 字符串，不再硬编码模型名
+- `requestId = generateRequestIdFromPayload(...)` 与 `sessionId = getRootSessionId(...)` 必须在三条分支（native / responses / chat）向下透传；不要只在某一路径生成
+- `parseSubagentMarkerFromFirstUser()` 必须在 compact 检测后尽早执行；marker 需传到 native / responses / chat 三条路径
 
 ## Project-Specific Rules
 
 - `anthropic-beta` 请求头在 native messages 路径会继续传给 `createMessages()`，但真正转发值会被 service 层过滤
 - `getInitiatorFromPayload()` 会把 tool_result 上下文识别为 `agent`
 - 针对 Claude Code/OpenCode 的 compact 请求，小模型切换逻辑先发生，再决定是否 native passthrough
+- Messages → Responses 路径如命中 `responsesApiContextManagementModels`，必须先 `applyResponsesApiContextManagement()`，再对非 compact 请求执行 `compactInputByLatestCompaction()`
+- `findEndpointModel()` 必须在请求真正发往 service 前映射逻辑模型名；否则 provider/per-endpoint 限制会落在错误模型上
 
 ## Anti-Patterns
 

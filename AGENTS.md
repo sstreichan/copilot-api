@@ -44,11 +44,14 @@ GitHub Copilot API 的反向代理，基于 **Hono** 框架（非 Express），�
 - `src/routes/models/AGENTS.md` - 增强版 `/v1/models`，过滤、排序与 limits/capability 映射规则
 - `src/routes/responses/AGENTS.md` - OpenAI Responses 路由、stream ID 同步、tool 预处理规则
 - `src/routes/generate-content/AGENTS.md` - Gemini 路由分流、Responses/codex 分支、流式关闭要求
+- `src/routes/provider/AGENTS.md` - Provider-scoped Anthropic 代理路由、count_tokens 回退与上游透传规则
 - `src/services/copilot/AGENTS.md` - 上游 Copilot 调用、native messages 后端适配、telemetry 与 header 规则
 - `src/services/github/AGENTS.md` - GitHub 认证、device flow、Copilot token 与 usage 获取边界
+- `src/services/providers/AGENTS.md` - 多提供商上游转发、header allowlist、response 头清洗约束
 - `src/services/telemetry/AGENTS.md` - telemetry envelope、identity、fire-and-forget 发送约束
 - `tests/AGENTS.md` - Bun 测试布局、mock 约定、fixtures 与断言风格
 - `tests/generate-content/AGENTS.md` - Gemini/codex 测试约束、stream fixture 与分流断言
+- `tests/router/AGENTS.md` - Sticky router 测试模式、fetch/time 注入与 sticky 断言规则
 - `claude-plugin/AGENTS.md` - Claude Code plugin/marketplace 目录与 `__SUBAGENT_MARKER__` 约束
 - `openspec/AGENTS.md` - 提案、delta spec、validate / archive 工作流
 - `router/AGENTS.md` - Sticky router 多实例调度；session-sticky 路由、least-loaded 选择、dashboard、start.sh 编排
@@ -89,6 +92,7 @@ bun run dev -- --proxy-env  # 从环境变量读取代理配置
 ### 路由结构
 - `src/routes/messages/` - Anthropic `/v1/messages`（支持 Responses API 的 vision/tools）
 - `src/routes/generate-content/` - Gemini API
+- `src/routes/provider/` - Provider-scoped Anthropic-compatible 代理路由
 - `src/routes/chat-completions/` - OpenAI-compatible chat completions
 - `src/routes/responses/` - GitHub Copilot Responses API
 - `src/routes/models/` - 增强版 `/v1/models`，含能力、限制、计费信息
@@ -106,6 +110,7 @@ bun run dev -- --proxy-env  # 从环境变量读取代理配置
 - `src/services/copilot/create-chat-completions.ts` - Copilot API 核心调用器（token 刷新、headers、签名重试）
 - `src/services/copilot/create-messages.ts` - Claude 模型的原生 Messages API 透传；**同时也是后端适配层**（block 重排、thinking 剥离）
 - `src/services/copilot/get-models.ts` - 模型元数据（vision/thinking 限制）
+- `src/services/providers/anthropic-proxy.ts` - Provider 上游转发与响应头清洗
 - `src/lib/state.ts` - **运行时状态唯一真相源**（tokens、models、config、interactionId）
 - `src/lib/config.ts` - 应用配置（见下方配置选项）
 - `src/lib/smart-agent.ts` - Smart agent 决策逻辑与缓存
@@ -257,6 +262,8 @@ bd close bd-42 --reason "完成" --json
  **Phase 动态检测**：`shouldApplyPhase` 从 `extraPrompts` 检测 `"## Intermediary updates"` 字符串，不再硬编码模型名
  **modelCallId telemetry**：三个 `create-*` service 各自生成 `modelCallId`（UUID）传入 telemetry
  **Usage viewer**：`/usage-viewer` 和 `/usage-viewer/` 路由豁免 auth，提供配额仪表盘
+ **Provider proxy**：新增 `/:provider/v1/messages`、`/:provider/v1/models` 与 per-model provider 配置（temperature/topP/topK）
+ **Telemetry sampling**：事件采样统一下沉到 `trackEvent()`；`scheduleFeedbackEvents()` 不再重复做 30% 门限
 
 ## 近期变更 (02/2026)
 
