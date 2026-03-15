@@ -84,15 +84,19 @@ let fetchCalls: Array<{
   options: { method: string; headers: Record<string, string>; body: string }
 }> = []
 let originalFetch: typeof globalThis.fetch
+let originalRandom: typeof Math.random
 
 beforeEach(() => {
   fetchCalls = []
   originalFetch = globalThis.fetch
+  originalRandom = Math.random
+  Math.random = () => 0.1 // Always pass the 30% sampling gate in trackEvent
   mockTelemetryEnabled = false
 })
 
 afterEach(() => {
   globalThis.fetch = originalFetch
+  Math.random = originalRandom
   mock.restore()
 })
 

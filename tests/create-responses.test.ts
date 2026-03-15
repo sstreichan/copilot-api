@@ -105,7 +105,7 @@ test("sets X-Initiator to user when initiator is user", async () => {
   const headers = (
     fetchMock.mock.calls[0][1] as { headers: Record<string, string> }
   ).headers
-  expect(headers["X-Initiator"]).toBe("user")
+  expect(headers["x-initiator"]).toBe("user")
 })
 
 test("sets X-Initiator to agent when initiator is agent", async () => {
@@ -118,7 +118,7 @@ test("sets X-Initiator to agent when initiator is agent", async () => {
   const headers = (
     fetchMock.mock.calls[callIndex][1] as { headers: Record<string, string> }
   ).headers
-  expect(headers["X-Initiator"]).toBe("agent")
+  expect(headers["x-initiator"]).toBe("agent")
 })
 
 test("forces X-Initiator to agent when state.forceAgent is true", async () => {
@@ -132,7 +132,7 @@ test("forces X-Initiator to agent when state.forceAgent is true", async () => {
   const headers = (
     fetchMock.mock.calls[callIndex][1] as { headers: Record<string, string> }
   ).headers
-  expect(headers["X-Initiator"]).toBe("agent")
+  expect(headers["x-initiator"]).toBe("agent")
 })
 
 // ── Interaction headers tests ─────────────────────────────────────────────
@@ -147,7 +147,7 @@ describe("Interaction headers (Wave 1/2)", () => {
     const headers = (
       fetchMock.mock.calls[0][1] as { headers: Record<string, string> }
     ).headers
-    expect(headers["X-Interaction-Id"]).toBe("test-interaction-id")
+    expect(headers["x-interaction-id"]).toBe("test-interaction-id")
   })
 
   test("X-Agent-Task-Id equals x-request-id", async () => {
@@ -159,7 +159,7 @@ describe("Interaction headers (Wave 1/2)", () => {
     const headers = (
       fetchMock.mock.calls[0][1] as { headers: Record<string, string> }
     ).headers
-    expect(headers["X-Agent-Task-Id"]).toBe(headers["x-request-id"])
+    expect(headers["x-agent-task-id"]).toBe(headers["x-request-id"])
   })
 
   test("X-Interaction-Type equals openai-intent", async () => {
@@ -171,7 +171,7 @@ describe("Interaction headers (Wave 1/2)", () => {
     const headers = (
       fetchMock.mock.calls[0][1] as { headers: Record<string, string> }
     ).headers
-    expect(headers["X-Interaction-Type"]).toBe(headers["openai-intent"])
+    expect(headers["x-interaction-type"]).toBe(headers["openai-intent"])
   })
 
   test("passes non-empty modelCallId to telemetry", async () => {

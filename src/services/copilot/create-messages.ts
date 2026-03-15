@@ -5,8 +5,13 @@ import type {
   AnthropicAssistantMessage,
   AnthropicMessagesPayload,
 } from "~/routes/messages/anthropic-types"
+import type { SubagentMarker } from "~/routes/messages/subagent-marker"
 
-import { copilotBaseUrl, copilotHeaders } from "~/lib/api-config"
+import {
+  copilotBaseUrl,
+  copilotHeaders,
+  prepareInteractionHeaders,
+} from "~/lib/api-config"
 import { getReasoningEffortForModel } from "~/lib/config"
 import { HTTPError } from "~/lib/error"
 import { resolveInitiatorWithSmartAgent } from "~/lib/smart-agent"
@@ -21,6 +26,9 @@ import {
 export interface CreateMessagesOptions {
   initiator?: "user" | "agent"
   anthropicBeta?: string
+  subagentMarker?: SubagentMarker | null
+  requestId?: string
+  sessionId?: string
 }
 
 /**
@@ -260,13 +268,21 @@ export const createMessages = async (
 
   const enableVision = hasImageContent(payload)
 
-  // Determine X-Initiator value
+  // Determine x-initiator value
   const defaultInitiator = options.initiator ?? "user"
   const { initiator } = await resolveInitiatorWithSmartAgent(defaultInitiator)
 
   const headers: Record<string, string> = {
-    ...copilotHeaders(state, enableVision),
-    "X-Initiator": initiator,
+    ...copilotHeaders(state, options.requestId, enableVision),
+    "x-initiator": initiator,
+  }
+
+  if (options.sessionId || options.subagentMarker) {
+    prepareInteractionHeaders(
+      options.sessionId,
+      Boolean(options.subagentMarker),
+      headers,
+    )
   }
 
   // Extract requestId from already-built headers (do NOT re-generate)

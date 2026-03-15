@@ -14,6 +14,7 @@ import {
 } from "~/lib/logger"
 import { checkRateLimit } from "~/lib/rate-limit"
 import { state } from "~/lib/state"
+import { generateRequestIdFromPayload, getUUID } from "~/lib/utils"
 import {
   createResponses,
   type ResponsesPayload,
@@ -21,7 +22,11 @@ import {
 } from "~/services/copilot/create-responses"
 
 import { createStreamIdTracker, fixStreamIds } from "./stream-id-sync"
-import { getResponsesRequestOptions } from "./utils"
+import {
+  applyResponsesApiContextManagement,
+  compactInputByLatestCompaction,
+  getResponsesRequestOptions,
+} from "./utils"
 
 const logger = createHandlerLogger("responses-handler")
 
@@ -35,10 +40,19 @@ export const handleResponses = async (c: Context) => {
   const payload = await c.req.json<ResponsesPayload>()
   logger.debug("Responses request payload:", JSON.stringify(payload))
 
+  // not support subagent marker for now , set sessionId = getUUID(requestId)
+  const requestId = generateRequestIdFromPayload({ messages: payload.input })
+  logger.debug("Generated request ID:", requestId)
+
+  const sessionId = getUUID(requestId)
+  logger.debug("Extracted session ID:", sessionId)
+
   useFunctionApplyPatch(payload)
 
   // Remove web_search tool as it's not supported by GitHub Copilot
   removeWebSearchTool(payload)
+
+  compactInputByLatestCompaction(payload)
 
   const selectedModel = state.models?.data.find(
     (model) => model.id === payload.model,
@@ -59,6 +73,13 @@ export const handleResponses = async (c: Context) => {
     )
   }
 
+  applyResponsesApiContextManagement(
+    payload,
+    selectedModel?.capabilities.limits.max_prompt_tokens,
+  )
+
+  logger.debug("Translated Responses payload:", JSON.stringify(payload))
+
   const { vision, initiator } = getResponsesRequestOptions(payload)
 
   consola.info(`IN ${cm(payload.model)}`)
@@ -67,7 +88,12 @@ export const handleResponses = async (c: Context) => {
     await awaitApproval()
   }
 
-  const response = await createResponses(payload, { vision, initiator })
+  const response = await createResponses(payload, {
+    vision,
+    initiator,
+    requestId,
+    sessionId: sessionId,
+  })
 
   if (isStreamingRequested(payload) && isAsyncIterable(response)) {
     logger.debug("Forwarding native Responses stream")

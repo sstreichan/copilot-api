@@ -206,11 +206,13 @@ describe("GET /models - conditional fields", () => {
 })
 
 describe("GET /models - all models parsed correctly", () => {
-  test("all 40 models from fixture are returned", async () => {
+  test("returns only model_picker_enabled models from fixture", async () => {
     const response = await getModelsResponse()
 
-    // Fixture has 40 models
-    expect(response.data.length).toBe(rawModelsResponse.data.length)
+    const expectedCount = (
+      rawModelsResponse.data as Array<{ model_picker_enabled?: boolean }>
+    ).filter((m) => m.model_picker_enabled).length
+    expect(response.data.length).toBe(expectedCount)
   })
 
   test("no model has undefined required fields", async () => {
@@ -273,14 +275,16 @@ describe("GET /models - sorting", () => {
     }
   })
 
-  test("embedding models come at the end", async () => {
+  test("embedding models come at the end (if any pass model_picker_enabled)", async () => {
     const response = await getModelsResponse()
-    const lastModels = response.data.slice(-5)
-    const embeddingCount = lastModels.filter(
-      (m) => m.type === "embeddings",
-    ).length
+    const embeddingModels = response.data.filter((m) => m.type === "embeddings")
 
-    // At least some embedding models should be at the end
-    expect(embeddingCount).toBeGreaterThan(0)
+    if (embeddingModels.length === 0) {
+      // All embedding models filtered out by model_picker_enabled — nothing to assert
+      return
+    }
+
+    const lastModels = response.data.slice(-embeddingModels.length)
+    expect(lastModels.every((m) => m.type === "embeddings")).toBe(true)
   })
 })

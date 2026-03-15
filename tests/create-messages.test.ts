@@ -89,7 +89,7 @@ test("sets X-Initiator to user by default", async () => {
   const headers = (
     fetchMock.mock.calls[0][1] as { headers: Record<string, string> }
   ).headers
-  expect(headers["X-Initiator"]).toBe("user")
+  expect(headers["x-initiator"]).toBe("user")
 })
 
 test("sets X-Initiator to agent when specified", async () => {
@@ -102,7 +102,7 @@ test("sets X-Initiator to agent when specified", async () => {
   const headers = (
     fetchMock.mock.calls[0][1] as { headers: Record<string, string> }
   ).headers
-  expect(headers["X-Initiator"]).toBe("agent")
+  expect(headers["x-initiator"]).toBe("agent")
 })
 
 test("forces X-Initiator to agent when state.forceAgent is true", async () => {
@@ -124,7 +124,7 @@ test("forces X-Initiator to agent when state.forceAgent is true", async () => {
   expect(messagesCall).toBeDefined()
   const headers = (messagesCall![1] as { headers: Record<string, string> })
     .headers
-  expect(headers["X-Initiator"]).toBe("agent")
+  expect(headers["x-initiator"]).toBe("agent")
 })
 
 test("forwards allowed anthropic-beta header when provided", async () => {
@@ -354,7 +354,7 @@ test("includes X-Interaction-Id from state.interactionId (Wave 1/2)", async () =
   const headers = (
     fetchMock.mock.calls[0][1] as { headers: Record<string, string> }
   ).headers
-  expect(headers["X-Interaction-Id"]).toBe("test-interaction-id")
+  expect(headers["x-interaction-id"]).toBe("test-interaction-id")
   // eslint-disable-next-line require-atomic-updates
   state.interactionId = originalInteractionId
 })
@@ -369,7 +369,7 @@ test("X-Agent-Task-Id equals x-request-id (Wave 1/2)", async () => {
   const headers = (
     fetchMock.mock.calls[0][1] as { headers: Record<string, string> }
   ).headers
-  expect(headers["X-Agent-Task-Id"]).toBe(headers["x-request-id"])
+  expect(headers["x-agent-task-id"]).toBe(headers["x-request-id"])
 })
 
 test("passes non-empty modelCallId to telemetry (Wave 1/2)", async () => {
@@ -394,5 +394,5 @@ test("X-Interaction-Type equals openai-intent (Wave 1/2)", async () => {
   const headers = (
     fetchMock.mock.calls[0][1] as { headers: Record<string, string> }
   ).headers
-  expect(headers["X-Interaction-Type"]).toBe(headers["openai-intent"])
+  expect(headers["x-interaction-type"]).toBe(headers["openai-intent"])
 })

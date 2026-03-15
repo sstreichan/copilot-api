@@ -68,6 +68,7 @@ type FetchCall = {
 
 let fetchCalls: Array<FetchCall> = []
 let originalFetch: typeof globalThis.fetch
+let originalRandom: typeof Math.random
 
 const chatResponse = {
   id: "chat-ok",
@@ -140,6 +141,8 @@ function buildPayload(): ChatCompletionsPayload {
 beforeEach(() => {
   fetchCalls = []
   originalFetch = globalThis.fetch
+  originalRandom = Math.random
+  Math.random = () => 0.1 // Always pass the 30% sampling gate in trackEvent
   mockTelemetryEnabled = false
 
   state.copilotToken = "test-copilot-token"
@@ -151,6 +154,7 @@ beforeEach(() => {
 
 afterEach(() => {
   globalThis.fetch = originalFetch
+  Math.random = originalRandom
   mock.restore()
 })
 

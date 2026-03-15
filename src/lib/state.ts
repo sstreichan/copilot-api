@@ -12,6 +12,9 @@ export interface State {
   models?: ModelsResponse
   vsCodeVersion?: string
 
+  macMachineId?: string
+  vsCodeSessionId?: string
+
   manualApprove: boolean
   rateLimitWait: boolean
   showToken: boolean

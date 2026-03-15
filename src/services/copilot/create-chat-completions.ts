@@ -2,7 +2,13 @@ import consola from "consola"
 import { events } from "fetch-event-stream"
 import { randomUUID } from "node:crypto"
 
-import { copilotBaseUrl, copilotHeaders } from "~/lib/api-config"
+import type { SubagentMarker } from "~/routes/messages/subagent-marker"
+
+import {
+  copilotBaseUrl,
+  copilotHeaders,
+  prepareInteractionHeaders,
+} from "~/lib/api-config"
 import { HTTPError } from "~/lib/error"
 import { resolveInitiatorWithSmartAgent } from "~/lib/smart-agent"
 import { state } from "~/lib/state"
@@ -125,6 +131,11 @@ async function retryWithStrippedReasoningFields(
 
 export const createChatCompletions = async (
   payload: ChatCompletionsPayload,
+  options?: {
+    subagentMarker?: SubagentMarker | null
+    requestId?: string
+    sessionId?: string
+  },
 ) => {
   if (!state.copilotToken) throw new Error("Copilot token not found")
 
@@ -142,14 +153,22 @@ export const createChatCompletions = async (
     lastMessage !== undefined
     && ["assistant", "tool"].includes(lastMessage.role)
 
-  // Determine X-Initiator value
+  // Determine x-initiator value
   const dynamicInitiator = isAgentCall ? "agent" : "user"
   const { initiator } = await resolveInitiatorWithSmartAgent(dynamicInitiator)
 
-  // Build headers and add X-Initiator
+  // Build headers and add x-initiator
   const headers: Record<string, string> = {
-    ...copilotHeaders(state, enableVision),
-    "X-Initiator": initiator,
+    ...copilotHeaders(state, options?.requestId, enableVision),
+    "x-initiator": initiator,
+  }
+
+  if (options?.sessionId || options?.subagentMarker) {
+    prepareInteractionHeaders(
+      options.sessionId,
+      Boolean(options.subagentMarker),
+      headers,
+    )
   }
 
   // Extract requestId from already-built headers (do NOT re-generate)

@@ -77,13 +77,16 @@ describe("router state helpers", () => {
       model: "gpt-4.1",
     })
 
-    expect(first).toEqual({
-      port: 4141,
-      reason: "new",
-      bindingKey: "session-1:atlas:gpt-4.1",
-    })
+    // First call: new binding, port is random among least-loaded
+    expect(first).toBeDefined()
+    if (!first) throw new Error("unreachable")
+    expect(first.reason).toBe("new")
+    expect(first.bindingKey).toBe("session-1:atlas:gpt-4.1")
+    expect([4141, 4142]).toContain(first.port)
+
+    // Second call: sticky - must reuse same port
     expect(second).toEqual({
-      port: 4141,
+      port: first.port,
       reason: "sticky",
       bindingKey: "session-1:atlas:gpt-4.1",
     })
