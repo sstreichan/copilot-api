@@ -205,6 +205,13 @@ const buildEnhancedPayload = (
   }
 }
 
+const shouldDisableThinkingForToolChoice = (
+  payload: AnthropicMessagesPayload,
+): boolean => {
+  const toolChoiceType = payload.tool_choice?.type
+  return toolChoiceType === "any" || toolChoiceType === "tool"
+}
+
 /**
  * Send request to native /v1/messages and handle thinking block error retry.
  */
@@ -295,10 +302,12 @@ export const createMessages = async (
   const selectedModel = state.models?.data.find((m) => m.id === payload.model)
   const supportsAdaptive =
     selectedModel?.capabilities.supports.adaptive_thinking ?? false
+  const adaptiveThinkingEnabled =
+    supportsAdaptive && !shouldDisableThinkingForToolChoice(payload)
 
   const betaHeader = resolveAnthropicBetaHeader(
     options,
-    supportsAdaptive,
+    adaptiveThinkingEnabled,
     payload,
   )
   if (betaHeader) {
@@ -308,9 +317,9 @@ export const createMessages = async (
   // Reorder assistant blocks: Vertex AI requires tool_use at end
   reorderAssistantBlocks(payload)
 
-  const enhancedPayload = buildEnhancedPayload(payload, supportsAdaptive)
+  const enhancedPayload = buildEnhancedPayload(payload, adaptiveThinkingEnabled)
 
-  if (supportsAdaptive) {
+  if (adaptiveThinkingEnabled) {
     consola.debug(
       `Adaptive thinking enabled for ${payload.model}, effort: ${getAnthropicEffortForModel(payload.model)}`,
     )

@@ -24,6 +24,7 @@ beforeEach(() => {
   capturedModelCallId = undefined
   state.interactionId = "test-interaction-id"
   state.forceAgent = false
+  state.models = undefined
   clearSmartAgentCache() // Clear cache between tests
   fetchMock = mock(
     (_url: string, opts: { headers: Record<string, string> }) => {
@@ -192,6 +193,63 @@ test("passes payload with forced temperature=1 to endpoint", async () => {
   expect(parsed.max_tokens).toBe(payload.max_tokens)
   expect(parsed.messages).toEqual(payload.messages)
   expect(parsed.system).toBe(payload.system)
+})
+
+test("does not enable adaptive thinking when tool_choice forces tool use", async () => {
+  state.models = {
+    object: "list",
+    data: [
+      {
+        id: "claude-sonnet-4-20250514",
+        name: "Claude Sonnet 4",
+        object: "model",
+        vendor: "anthropic",
+        version: "20250514",
+        preview: false,
+        model_picker_enabled: true,
+        capabilities: {
+          family: "claude",
+          limits: {},
+          object: "model_capabilities",
+          supports: {
+            adaptive_thinking: true,
+          },
+          tokenizer: "claude",
+          type: "chat.completions",
+        },
+        supported_endpoints: ["/v1/messages"],
+      },
+    ],
+  }
+
+  const payload: AnthropicMessagesPayload = {
+    model: "claude-sonnet-4-20250514",
+    max_tokens: 2048,
+    messages: [{ role: "user", content: "use the tool" }],
+    tools: [
+      {
+        name: "get_weather",
+        input_schema: {
+          type: "object",
+          properties: {
+            city: { type: "string" },
+          },
+          required: ["city"],
+        },
+      },
+    ],
+    tool_choice: {
+      type: "tool",
+      name: "get_weather",
+    },
+  }
+
+  await createMessages(payload)
+  const body = (fetchMock.mock.calls[0][1] as { body: string }).body
+  const parsed = JSON.parse(body) as AnthropicMessagesPayload
+
+  expect(parsed.thinking).toBeUndefined()
+  expect(parsed.output_config).toBeUndefined()
 })
 
 test("returns raw Response object", async () => {
