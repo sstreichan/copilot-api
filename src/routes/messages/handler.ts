@@ -13,9 +13,14 @@ import {
   getPremiumInfo,
   shouldUseColor,
 } from "~/lib/logger"
+import { findEndpointModel } from "~/lib/models"
 import { checkRateLimit } from "~/lib/rate-limit"
 import { state } from "~/lib/state"
-import { setupPingInterval } from "~/lib/utils"
+import {
+  generateRequestIdFromPayload,
+  getRootSessionId,
+  setupPingInterval,
+} from "~/lib/utils"
 import {
   buildErrorEvent,
   createResponsesStreamState,
@@ -25,7 +30,11 @@ import {
   translateAnthropicMessagesToResponsesPayload,
   translateResponsesResultToAnthropic,
 } from "~/routes/messages/responses-translation"
-import { getResponsesRequestOptions } from "~/routes/responses/utils"
+import {
+  applyResponsesApiContextManagement,
+  compactInputByLatestCompaction,
+  getResponsesRequestOptions,
+} from "~/routes/responses/utils"
 import {
   createChatCompletions,
   type ChatCompletionChunk,
@@ -38,6 +47,8 @@ import {
   type ResponseStreamEvent,
 } from "~/services/copilot/create-responses"
 
+import type { SubagentMarker } from "./subagent-marker"
+
 import {
   type AnthropicMessagesPayload,
   type AnthropicStreamState,
@@ -49,6 +60,7 @@ import {
   translateToOpenAI,
 } from "./non-stream-translation"
 import { translateChunkToAnthropicEvents } from "./stream-translation"
+import { parseSubagentMarkerFromFirstUser } from "./subagent-marker"
 
 const logger = createHandlerLogger("messages-handler")
 
@@ -88,12 +100,23 @@ export async function handleCompletion(c: Context) {
       anthropicPayload.model = getSmallModel()
     }
   }
+  const subagentMarker = parseSubagentMarkerFromFirstUser(anthropicPayload)
+  if (subagentMarker) {
+    logger.debug("Detected Subagent marker:", JSON.stringify(subagentMarker))
+  }
+
+  const sessionId = getRootSessionId(anthropicPayload, c)
+  logger.debug("Extracted session ID:", sessionId)
 
   // ⚠️ CRITICAL: Native Messages API branch MUST be BEFORE other payload modifications
   // This ensures payload is passed through unchanged to Copilot's /v1/messages endpoint
   // (compact detection above is the only exception - it must happen first)
   if (state.nativeMessages && isClaudeModel(anthropicPayload.model)) {
-    return await handleWithNativeMessages(c, anthropicPayload, originalModel)
+    return await handleWithNativeMessages(c, anthropicPayload, {
+      originalModel,
+      subagentMarker,
+      sessionId,
+    })
   }
 
   // fix claude code 2.0.28+ warmup request consume premium request, forcing small model if no tools are used
@@ -109,8 +132,14 @@ export async function handleCompletion(c: Context) {
   // e.g. {"role":"user","content":[{"type":"tool_result","content":"Launching skill: xxx"},{"type":"text","text":"xxx"}]}
   // compact requests are excluded from this processing
   if (!isCompact) {
-    mergeToolResultForClaude(anthropicBeta, anthropicPayload)
+    mergeToolResultForClaude(anthropicPayload)
   }
+
+  const selectedModel = findEndpointModel(anthropicPayload.model)
+  anthropicPayload.model = selectedModel?.id ?? anthropicPayload.model
+
+  const requestId = generateRequestIdFromPayload(anthropicPayload, sessionId)
+  logger.debug("Generated request ID:", requestId)
 
   const useResponsesApi = shouldUseResponsesApi(anthropicPayload.model)
 
@@ -119,10 +148,21 @@ export async function handleCompletion(c: Context) {
   }
 
   if (useResponsesApi) {
-    return await handleWithResponsesApi(c, anthropicPayload, originalModel)
+    return await handleWithResponsesApi(c, anthropicPayload, {
+      originalModel,
+      subagentMarker,
+      selectedModel,
+      requestId,
+      sessionId,
+    })
   }
 
-  return await handleWithChatCompletions(c, anthropicPayload, originalModel)
+  return await handleWithChatCompletions(c, anthropicPayload, {
+    originalModel,
+    subagentMarker,
+    requestId,
+    sessionId,
+  })
 }
 
 const RESPONSES_ENDPOINT = "/responses"
@@ -154,14 +194,18 @@ export const getInitiatorFromPayload = (
 const handleWithNativeMessages = async (
   c: Context,
   anthropicPayload: AnthropicMessagesPayload,
-  originalModel: string,
+  options: {
+    originalModel: string
+    subagentMarker?: SubagentMarker | null
+    sessionId?: string
+  },
 ): Promise<Response> => {
   // Preserve the caller-supplied header; createMessages() filters it to
   // the backend-supported anthropic-beta values before forwarding.
   const anthropicBeta = c.req.header("anthropic-beta")
 
   consola.info(
-    `IN ${cm(originalModel)} → ${cm(anthropicPayload.model)} (native)`,
+    `IN ${cm(options.originalModel)} → ${cm(anthropicPayload.model)} (native)`,
   )
   logger.debug("Using native Messages API passthrough")
 
@@ -169,9 +213,17 @@ const handleWithNativeMessages = async (
     await awaitApproval()
   }
 
+  const requestId = generateRequestIdFromPayload(
+    anthropicPayload,
+    options.sessionId,
+  )
+
   const response = await createMessages(anthropicPayload, {
     initiator: getInitiatorFromPayload(anthropicPayload),
     anthropicBeta,
+    subagentMarker: options.subagentMarker,
+    requestId,
+    sessionId: options.sessionId,
   })
 
   // Stream: use raw body passthrough (NOT streamSSE reconstruction)
@@ -195,7 +247,7 @@ const handleWithNativeMessages = async (
           }
 
           process.stdout.write(
-            `${formatStreamLog({ model: originalModel, chunks: chunkCount, done: true, premium })}\n`,
+            `${formatStreamLog({ model: options.originalModel, chunks: chunkCount, done: true, premium })}\n`,
           )
           controller.close()
           return
@@ -217,7 +269,7 @@ const handleWithNativeMessages = async (
           chunkCount += newEvents
           process.stdout.write(
             formatStreamLog({
-              model: originalModel,
+              model: options.originalModel,
               chunks: chunkCount,
               done: false,
             }),
@@ -240,7 +292,7 @@ const handleWithNativeMessages = async (
   const jsonResponse = await response.json()
   const premium = await getPremiumInfo()
   process.stdout.write(
-    `${formatStreamLog({ model: originalModel, chunks: 0, done: true, premium })}\n`,
+    `${formatStreamLog({ model: options.originalModel, chunks: 0, done: true, premium })}\n`,
   )
   return c.json(jsonResponse)
 }
@@ -248,16 +300,23 @@ const handleWithNativeMessages = async (
 const handleWithChatCompletions = async (
   c: Context,
   anthropicPayload: AnthropicMessagesPayload,
-  originalModel: string,
+  options: {
+    originalModel: string
+    subagentMarker?: SubagentMarker | null
+    requestId: string
+    sessionId?: string
+  },
 ) => {
   const openAIPayload = translateToOpenAI(anthropicPayload)
-  consola.info(`IN ${cm(originalModel)} → ${cm(openAIPayload.model)}`)
+  consola.info(
+    `IN ${cm(options.originalModel)} \u2192 ${cm(openAIPayload.model)}`,
+  )
   logger.debug(
     "Translated OpenAI request payload:",
     JSON.stringify(openAIPayload),
   )
 
-  const response = await createChatCompletions(openAIPayload)
+  const response = await createChatCompletions(openAIPayload, options)
 
   if (isNonStreaming(response)) {
     logger.debug(
@@ -330,14 +389,31 @@ const handleWithChatCompletions = async (
   })
 }
 
+// eslint-disable-next-line max-lines-per-function
 const handleWithResponsesApi = async (
   c: Context,
   anthropicPayload: AnthropicMessagesPayload,
-  originalModel: string,
+  options: {
+    originalModel: string
+    subagentMarker?: SubagentMarker | null
+    selectedModel?: ReturnType<typeof findEndpointModel>
+    requestId: string
+    sessionId?: string
+  },
 ) => {
   const responsesPayload =
     translateAnthropicMessagesToResponsesPayload(anthropicPayload)
-  consola.info(`IN ${cm(originalModel)} → ${cm(responsesPayload.model)}`)
+
+  applyResponsesApiContextManagement(
+    responsesPayload,
+    options.selectedModel?.capabilities.limits.max_prompt_tokens,
+  )
+
+  compactInputByLatestCompaction(responsesPayload)
+
+  consola.info(
+    `IN ${cm(options.originalModel)} \u2192 ${cm(responsesPayload.model)}`,
+  )
   logger.debug(
     "Translated Responses payload:",
     JSON.stringify(responsesPayload),
@@ -347,6 +423,9 @@ const handleWithResponsesApi = async (
   const response = await createResponses(responsesPayload, {
     vision,
     initiator,
+    subagentMarker: options.subagentMarker,
+    requestId: options.requestId,
+    sessionId: options.sessionId,
   })
 
   if (responsesPayload.stream && isAsyncIterable(response)) {
@@ -480,11 +559,8 @@ const mergeContentWithTexts = (
 }
 
 const mergeToolResultForClaude = (
-  anthropicBeta: string | undefined,
   anthropicPayload: AnthropicMessagesPayload,
 ): void => {
-  if (!anthropicBeta) return
-
   for (const msg of anthropicPayload.messages) {
     if (msg.role !== "user" || !Array.isArray(msg.content)) continue
 
