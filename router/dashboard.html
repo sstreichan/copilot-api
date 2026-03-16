@@ -219,6 +219,7 @@
 
   <script>
     const state = { history: [] }
+    const LAST_ACTIVE_REFRESH_INTERVAL_MS = 5000
     const byId = (id) => document.getElementById(id)
     const cut = (value, size = 24) => {
       const text = value || '-'
@@ -230,6 +231,52 @@
       return Number.isNaN(date.getTime()) ? value : date.toLocaleTimeString('en-GB')
     }
 
+    const formatRelativeTime = (value) => {
+      if (!value) return { label: '-', className: 'muted', title: '' }
+      const date = new Date(value)
+      const ms = date.getTime()
+      if (Number.isNaN(ms)) return { label: '-', className: 'muted', title: '' }
+
+      const diffSec = Math.max(0, Math.floor((Date.now() - ms) / 1000))
+      if (diffSec < 60) {
+        return { label: `${diffSec}s ago`, className: 'time-recent', title: date.toISOString() }
+      }
+
+      const diffMin = Math.floor(diffSec / 60)
+      if (diffMin < 60) {
+        return {
+          label: `${diffMin}m ago`,
+          className: diffMin < 5 ? 'time-recent' : 'time-normal',
+          title: date.toISOString(),
+        }
+      }
+
+      const diffHour = Math.floor(diffMin / 60)
+      if (diffHour < 24) {
+        return {
+          label: `${diffHour}h ago`,
+          className: diffHour < 2 ? 'time-normal' : 'time-stale',
+          title: date.toISOString(),
+        }
+      }
+
+      const diffDay = Math.floor(diffHour / 24)
+      return { label: `${diffDay}d ago`, className: 'time-stale', title: date.toISOString() }
+    }
+
+    function refreshLastActiveCells() {
+      const cells = document.querySelectorAll('td.last-active')
+      for (const cell of cells) {
+        const raw = cell.getAttribute('data-last-active')
+        const last = formatRelativeTime(raw)
+        const span = cell.querySelector('span')
+        if (!span) continue
+        span.className = last.className
+        span.textContent = last.label
+        span.title = last.title
+      }
+    }
+
     function renderInstances(instances) {
       byId('instance-count').textContent = String(instances.length)
       const body = byId('instances-body')
@@ -237,39 +284,6 @@
         body.innerHTML = '<tr><td colspan="5" class="empty">No instances discovered.</td></tr>'
         return
       }
-      const formatRelativeTime = (value) => {
-        if (!value) return { label: '-', className: 'muted', title: '' }
-        const date = new Date(value)
-        const ms = date.getTime()
-        if (Number.isNaN(ms)) return { label: '-', className: 'muted', title: '' }
-
-        const diffSec = Math.max(0, Math.floor((Date.now() - ms) / 1000))
-        if (diffSec < 60) {
-          return { label: `${diffSec}s ago`, className: 'time-recent', title: date.toISOString() }
-        }
-
-        const diffMin = Math.floor(diffSec / 60)
-        if (diffMin < 60) {
-          return {
-            label: `${diffMin}m ago`,
-            className: diffMin < 5 ? 'time-recent' : 'time-normal',
-            title: date.toISOString(),
-          }
-        }
-
-        const diffHour = Math.floor(diffMin / 60)
-        if (diffHour < 24) {
-          return {
-            label: `${diffHour}h ago`,
-            className: diffHour < 2 ? 'time-normal' : 'time-stale',
-            title: date.toISOString(),
-          }
-        }
-
-        const diffDay = Math.floor(diffHour / 24)
-        return { label: `${diffDay}d ago`, className: 'time-stale', title: date.toISOString() }
-      }
-
       body.innerHTML = instances.map((item) => {
         const counts = item.requestCounts || {}
         const entries = Object.entries(counts).sort(([, a], [, b]) => b - a)
@@ -288,7 +302,7 @@
             <td><code>${item.port}</code></td>
             <td><span class="tag ${item.healthy ? 'up' : 'down'}">${item.healthy ? 'up' : 'down'}</span></td>
             <td>${countsHtml}</td>
-            <td class="last-active"><span class="${last.className}" title="${last.title}">${last.label}</span></td>
+            <td class="last-active" data-last-active="${item.lastActive || ''}"><span class="${last.className}" title="${last.title}">${last.label}</span></td>
           </tr>
         `
       }).join('')
@@ -409,6 +423,7 @@
 
     byId('clear-bindings').addEventListener('click', () => clearData('bindings'))
     byId('clear-history').addEventListener('click', () => clearData('history'))
+    setInterval(refreshLastActiveCells, LAST_ACTIVE_REFRESH_INTERVAL_MS)
 
     Promise.all([loadStatus(), loadHistory()]).finally(connectSse)
   </script>
