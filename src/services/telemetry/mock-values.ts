@@ -35,25 +35,20 @@ const COMMANDS = [
 ]
 const UI_KINDS = ["panel", "inline", "terminal", "notebook"]
 
-let langIdx = 0
-let participantIdx = 0
-let commandIdx = 0
-let uiKindIdx = 0
-
 export function nextLanguageId(): string {
-  return LANGUAGE_IDS[langIdx++ % LANGUAGE_IDS.length]
+  return LANGUAGE_IDS[Math.floor(Math.random() * LANGUAGE_IDS.length)]
 }
 
 export function nextParticipant(): string {
-  return PARTICIPANTS[participantIdx++ % PARTICIPANTS.length]
+  return PARTICIPANTS[Math.floor(Math.random() * PARTICIPANTS.length)]
 }
 
 export function nextCommand(): string {
-  return COMMANDS[commandIdx++ % COMMANDS.length]
+  return COMMANDS[Math.floor(Math.random() * COMMANDS.length)]
 }
 
 export function nextUiKind(): string {
-  return UI_KINDS[uiKindIdx++ % UI_KINDS.length]
+  return UI_KINDS[Math.floor(Math.random() * UI_KINDS.length)]
 }
 
 export function randomLineStats(): {
