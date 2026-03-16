@@ -17,6 +17,8 @@ import {
   trackResponseSuccess,
   trackResponseError,
   scheduleFeedbackEvents,
+  trackPanelRequest,
+  trackGhostTextShown,
 } from "~/services/telemetry/telemetry"
 
 /**
@@ -176,6 +178,15 @@ export const createChatCompletions = async (
 
   const start = Date.now()
   trackRequestSent(payload.model, state.accountType, requestId, modelCallId)
+  trackPanelRequest({
+    headerRequestId: requestId,
+    apiType: "chat_completions",
+    modelCallId,
+  })
+  trackGhostTextShown({
+    headerRequestId: requestId,
+    ...(state.sku !== undefined ? { sku: state.sku } : {}),
+  })
 
   // First attempt: passthrough unchanged
   const response = await fetch(`${copilotBaseUrl(state)}/chat/completions`, {

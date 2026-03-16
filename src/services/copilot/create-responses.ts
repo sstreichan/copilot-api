@@ -17,6 +17,8 @@ import {
   trackRequestSent,
   trackResponseError,
   trackResponseSuccess,
+  trackPanelRequest,
+  trackGhostTextShown,
 } from "~/services/telemetry/telemetry"
 
 export interface ResponsesPayload {
@@ -394,6 +396,15 @@ export const createResponses = async (
 
   const start = Date.now()
   trackRequestSent(payload.model, state.accountType, requestId, modelCallId)
+  trackPanelRequest({
+    headerRequestId: requestId,
+    apiType: "chat_completions",
+    modelCallId,
+  })
+  trackGhostTextShown({
+    headerRequestId: requestId,
+    ...(state.sku !== undefined ? { sku: state.sku } : {}),
+  })
 
   // service_tier is not supported by github copilot
   payload.service_tier = null

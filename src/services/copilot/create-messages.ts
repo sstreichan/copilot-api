@@ -21,6 +21,8 @@ import {
   trackResponseSuccess,
   trackResponseError,
   scheduleFeedbackEvents,
+  trackPanelRequest,
+  trackGhostTextShown,
 } from "~/services/telemetry/telemetry"
 
 export interface CreateMessagesOptions {
@@ -297,6 +299,15 @@ export const createMessages = async (
 
   const start = Date.now()
   trackRequestSent(payload.model, state.accountType, requestId, modelCallId)
+  trackPanelRequest({
+    headerRequestId: requestId,
+    apiType: "chat_completions",
+    modelCallId,
+  })
+  trackGhostTextShown({
+    headerRequestId: requestId,
+    ...(state.sku !== undefined ? { sku: state.sku } : {}),
+  })
 
   // Resolve model capabilities and build enhanced payload
   const selectedModel = state.models?.data.find((m) => m.id === payload.model)
