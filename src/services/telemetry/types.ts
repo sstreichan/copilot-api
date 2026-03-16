@@ -18,6 +18,8 @@ export const EVENT_RESPONSE_ERROR = "copilot-chat/response.error"
 export const EVENT_AUTH_NEW_TOKEN = "copilot-chat/auth.new_token"
 export const EVENT_EDIT_FEEDBACK = "copilot-chat/panel.edit.feedback"
 export const EVENT_EDIT_HUNK_ACTION = "copilot-chat/edit.hunk.action"
+export const EVENT_PANEL_REQUEST = "copilot-chat/panel.request"
+export const EVENT_GHOST_TEXT_SHOWN = "ghostText.shown"
 
 // Application Insights envelope structure
 // Reference: .local/telemetry-fixtures/generate_fixtures.py build_envelope()
@@ -53,4 +55,11 @@ export type TelemetryProperties = {
 export function parseTid(token: string): string | null {
   const match = token.match(/(?:^|;)tid=([^;:]+)/)
   return match ? match[1] : null
+}
+
+// Extract sku field from Copilot token
+// Token format: "tid=xxx;exp=xxx;sku=xxx:signature" (not standard JWT)
+export function parseSku(token: string): string {
+  const match = token.match(/(?:^|;)sku=([^;:]+)/)
+  return match ? match[1] : ""
 }

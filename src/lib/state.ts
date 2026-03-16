@@ -7,6 +7,9 @@ export interface State {
   interactionId: string
   githubToken?: string
   copilotToken?: string
+  sku?: string
+  organizationList?: Array<string>
+  enterpriseList?: Array<string>
 
   accountType: string
   models?: ModelsResponse

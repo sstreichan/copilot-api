@@ -58,7 +58,11 @@ describe("telemetry identity", () => {
 
   it("getCommonProperties returns expected keys", () => {
     const machineId = getMachineId()
-    const props = getCommonProperties(machineId, SESSION_ID, "1.85.0")
+    const props = getCommonProperties({
+      machineId,
+      sessionId: SESSION_ID,
+      vsCodeVersion: "1.85.0",
+    })
 
     const expectedKeys = [
       "common_vscodemachineid",

@@ -17,12 +17,15 @@ import {
   EVENT_AUTH_NEW_TOKEN,
   EVENT_EDIT_FEEDBACK,
   EVENT_EDIT_HUNK_ACTION,
+  EVENT_PANEL_REQUEST,
+  EVENT_GHOST_TEXT_SHOWN,
   EVENT_REQUEST_SENT,
   EVENT_RESPONSE_ERROR,
   EVENT_RESPONSE_SUCCESS,
   TELEMETRY_ENVELOPE_NAME,
   TELEMETRY_IKEY,
   TELEMETRY_SDK_VERSION,
+  parseSku,
   parseTid,
   type TelemetryEnvelope,
 } from "./types"
@@ -30,6 +33,7 @@ import {
 // Module-level cached state (internal, not exported)
 let _tid: string | null = null
 let _endpoint: string = DEFAULT_TELEMETRY_ENDPOINT
+let _sku: string = ""
 
 function parseItemsAccepted(text: string | null): number | null {
   if (!text) {
@@ -57,6 +61,7 @@ function parseItemsAccepted(text: string | null): number | null {
  */
 export function initTelemetry(copilotToken: string, endpoint?: string): void {
   _tid = parseTid(copilotToken)
+  _sku = parseSku(copilotToken)
   const base = endpoint ?? DEFAULT_TELEMETRY_ENDPOINT
   _endpoint = base.endsWith("/telemetry") ? base : `${base}/telemetry`
 }
@@ -98,11 +103,14 @@ export function trackEvent(
         ver: 2,
         name: eventName,
         properties: {
-          ...getCommonProperties(
+          ...getCommonProperties({
             machineId,
-            SESSION_ID,
-            state.vsCodeVersion ?? "",
-          ),
+            sessionId: SESSION_ID,
+            vsCodeVersion: state.vsCodeVersion ?? "",
+            sku: _sku,
+            organizationList: state.organizationList,
+            enterpriseList: state.enterpriseList,
+          }),
           ...properties,
         },
         measurements,
@@ -306,4 +314,54 @@ export function scheduleFeedbackEvents(requestId: string): void {
     trackEditFeedback(requestId)
     trackEditHunkAction(requestId)
   }, delayMs)
+}
+
+/** Options for tracking a panel.request event. */
+export interface TrackPanelRequestOptions {
+  command?: string
+  contextTypes?: string
+  promptTypes?: string
+  responseType?: string
+  languageId?: string
+  apiType?: string
+  headerRequestId?: string
+  modelCallId?: string
+}
+
+/** Send panel.request event (fire-and-forget). */
+export function trackPanelRequest(opts: TrackPanelRequestOptions): void {
+  trackEvent(EVENT_PANEL_REQUEST, {
+    command: opts.command ?? "",
+    contextTypes: opts.contextTypes ?? "",
+    promptTypes: opts.promptTypes ?? "",
+    responseType: opts.responseType ?? "",
+    languageId: opts.languageId ?? "",
+    apiType: opts.apiType ?? "chat_completions",
+    headerRequestId: opts.headerRequestId ?? "",
+    ...(opts.modelCallId !== undefined ?
+      { modelCallId: opts.modelCallId }
+    : {}),
+  })
+}
+
+/** Options for tracking a ghostText.shown event. */
+export interface TrackGhostTextShownOptions {
+  headerRequestId?: string
+  copilot_trackingId?: string
+  clientCompletionId?: string
+  reason?: string
+  choiceIndex?: number
+  sku?: string
+}
+
+/** Send ghostText.shown event (fire-and-forget). */
+export function trackGhostTextShown(opts: TrackGhostTextShownOptions): void {
+  trackEvent(EVENT_GHOST_TEXT_SHOWN, {
+    headerRequestId: opts.headerRequestId ?? "",
+    copilot_trackingId: opts.copilot_trackingId ?? "",
+    clientCompletionId: opts.clientCompletionId ?? "",
+    reason: opts.reason ?? "",
+    choiceIndex: opts.choiceIndex !== undefined ? String(opts.choiceIndex) : "",
+    ...(opts.sku !== undefined ? { sku: opts.sku } : {}),
+  })
 }

@@ -12,6 +12,7 @@ import {
   initTelemetry,
   trackAuthNewToken,
 } from "~/services/telemetry/telemetry"
+import { parseSku } from "~/services/telemetry/types"
 
 import { HTTPError } from "./error"
 import { state } from "./state"
@@ -47,8 +48,12 @@ export const setupCopilotToken = async () => {
     return
   }
 
-  const { token, refresh_in, endpoints } = await getCopilotToken()
+  const { token, refresh_in, endpoints, organization_list, enterprise_list } =
+    await getCopilotToken()
   state.copilotToken = token
+  state.sku = parseSku(token)
+  state.organizationList = organization_list
+  state.enterpriseList = enterprise_list
   initTelemetry(token, endpoints?.telemetry)
   trackAuthNewToken()
 

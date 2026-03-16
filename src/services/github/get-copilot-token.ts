@@ -34,4 +34,6 @@ interface GetCopilotTokenResponse {
   refresh_in: number
   token: string
   endpoints?: { telemetry?: string; [key: string]: string | undefined }
+  organization_list?: Array<string>
+  enterprise_list?: Array<string>
 }

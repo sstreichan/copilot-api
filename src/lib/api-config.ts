@@ -99,7 +99,7 @@ export const standardHeaders = () => ({
   accept: "application/json",
 })
 
-const COPILOT_VERSION = "0.38.2"
+export const COPILOT_VERSION = "0.38.2"
 const EDITOR_PLUGIN_VERSION = `copilot-chat/${COPILOT_VERSION}`
 const USER_AGENT = `GitHubCopilotChat/${COPILOT_VERSION}`
 

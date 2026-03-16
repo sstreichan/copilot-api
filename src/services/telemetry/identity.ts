@@ -4,11 +4,10 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { homedir, networkInterfaces, platform, arch, release } from "node:os"
 import { join } from "node:path"
 
+import { COPILOT_VERSION } from "~/lib/api-config"
+
 // Stable session ID for the lifetime of this process
 export const SESSION_ID: string = randomUUID()
-
-// Extension version for telemetry (mirrors api-config.ts COPILOT_VERSION)
-export const COPILOT_CHAT_VERSION = "0.37.6"
 
 /**
  * Get machine ID by hashing the first non-internal MAC address (SHA-256 hex).
@@ -81,12 +80,23 @@ export function getDevDeviceId(): string {
 /**
  * Build common telemetry properties shared across all events.
  */
-export function getCommonProperties(
-  machineId: string,
-  sessionId: string,
-  vsCodeVersion: string = "",
-): Record<string, string> {
-  const props = {
+export function getCommonProperties(opts: {
+  machineId: string
+  sessionId: string
+  vsCodeVersion?: string
+  sku?: string
+  organizationList?: Array<string>
+  enterpriseList?: Array<string>
+}): Record<string, string> {
+  const {
+    machineId,
+    sessionId,
+    vsCodeVersion = "",
+    sku,
+    organizationList,
+    enterpriseList,
+  } = opts
+  const props: Record<string, string> = {
     common_vscodemachineid: machineId,
     common_vscodesessionid: sessionId,
     client_machineid: machineId,
@@ -95,10 +105,20 @@ export function getCommonProperties(
     common_platformversion: release(),
     common_arch: arch(),
     common_extname: "copilot-chat",
-    common_extversion: COPILOT_CHAT_VERSION,
+    common_extversion: COPILOT_VERSION,
     common_vscodeversion: vsCodeVersion,
     common_uikind: "desktop",
     common_editorsession_id: sessionId,
+  }
+
+  if (sku) {
+    props.sku = sku
+  }
+  if (organizationList && organizationList.length > 0) {
+    props.organizations_list = organizationList.join(",")
+  }
+  if (enterpriseList && enterpriseList.length > 0) {
+    props.enterprise_list = enterpriseList.join(",")
   }
 
   return props
