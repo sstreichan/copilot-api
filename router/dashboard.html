@@ -131,6 +131,30 @@
     }
     .btn:hover { background: rgba(248,81,73,.18); border-color: rgba(248,81,73,.55); }
     .btn:disabled { opacity: .6; cursor: wait; }
+    tr:hover { background: rgba(255,255,255,.02); }
+    .total-badge {
+      display: inline-block;
+      padding: 2px 8px;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--accent);
+      background: rgba(56,139,253,.12);
+      border: 1px solid rgba(56,139,253,.35);
+      border-radius: 12px;
+      margin-bottom: 6px;
+    }
+    .model-detail {
+      font-size: 11px;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+    .time-recent { color: var(--good); }
+    .time-normal { color: var(--muted); }
+    .time-stale { color: var(--warn); }
+    .last-active {
+      white-space: nowrap;
+      font-variant-numeric: tabular-nums;
+    }
   </style>
 </head>
 <body>
@@ -154,7 +178,7 @@
         <div class="scroll">
           <table>
             <thead>
-              <tr><th>Name</th><th>Port</th><th>Status</th><th>Model Requests</th></tr>
+              <tr><th>Name</th><th>Port</th><th>Status</th><th>Model Requests</th><th>Last Active</th></tr>
             </thead>
             <tbody id="instances-body"></tbody>
           </table>
@@ -210,21 +234,61 @@
       byId('instance-count').textContent = String(instances.length)
       const body = byId('instances-body')
       if (!instances.length) {
-        body.innerHTML = '<tr><td colspan="4" class="empty">No instances discovered.</td></tr>'
+        body.innerHTML = '<tr><td colspan="5" class="empty">No instances discovered.</td></tr>'
         return
       }
+      const formatRelativeTime = (value) => {
+        if (!value) return { label: '-', className: 'muted', title: '' }
+        const date = new Date(value)
+        const ms = date.getTime()
+        if (Number.isNaN(ms)) return { label: '-', className: 'muted', title: '' }
+
+        const diffSec = Math.max(0, Math.floor((Date.now() - ms) / 1000))
+        if (diffSec < 60) {
+          return { label: `${diffSec}s ago`, className: 'time-recent', title: date.toISOString() }
+        }
+
+        const diffMin = Math.floor(diffSec / 60)
+        if (diffMin < 60) {
+          return {
+            label: `${diffMin}m ago`,
+            className: diffMin < 5 ? 'time-recent' : 'time-normal',
+            title: date.toISOString(),
+          }
+        }
+
+        const diffHour = Math.floor(diffMin / 60)
+        if (diffHour < 24) {
+          return {
+            label: `${diffHour}h ago`,
+            className: diffHour < 2 ? 'time-normal' : 'time-stale',
+            title: date.toISOString(),
+          }
+        }
+
+        const diffDay = Math.floor(diffHour / 24)
+        return { label: `${diffDay}d ago`, className: 'time-stale', title: date.toISOString() }
+      }
+
       body.innerHTML = instances.map((item) => {
         const counts = item.requestCounts || {}
         const entries = Object.entries(counts).sort(([, a], [, b]) => b - a)
-        const countsHtml = entries.length
-          ? entries.map(([model, count]) => `<div>${model}: <strong>${count}</strong></div>`).join('')
-          : '<span class="muted">none</span>'
+        const total = entries.reduce((sum, [, count]) => sum + count, 0)
+        const countsHtml = `
+          <div class="total-badge">Total: ${total}</div>
+          ${entries.length
+            ? entries.map(([model, count]) => `<div class="model-detail">${model}: <strong>${count}</strong></div>`).join('')
+            : '<span class="muted">none</span>'
+          }
+        `.trim()
+        const last = formatRelativeTime(item.lastActive)
         return `
           <tr>
             <td><strong>${item.name}</strong></td>
             <td><code>${item.port}</code></td>
             <td><span class="tag ${item.healthy ? 'up' : 'down'}">${item.healthy ? 'up' : 'down'}</span></td>
             <td>${countsHtml}</td>
+            <td class="last-active"><span class="${last.className}" title="${last.title}">${last.label}</span></td>
           </tr>
         `
       }).join('')

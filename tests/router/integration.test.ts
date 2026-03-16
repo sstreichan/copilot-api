@@ -73,6 +73,7 @@ describe("router handlers", () => {
           models: ["gpt-4.1"],
           healthy: true,
           requestCounts: {},
+          lastActive: null,
         },
         {
           name: "beta",
@@ -80,6 +81,7 @@ describe("router handlers", () => {
           models: ["gpt-4.1", "claude-3.7"],
           healthy: true,
           requestCounts: {},
+          lastActive: null,
         },
       ],
       sessionBindings: {},

@@ -140,6 +140,7 @@ describe("router state helpers", () => {
       models: ["gpt-4.1"],
       healthy: true,
       requestCounts: { "gpt-4.1": 201 },
+      lastActive: "t-200",
     })
   })
 

@@ -39,6 +39,7 @@ export interface StatusPayload {
     models: Array<string>
     healthy: boolean
     requestCounts: Record<string, number>
+    lastActive: string | null
   }>
   sessionBindings: Record<string, number>
   modelToPorts: Record<string, Array<number>>
@@ -54,6 +55,7 @@ export interface StickyRouterState {
   routeHistory: Array<RouteRecord>
   sseClients: Set<ReadableStreamDefaultController<Uint8Array>>
   portModelCounts: Map<number, Map<string, number>>
+  portLastActive: Map<number, string>
   modelDetails: Map<string, Record<string, unknown>>
 }
 
@@ -99,6 +101,7 @@ export function createStickyRouterState(
     routeHistory: [],
     sseClients: new Set<ReadableStreamDefaultController<Uint8Array>>(),
     portModelCounts: new Map<number, Map<string, number>>(),
+    portLastActive: new Map<number, string>(),
     modelDetails: new Map<string, Record<string, unknown>>(),
   }
 }
@@ -115,6 +118,7 @@ export function getStatusPayload(state: StickyRouterState): StatusPayload {
         models: state.portToModels.get(instance.port) || [],
         healthy: state.portToModels.has(instance.port),
         requestCounts,
+        lastActive: state.portLastActive.get(instance.port) || null,
       }
     }),
     sessionBindings: Object.fromEntries(state.sessionBindings),
@@ -169,6 +173,7 @@ export function recordRoute(
     state.routeHistory.splice(0, state.routeHistory.length - historyLimit)
   }
   incrementCount(state, record.port, record.model)
+  state.portLastActive.set(record.port, record.ts)
   broadcastSse(state, `data: ${JSON.stringify(record)}\n\n`, encoder)
 }
 
