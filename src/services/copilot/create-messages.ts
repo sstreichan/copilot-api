@@ -299,15 +299,6 @@ export const createMessages = async (
 
   const start = Date.now()
   trackRequestSent(payload.model, state.accountType, requestId, modelCallId)
-  trackPanelRequest({
-    headerRequestId: requestId,
-    apiType: "chat_completions",
-    modelCallId,
-  })
-  trackGhostTextShown({
-    headerRequestId: requestId,
-    ...(state.sku !== undefined ? { sku: state.sku } : {}),
-  })
 
   // Resolve model capabilities and build enhanced payload
   const selectedModel = state.models?.data.find((m) => m.id === payload.model)
@@ -362,9 +353,21 @@ export const createMessages = async (
   }
 
   scheduleFeedbackEvents(requestId)
+  const timeSinceIssuedMs = Date.now() - start
+  trackPanelRequest({
+    headerRequestId: requestId,
+    apiType: "messages",
+    modelCallId,
+  })
+  trackGhostTextShown({
+    headerRequestId: requestId,
+    ...(state.sku !== undefined ? { sku: state.sku } : {}),
+    timeSinceIssuedMs,
+    timeSinceDisplayedMs: 0,
+  })
   trackResponseSuccess({
     model: payload.model,
-    durationMs: Date.now() - start,
+    durationMs: timeSinceIssuedMs,
     requestId,
     modelCallId,
   })

@@ -1,9 +1,17 @@
 import consola from "consola"
+import { arch, platform, release } from "node:os"
+import { request } from "undici"
 
+import { COPILOT_VERSION } from "~/lib/api-config"
 import { getConfig } from "~/lib/config"
 import { state } from "~/lib/state"
 
-import { getCommonProperties, getMachineId, SESSION_ID } from "./identity"
+import {
+  getCommonProperties,
+  getDevDeviceId,
+  getMachineId,
+  SESSION_ID,
+} from "./identity"
 import {
   nextUiKind,
   nextLanguageId,
@@ -22,6 +30,9 @@ import {
   EVENT_REQUEST_SENT,
   EVENT_RESPONSE_ERROR,
   EVENT_RESPONSE_SUCCESS,
+  MSFT_TELEMETRY_API_KEY,
+  MSFT_TELEMETRY_ENDPOINT,
+  type MsftTelemetryEnvelope,
   TELEMETRY_ENVELOPE_NAME,
   TELEMETRY_IKEY,
   TELEMETRY_SDK_VERSION,
@@ -35,57 +46,63 @@ let _tid: string | null = null
 let _endpoint: string = DEFAULT_TELEMETRY_ENDPOINT
 let _sku: string = ""
 
-function parseItemsAccepted(text: string | null): number | null {
-  if (!text) {
-    return null
-  }
-
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(text)
-  } catch {
-    return null
-  }
-
-  if (typeof parsed !== "object" || parsed === null) {
-    return null
-  }
-
-  const accepted = (parsed as { itemsAccepted?: unknown }).itemsAccepted
-  return typeof accepted === "number" ? accepted : null
-}
-
-/**
- * Initialize telemetry with Copilot token and optional endpoint.
- * Called from token.ts after token refresh.
- */
-export function initTelemetry(copilotToken: string, endpoint?: string): void {
-  _tid = parseTid(copilotToken)
-  _sku = parseSku(copilotToken)
-  const base = endpoint ?? DEFAULT_TELEMETRY_ENDPOINT
-  _endpoint = base.endsWith("/telemetry") ? base : `${base}/telemetry`
-}
-
-/**
- * Send a telemetry event (fire-and-forget).
- * No-op if config.telemetry !== true (default: disabled).
- */
-export function trackEvent(
+function createMsftEnvelope(
   eventName: string,
   properties: Record<string, string>,
   measurements?: Record<string, number>,
-): void {
-  if (getConfig().telemetry !== true) {
-    return
-  }
-
-  // Sample at 30% to reduce telemetry volume
-  if (Math.random() > 0.3) {
-    return
-  }
-
+): MsftTelemetryEnvelope {
   const machineId = getMachineId()
-  const envelope: TelemetryEnvelope = {
+
+  return {
+    name: eventName,
+    time: new Date(Date.now() - 10).toISOString(),
+    ver: "4.0",
+    iKey: `o:${MSFT_TELEMETRY_API_KEY.split("-")[0]}`,
+    ext: {
+      sdk: { ver: "1DS-Web-JS-4.3.10" },
+      web: { consentDetails: '{"GPC_DataSharingOptIn":false}' },
+    },
+    data: {
+      baseData: {
+        name: eventName,
+        properties: {
+          ...properties,
+          "abexp.assignmentcontext": "",
+          "common.os": platform(),
+          "common.nodeArch": arch(),
+          "common.platformversion": release(),
+          "common.telemetryclientversion": "1.5.0",
+          "common.extname": "copilot-chat",
+          "common.extversion": COPILOT_VERSION,
+          "common.vscodemachineid": machineId,
+          "common.vscodesessionid": SESSION_ID,
+          "common.vscodecommithash": "",
+          "common.sqmid": "",
+          "common.devDeviceId": getDevDeviceId(),
+          "common.vscodeversion": state.vsCodeVersion ?? "",
+          "common.vscodereleasedate": "unknown",
+          "common.isnewappinstall": false,
+          "common.product": "desktop",
+          "common.uikind": "desktop",
+          "common.remotename": "none",
+          version: "PostChannel=4.3.10",
+          ...(_tid ? { "common.tid": _tid } : {}),
+          ...(_sku ? { "common.sku": _sku } : {}),
+        },
+        ...(measurements ? { measurements } : {}),
+      },
+    },
+  }
+}
+
+function createEnvelope(
+  eventName: string,
+  properties: Record<string, string>,
+  measurements?: Record<string, number>,
+): TelemetryEnvelope {
+  const machineId = getMachineId()
+
+  return {
     ver: 1,
     name: TELEMETRY_ENVELOPE_NAME,
     time: new Date().toISOString(),
@@ -117,9 +134,14 @@ export function trackEvent(
       },
     },
   }
+}
 
-  // Fire-and-forget: never await, never throw
-  fetch(_endpoint, {
+function sendTelemetryEnvelope(
+  endpoint: string,
+  eventName: string,
+  envelope: TelemetryEnvelope,
+): void {
+  fetch(endpoint, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify([envelope]),
@@ -153,6 +175,148 @@ export function trackEvent(
         err instanceof Error ? err.message : String(err),
       )
     })
+}
+
+function parseItemsAccepted(text: string | null): number | null {
+  if (!text) {
+    return null
+  }
+
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(text)
+  } catch {
+    return null
+  }
+
+  if (typeof parsed !== "object" || parsed === null) {
+    return null
+  }
+
+  const accepted = (parsed as { itemsAccepted?: unknown }).itemsAccepted
+  return typeof accepted === "number" ? accepted : null
+}
+
+function parseMsftAccepted(text: string | null): number | null {
+  if (!text) {
+    return null
+  }
+
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(text)
+  } catch {
+    return null
+  }
+
+  if (typeof parsed !== "object" || parsed === null) {
+    return null
+  }
+
+  const accepted = (parsed as { acc?: unknown }).acc
+  return typeof accepted === "number" ? accepted : null
+}
+
+async function sendMsftTelemetryEnvelope(
+  eventName: string,
+  envelope: MsftTelemetryEnvelope,
+): Promise<void> {
+  const { statusCode, body } = await request(MSFT_TELEMETRY_ENDPOINT, {
+    method: "POST",
+    headers: {
+      "Client-Id": "NO_AUTH",
+      "client-version": "1DS-Web-JS-4.3.10",
+      apikey: MSFT_TELEMETRY_API_KEY,
+      "upload-time": String(Date.now()),
+      "time-delta-to-apply-millis": "use-collector-delta",
+      "cache-control": "no-cache, no-store",
+      "content-type": "application/x-json-stream",
+      "User-Agent": `GitHubCopilotChat/${COPILOT_VERSION}`,
+    },
+    body: JSON.stringify(envelope),
+    headersTimeout: 5000,
+    bodyTimeout: 5000,
+  })
+  const text = await body.text().catch(() => null)
+  const accepted = parseMsftAccepted(text)
+
+  if (statusCode < 200 || statusCode >= 300) {
+    consola.warn(
+      "[telemetry] non-200 response:",
+      eventName,
+      `status=${statusCode}`,
+    )
+    return
+  }
+  if (accepted === null) {
+    consola.warn(
+      "[telemetry] missing itemsAccepted:",
+      eventName,
+      `body=${text}`,
+    )
+  } else if (accepted <= 0) {
+    consola.warn("[telemetry] rejected:", eventName, `accepted=${accepted}`)
+  }
+}
+
+/**
+ * Initialize telemetry with Copilot token and optional endpoint.
+ * Called from token.ts after token refresh.
+ */
+export function initTelemetry(copilotToken: string, endpoint?: string): void {
+  _tid = parseTid(copilotToken)
+  _sku = parseSku(copilotToken)
+  const base = endpoint ?? DEFAULT_TELEMETRY_ENDPOINT
+  _endpoint = base.endsWith("/telemetry") ? base : `${base}/telemetry`
+}
+
+/**
+ * Send a telemetry event (fire-and-forget).
+ * No-op if config.telemetry !== true (default: disabled).
+ */
+export function trackEvent(
+  eventName: string,
+  properties: Record<string, string>,
+  measurements?: Record<string, number>,
+): void {
+  if (getConfig().telemetry !== true) {
+    return
+  }
+
+  // Sample at 30% to reduce telemetry volume
+  if (Math.random() > 0.3) {
+    return
+  }
+
+  sendTelemetryEnvelope(
+    _endpoint,
+    eventName,
+    createEnvelope(eventName, properties, measurements),
+  )
+}
+
+function trackMsftEvent(
+  eventName: string,
+  properties: Record<string, string>,
+  measurements?: Record<string, number>,
+): void {
+  if (getConfig().telemetry !== true) {
+    return
+  }
+
+  if (Math.random() > 0.3) {
+    return
+  }
+
+  void sendMsftTelemetryEnvelope(
+    eventName,
+    createMsftEnvelope(eventName, properties, measurements),
+  ).catch((err: unknown) => {
+    consola.warn(
+      "[telemetry] send failed",
+      err instanceof Error ? err.message : String(err),
+    )
+  })
 }
 
 // --- Convenience wrappers ---
@@ -330,18 +494,24 @@ export interface TrackPanelRequestOptions {
 
 /** Send panel.request event (fire-and-forget). */
 export function trackPanelRequest(opts: TrackPanelRequestOptions): void {
-  trackEvent(EVENT_PANEL_REQUEST, {
-    command: opts.command ?? "",
-    contextTypes: opts.contextTypes ?? "",
-    promptTypes: opts.promptTypes ?? "",
-    responseType: opts.responseType ?? "",
-    languageId: opts.languageId ?? "",
-    apiType: opts.apiType ?? "chat_completions",
-    headerRequestId: opts.headerRequestId ?? "",
-    ...(opts.modelCallId !== undefined ?
-      { modelCallId: opts.modelCallId }
-    : {}),
-  })
+  trackMsftEvent(
+    EVENT_PANEL_REQUEST,
+    {
+      command: opts.command ?? "",
+      contextTypes: opts.contextTypes ?? "",
+      promptTypes: opts.promptTypes ?? "",
+      responseType: opts.responseType ?? "",
+      languageId: opts.languageId ?? "",
+      apiType: opts.apiType ?? "chat_completions",
+      headerRequestId: opts.headerRequestId ?? "",
+      ...(opts.modelCallId !== undefined ?
+        { modelCallId: opts.modelCallId }
+      : {}),
+    },
+    {
+      current_time: Math.floor(Date.now() / 1000),
+    },
+  )
 }
 
 /** Options for tracking a ghostText.shown event. */
@@ -352,16 +522,28 @@ export interface TrackGhostTextShownOptions {
   reason?: string
   choiceIndex?: number
   sku?: string
+  timeSinceIssuedMs?: number
+  timeSinceDisplayedMs?: number
+  currentTime?: number
 }
 
 /** Send ghostText.shown event (fire-and-forget). */
 export function trackGhostTextShown(opts: TrackGhostTextShownOptions): void {
-  trackEvent(EVENT_GHOST_TEXT_SHOWN, {
-    headerRequestId: opts.headerRequestId ?? "",
-    copilot_trackingId: opts.copilot_trackingId ?? "",
-    clientCompletionId: opts.clientCompletionId ?? "",
-    reason: opts.reason ?? "",
-    choiceIndex: opts.choiceIndex !== undefined ? String(opts.choiceIndex) : "",
-    ...(opts.sku !== undefined ? { sku: opts.sku } : {}),
-  })
+  trackEvent(
+    EVENT_GHOST_TEXT_SHOWN,
+    {
+      headerRequestId: opts.headerRequestId ?? "",
+      copilot_trackingId: opts.copilot_trackingId ?? "",
+      clientCompletionId: opts.clientCompletionId ?? "",
+      reason: opts.reason ?? "",
+      choiceIndex:
+        opts.choiceIndex !== undefined ? String(opts.choiceIndex) : "",
+      ...(opts.sku !== undefined ? { sku: opts.sku } : {}),
+    },
+    {
+      timeSinceIssuedMs: opts.timeSinceIssuedMs ?? 0,
+      timeSinceDisplayedMs: opts.timeSinceDisplayedMs ?? 0,
+      current_time: opts.currentTime ?? Math.floor(Date.now() / 1000),
+    },
+  )
 }

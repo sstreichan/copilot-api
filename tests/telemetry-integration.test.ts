@@ -1,5 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test"
 
+const requestMock = mock(() =>
+  Promise.resolve({
+    statusCode: 200,
+    body: {
+      text: () => Promise.resolve('{"acc":1}'),
+    },
+  }),
+)
+
+void mock.module("undici", () => ({
+  request: requestMock,
+}))
+
 let mockTelemetryEnabled: boolean | undefined = false
 
 // Complete config shape to prevent cross-test contamination (see telemetry.test.ts)
@@ -58,8 +71,17 @@ import {
   createChatCompletions,
   type ChatCompletionsPayload,
 } from "~/services/copilot/create-chat-completions"
-import { initTelemetry, trackEvent } from "~/services/telemetry/telemetry"
-import { DEFAULT_TELEMETRY_ENDPOINT } from "~/services/telemetry/types"
+import {
+  initTelemetry,
+  trackEvent,
+  trackGhostTextShown,
+  trackPanelRequest,
+} from "~/services/telemetry/telemetry"
+import {
+  DEFAULT_TELEMETRY_ENDPOINT,
+  MSFT_TELEMETRY_API_KEY,
+  MSFT_TELEMETRY_ENDPOINT,
+} from "~/services/telemetry/types"
 
 type FetchCall = {
   url: string
@@ -99,6 +121,7 @@ function installFetchMock(
   const mockFn = mock((input: string | URL | Request, init?: RequestInit) => {
     const url = toUrl(input)
     fetchCalls.push({ url, options: init })
+
     return handler(url, init)
   })
 
@@ -107,6 +130,16 @@ function installFetchMock(
 
 function telemetryCalls(): Array<FetchCall> {
   return fetchCalls.filter((x) => x.url === DEFAULT_TELEMETRY_ENDPOINT)
+}
+
+function msftTrackCalls(): Array<FetchCall> {
+  return requestMock.mock.calls.reduce<Array<FetchCall>>((acc, call) => {
+    const [url, options] = call as Array<unknown>
+    if (typeof url === "string") {
+      acc.push({ url, options: options as RequestInit })
+    }
+    return acc
+  }, [])
 }
 
 function parseFirstTelemetryEnvelope(): Record<string, unknown> {
@@ -131,6 +164,18 @@ async function flushMicrotasks(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 20))
 }
 
+function parseFirstBody(url: string): unknown {
+  const call =
+    url === MSFT_TELEMETRY_ENDPOINT ?
+      msftTrackCalls().at(0)
+    : fetchCalls.find((x) => x.url === url)
+  expect(call).toBeDefined()
+
+  const body = call?.options?.body
+  expect(typeof body).toBe("string")
+  return JSON.parse((body ?? "null") as string)
+}
+
 function buildPayload(): ChatCompletionsPayload {
   return {
     model: "gpt-test",
@@ -144,6 +189,7 @@ beforeEach(() => {
   originalRandom = Math.random
   Math.random = () => 0.1 // Always pass the 30% sampling gate in trackEvent
   mockTelemetryEnabled = false
+  requestMock.mockClear()
 
   state.copilotToken = "test-copilot-token"
   state.githubToken = "test-github-token"
@@ -158,7 +204,7 @@ afterEach(() => {
   mock.restore()
 })
 
-describe("telemetry integration with create-chat-completions", () => {
+describe("telemetry integration config gating", () => {
   it("triggers telemetry fetch when config telemetry=true", async () => {
     mockTelemetryEnabled = true
     installFetchMock((url) => {
@@ -224,7 +270,9 @@ describe("telemetry integration with create-chat-completions", () => {
     expect(result).toMatchObject({ id: "chat-ok" })
     expect(telemetryCalls().length).toBe(0)
   })
+})
 
+describe("telemetry integration failure tolerance", () => {
   it("does not block main request when telemetry fetch throws (fire-and-forget)", async () => {
     mockTelemetryEnabled = true
     installFetchMock((url) => {
@@ -270,7 +318,9 @@ describe("telemetry integration with create-chat-completions", () => {
       true,
     )
   })
+})
 
+describe("telemetry integration token-derived tags", () => {
   it("populates ai.user.id tag when tid is parsed from token", async () => {
     mockTelemetryEnabled = true
     installFetchMock(() =>
@@ -305,5 +355,99 @@ describe("telemetry integration with create-chat-completions", () => {
     const envelope = parseFirstTelemetryEnvelope()
     const tags = envelope.tags as Record<string, string>
     expect(tags["ai.user.id"]).toBe("")
+  })
+})
+
+describe("telemetry integration event-specific routing", () => {
+  it("routes panel.request to the MSFT telemetry channel", async () => {
+    mockTelemetryEnabled = true
+    installFetchMock((url) => {
+      if (url.includes("/chat/completions")) {
+        return Promise.resolve(jsonResponse(chatResponse))
+      }
+      if (url === DEFAULT_TELEMETRY_ENDPOINT) {
+        return Promise.resolve(
+          jsonResponse({ itemsReceived: 1, itemsAccepted: 1 }),
+        )
+      }
+      return Promise.resolve(new Response(null, { status: 404 }))
+    })
+
+    initTelemetry("tid=user123;exp=9999999999;sku=copilot_for_business")
+    trackPanelRequest({ headerRequestId: "req-panel-1" })
+    await flushMicrotasks()
+
+    expect(msftTrackCalls().length).toBe(1)
+    expect(telemetryCalls().length).toBe(0)
+
+    const payload = parseFirstBody(MSFT_TELEMETRY_ENDPOINT)
+    const first = payload as Record<string, unknown>
+    expect(first.name).toBeDefined()
+    const data = first.data as Record<string, unknown>
+    const baseData = data.baseData as Record<string, unknown>
+    expect(baseData.name).toBe("panel.request")
+    const call = requestMock.mock.calls[0] as Array<unknown> | undefined
+    if (!call) {
+      throw new TypeError("request call missing")
+    }
+    const requestUrl = call[0]
+    const options = call[1]
+    if (typeof requestUrl !== "string") {
+      throw new TypeError("request url missing")
+    }
+    if (typeof options !== "object" || options === null) {
+      throw new TypeError("request options missing")
+    }
+    expect(requestUrl).toBe(MSFT_TELEMETRY_ENDPOINT)
+    expect(
+      (options as { headers: Record<string, string> }).headers.apikey,
+    ).toBe(MSFT_TELEMETRY_API_KEY)
+  })
+
+  it("sends ghostText.shown to GH telemetry with vendor-required fields", async () => {
+    mockTelemetryEnabled = true
+    state.organizationList = ["org-a", "org-b"]
+    state.enterpriseList = ["ent-a"]
+    installFetchMock((url) => {
+      if (url === DEFAULT_TELEMETRY_ENDPOINT) {
+        return Promise.resolve(
+          jsonResponse({ itemsReceived: 1, itemsAccepted: 1 }),
+        )
+      }
+      return Promise.resolve(new Response(null, { status: 404 }))
+    })
+
+    initTelemetry("tid=user123;exp=9999999999;sku=copilot_for_business")
+    trackGhostTextShown({
+      headerRequestId: "req-ghost-1",
+      copilot_trackingId: "track-1",
+      clientCompletionId: "completion-1",
+      reason: "network",
+      choiceIndex: 0,
+      sku: "copilot_for_business",
+    })
+    await flushMicrotasks()
+
+    expect(telemetryCalls().length).toBe(1)
+    const envelope = parseFirstTelemetryEnvelope()
+    const data = envelope.data as Record<string, unknown>
+    const baseData = data.baseData as Record<string, unknown>
+    expect(baseData.name).toBe("copilot-chat/ghostText.shown")
+
+    const properties = baseData.properties as Record<string, string>
+    expect(properties.copilot_trackingId).toBe("track-1")
+    expect(properties.clientCompletionId).toBe("completion-1")
+    expect(properties.organizations_list).toBe("org-a,org-b")
+    expect(properties.enterprise_list).toBe("ent-a")
+    expect(properties.client_sessionid).toBeDefined()
+    expect(properties.editor_version).toBeDefined()
+    expect(properties.editor_plugin_version).toBeDefined()
+    expect(properties.copilot_version).toBeDefined()
+    expect(properties.unique_id).toBeDefined()
+
+    const measurements = baseData.measurements as Record<string, number>
+    expect(typeof measurements.timeSinceIssuedMs).toBe("number")
+    expect(typeof measurements.timeSinceDisplayedMs).toBe("number")
+    expect(typeof measurements.current_time).toBe("number")
   })
 })

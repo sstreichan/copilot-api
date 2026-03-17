@@ -100,6 +100,7 @@ export function getCommonProperties(opts: {
     common_vscodemachineid: machineId,
     common_vscodesessionid: sessionId,
     client_machineid: machineId,
+    client_sessionid: sessionId,
     client_deviceid: getDevDeviceId(),
     common_os: platform(),
     common_platformversion: release(),
@@ -109,6 +110,10 @@ export function getCommonProperties(opts: {
     common_vscodeversion: vsCodeVersion,
     common_uikind: "desktop",
     common_editorsession_id: sessionId,
+    editor_version: `vscode/${vsCodeVersion}`,
+    editor_plugin_version: `copilot-chat/${COPILOT_VERSION}`,
+    copilot_version: `copilot/${COPILOT_VERSION}`,
+    unique_id: randomUUID(),
   }
 
   if (sku) {

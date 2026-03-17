@@ -1,5 +1,18 @@
 import { describe, it, expect, beforeEach, afterEach, mock } from "bun:test"
 
+const requestMock = mock(() =>
+  Promise.resolve({
+    statusCode: 200,
+    body: {
+      text: () => Promise.resolve('{"acc":1}'),
+    },
+  }),
+)
+
+void mock.module("undici", () => ({
+  request: requestMock,
+}))
+
 // --- Mocks must be set up before importing the module under test ---
 
 // Mock config: default telemetry disabled.
@@ -70,11 +83,14 @@ import {
   trackAuthNewToken,
   trackEditFeedback,
   trackEditHunkAction,
+  trackPanelRequest,
   scheduleFeedbackEvents,
 } from "../src/services/telemetry/telemetry"
 import {
   TELEMETRY_IKEY,
   TELEMETRY_ENVELOPE_NAME,
+  MSFT_TELEMETRY_API_KEY,
+  MSFT_TELEMETRY_ENDPOINT,
   TELEMETRY_SDK_VERSION,
 } from "../src/services/telemetry/types"
 
@@ -92,6 +108,7 @@ beforeEach(() => {
   originalRandom = Math.random
   Math.random = () => 0.1 // Always pass the 30% sampling gate in trackEvent
   mockTelemetryEnabled = false
+  requestMock.mockClear()
 })
 
 afterEach(() => {
@@ -396,6 +413,43 @@ describe("telemetry: request/response wrappers", () => {
 
     const env = getFirstEnvelopeFromCall()
     expect(env.data.baseData.name).toBe("copilot-chat/auth.new_token")
+  })
+
+  it("trackPanelRequest sends OneCollector payload with aria api key", async () => {
+    mockTelemetryEnabled = true
+
+    trackPanelRequest({ headerRequestId: "req-panel-001" })
+    await flushMicrotasks()
+
+    expect(requestMock).toHaveBeenCalledTimes(1)
+    const call = requestMock.mock.calls[0] as Array<unknown> | undefined
+    if (!call) {
+      throw new TypeError("request call missing")
+    }
+    const url = call[0]
+    const options = call[1]
+    if (typeof url !== "string") {
+      throw new TypeError("request url missing")
+    }
+    if (typeof options !== "object" || options === null) {
+      throw new TypeError("request options missing")
+    }
+    expect(url).toBe(MSFT_TELEMETRY_ENDPOINT)
+    expect(
+      (options as { headers: Record<string, string> }).headers.apikey,
+    ).toBe(MSFT_TELEMETRY_API_KEY)
+
+    const payload = JSON.parse((options as { body: string }).body) as {
+      name: string
+      iKey: string
+      data: { baseData: { name: string; properties: Record<string, string> } }
+    }
+    expect(payload.name).toBe("panel.request")
+    expect(payload.iKey.startsWith("o:")).toBe(true)
+    expect(payload.data.baseData.name).toBe("panel.request")
+    expect(payload.data.baseData.properties.headerRequestId).toBe(
+      "req-panel-001",
+    )
   })
 })
 

@@ -26,24 +26,23 @@ beforeEach(() => {
   state.forceAgent = false
   state.models = undefined
   clearSmartAgentCache() // Clear cache between tests
-  fetchMock = mock(
-    (_url: string, opts: { headers: Record<string, string> }) => {
-      return {
-        ok: true,
-        status: 200,
-        json: () => ({
-          id: "msg-123",
-          type: "message",
-          role: "assistant",
-          content: [{ type: "text", text: "Hello" }],
-          model: "claude-sonnet-4-20250514",
-          stop_reason: "end_turn",
-          usage: { input_tokens: 10, output_tokens: 5 },
-        }),
-        body: new ReadableStream(),
-        headers: opts.headers,
-      }
-    },
+  fetchMock = mock((_url: string, opts: { headers: Record<string, string> }) =>
+    Promise.resolve({
+      ok: true,
+      status: 200,
+      json: () => ({
+        id: "msg-123",
+        type: "message",
+        role: "assistant",
+        content: [{ type: "text", text: "Hello" }],
+        model: "claude-sonnet-4-20250514",
+        stop_reason: "end_turn",
+        usage: { input_tokens: 10, output_tokens: 5 },
+      }),
+      text: () => Promise.resolve('{"itemsReceived":1,"itemsAccepted":1}'),
+      body: new ReadableStream(),
+      headers: opts.headers,
+    }),
   )
   // @ts-expect-error - Mock fetch doesn't implement all fetch properties
   ;(globalThis as unknown as { fetch: typeof fetch }).fetch = fetchMock

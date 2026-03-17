@@ -23,45 +23,54 @@ let capturedModelCallId: string | undefined
 
 // Helper: create non-stream fetch mock
 const createFetchMock = () =>
-  mock((_url: string, opts: { headers: Record<string, string> }) => ({
-    ok: true,
-    json: () =>
-      Promise.resolve({
-        id: "resp-123",
-        output: [
-          {
-            type: "message",
-            role: "assistant",
-            content: [{ type: "output_text", text: "ok" }],
-          },
-        ],
-        usage: { input_tokens: 10, output_tokens: 5 },
-        incomplete_details: null,
-        error: null,
-      }),
-    headers: opts.headers,
-  }))
+  mock((_url: string, opts: { headers: Record<string, string> }) =>
+    Promise.resolve({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          id: "resp-123",
+          output: [
+            {
+              type: "message",
+              role: "assistant",
+              content: [{ type: "output_text", text: "ok" }],
+            },
+          ],
+          usage: { input_tokens: 10, output_tokens: 5 },
+          incomplete_details: null,
+          error: null,
+        }),
+      text: () => Promise.resolve('{"itemsReceived":1,"itemsAccepted":1}'),
+      headers: opts.headers,
+    }),
+  )
 
 // Helper: create stream fetch mock
 const createStreamFetchMock = () =>
-  mock((_url: string, opts: { headers: Record<string, string> }) => ({
-    ok: true,
-    body: new ReadableStream(),
-    headers: opts.headers,
-    [Symbol.asyncIterator]: function* () {},
-  }))
+  mock((_url: string, opts: { headers: Record<string, string> }) =>
+    Promise.resolve({
+      ok: true,
+      text: () => Promise.resolve('{"itemsReceived":1,"itemsAccepted":1}'),
+      body: new ReadableStream(),
+      headers: opts.headers,
+      [Symbol.asyncIterator]: function* () {},
+    }),
+  )
 
 // Helper: create error fetch mock
 const createErrorFetchMock = (status: number) =>
-  mock(() => ({
-    ok: false,
-    status,
-    json: () => Promise.resolve({ error: "upstream error" }),
-    headers: {},
-    clone: function () {
-      return this
-    },
-  }))
+  mock(() =>
+    Promise.resolve({
+      ok: false,
+      status,
+      json: () => Promise.resolve({ error: "upstream error" }),
+      text: () => Promise.resolve('{"itemsReceived":0,"itemsAccepted":0}'),
+      headers: {},
+      clone: function () {
+        return this
+      },
+    }),
+  )
 
 let fetchMock: ReturnType<typeof createFetchMock>
 
@@ -87,6 +96,8 @@ beforeEach(() => {
   )
   spyOn(telemetryModule, "trackResponseSuccess").mockImplementation(() => {})
   spyOn(telemetryModule, "trackResponseError").mockImplementation(() => {})
+  spyOn(telemetryModule, "trackPanelRequest").mockImplementation(() => {})
+  spyOn(telemetryModule, "trackGhostTextShown").mockImplementation(() => {})
 })
 
 afterEach(() => {

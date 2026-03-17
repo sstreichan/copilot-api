@@ -396,15 +396,6 @@ export const createResponses = async (
 
   const start = Date.now()
   trackRequestSent(payload.model, state.accountType, requestId, modelCallId)
-  trackPanelRequest({
-    headerRequestId: requestId,
-    apiType: "chat_completions",
-    modelCallId,
-  })
-  trackGhostTextShown({
-    headerRequestId: requestId,
-    ...(state.sku !== undefined ? { sku: state.sku } : {}),
-  })
 
   // service_tier is not supported by github copilot
   payload.service_tier = null
@@ -426,6 +417,19 @@ export const createResponses = async (
     })
     throw new HTTPError("Failed to create responses", response)
   }
+
+  const timeSinceIssuedMs = Date.now() - start
+  trackPanelRequest({
+    headerRequestId: requestId,
+    apiType: "responses",
+    modelCallId,
+  })
+  trackGhostTextShown({
+    headerRequestId: requestId,
+    ...(state.sku !== undefined ? { sku: state.sku } : {}),
+    timeSinceIssuedMs,
+    timeSinceDisplayedMs: 0,
+  })
 
   if (requestId) scheduleFeedbackEvents(requestId)
 

@@ -101,11 +101,31 @@ async function handleOkResponse(
   return result
 }
 
+function trackSuccessUiTelemetry(opts: {
+  requestId?: string
+  modelCallId: string
+  start: number
+}): void {
+  const timeSinceIssuedMs = Date.now() - opts.start
+
+  trackPanelRequest({
+    headerRequestId: opts.requestId,
+    apiType: "chat_completions",
+    modelCallId: opts.modelCallId,
+  })
+  trackGhostTextShown({
+    headerRequestId: opts.requestId,
+    ...(state.sku !== undefined ? { sku: state.sku } : {}),
+    timeSinceIssuedMs,
+    timeSinceDisplayedMs: 0,
+  })
+}
+
 /** Retry the request with reasoning fields stripped after a thinking block error. */
 async function retryWithStrippedReasoningFields(
   payload: ChatCompletionsPayload,
   headers: Record<string, string>,
-  opts: { start: number; requestId?: string },
+  opts: { start: number; requestId?: string; modelCallId: string },
 ) {
   consola.warn(
     "Thinking block error detected, retrying with reasoning fields stripped",
@@ -128,6 +148,12 @@ async function retryWithStrippedReasoningFields(
       retryResponse,
     )
   }
+
+  trackSuccessUiTelemetry({
+    requestId: opts.requestId,
+    modelCallId: opts.modelCallId,
+    start: opts.start,
+  })
   return handleOkResponse(retryResponse, payload, opts)
 }
 
@@ -178,15 +204,6 @@ export const createChatCompletions = async (
 
   const start = Date.now()
   trackRequestSent(payload.model, state.accountType, requestId, modelCallId)
-  trackPanelRequest({
-    headerRequestId: requestId,
-    apiType: "chat_completions",
-    modelCallId,
-  })
-  trackGhostTextShown({
-    headerRequestId: requestId,
-    ...(state.sku !== undefined ? { sku: state.sku } : {}),
-  })
 
   // First attempt: passthrough unchanged
   const response = await fetch(`${copilotBaseUrl(state)}/chat/completions`, {
@@ -196,6 +213,7 @@ export const createChatCompletions = async (
   })
 
   if (response.ok) {
+    trackSuccessUiTelemetry({ requestId, modelCallId, start })
     return handleOkResponse(response, payload, { start, requestId })
   }
 
@@ -209,6 +227,7 @@ export const createChatCompletions = async (
     return retryWithStrippedReasoningFields(payload, headers, {
       start,
       requestId,
+      modelCallId,
     })
   }
 
