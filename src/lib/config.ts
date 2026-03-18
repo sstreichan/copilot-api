@@ -231,6 +231,45 @@ export function getReasoningEffortForModel(
   return config.modelReasoningEfforts?.[model] ?? "high"
 }
 
+export function mapAnthropicEffortToResponses(
+  effort: "low" | "medium" | "high" | "max",
+): "low" | "medium" | "high" | "xhigh" {
+  if (effort === "max") return "xhigh"
+  return effort
+}
+
+export function resolveEffortForLog(
+  requestEffort: string | undefined,
+  model: string,
+): { value: string; source: "request" | "config" } {
+  if (requestEffort) {
+    return { value: requestEffort, source: "request" }
+  }
+
+  return { value: getReasoningEffortForModel(model), source: "config" }
+}
+
+export function resolveAnthropicEffortForLog(
+  requestEffort: string | undefined,
+  model: string,
+): { value: "low" | "medium" | "high" | "max"; source: "request" | "config" } {
+  if (requestEffort) {
+    return {
+      value: requestEffort as "low" | "medium" | "high" | "max",
+      source: "request",
+    }
+  }
+
+  const reasoningEffort = getReasoningEffortForModel(model)
+
+  if (reasoningEffort === "xhigh") return { value: "max", source: "config" }
+  if (reasoningEffort === "none" || reasoningEffort === "minimal") {
+    return { value: "low", source: "config" }
+  }
+
+  return { value: reasoningEffort, source: "config" }
+}
+
 export function shouldCompactUseSmallModel(): boolean {
   const config = getConfig()
   return config.compactUseSmallModel ?? true

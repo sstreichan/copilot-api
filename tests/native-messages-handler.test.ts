@@ -1,11 +1,30 @@
-import { describe, test, expect } from "bun:test"
+import { describe, test, expect, beforeEach, afterEach, spyOn } from "bun:test"
+import consola from "consola"
+import { Hono } from "hono"
 
-import type { AnthropicMessagesPayload } from "../src/routes/messages/anthropic-types"
+import type { AnthropicMessagesPayload } from "~/routes/messages/anthropic-types"
 
+import * as configModule from "~/lib/config"
+import * as rateLimitModule from "~/lib/rate-limit"
+import { state } from "~/lib/state"
 import {
-  isClaudeModel,
   getInitiatorFromPayload,
-} from "../src/routes/messages/handler"
+  handleCompletion,
+  isClaudeModel,
+} from "~/routes/messages/handler"
+import * as createMessagesModule from "~/services/copilot/create-messages"
+
+const getFirstInfoCall = (
+  infoSpy: ReturnType<typeof spyOn<typeof consola, "info">>,
+): string => {
+  const firstArg: unknown = infoSpy.mock.calls.at(0)?.[0]
+
+  if (typeof firstArg !== "string") {
+    throw new TypeError("Expected consola.info to be called with a string")
+  }
+
+  return firstArg
+}
 
 describe("isClaudeModel", () => {
   test("returns true for claude-sonnet models", () => {
@@ -166,5 +185,69 @@ describe("getInitiatorFromPayload", () => {
     }
     // Contains tool_result in array, so should return agent
     expect(getInitiatorFromPayload(payload)).toBe("agent")
+  })
+})
+
+describe("native handler", () => {
+  const originalNative = state.nativeMessages
+  let infoSpy: ReturnType<typeof spyOn<typeof consola, "info">>
+  let createMessagesSpy: ReturnType<
+    typeof spyOn<typeof createMessagesModule, "createMessages">
+  >
+  let rateLimitSpy: ReturnType<
+    typeof spyOn<typeof rateLimitModule, "checkRateLimit">
+  >
+  let effortSpy: ReturnType<
+    typeof spyOn<typeof configModule, "getReasoningEffortForModel">
+  >
+
+  beforeEach(() => {
+    state.nativeMessages = true
+    infoSpy = spyOn(consola, "info").mockImplementation(((
+      ..._args: Parameters<typeof consola.info>
+    ) => {}) as typeof consola.info)
+    createMessagesSpy = spyOn(
+      createMessagesModule,
+      "createMessages",
+    ).mockResolvedValue(
+      new Response(JSON.stringify({ id: "msg-1" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    )
+    rateLimitSpy = spyOn(rateLimitModule, "checkRateLimit").mockResolvedValue()
+    effortSpy = spyOn(
+      configModule,
+      "getReasoningEffortForModel",
+    ).mockReturnValue("xhigh")
+  })
+
+  afterEach(() => {
+    state.nativeMessages = originalNative
+    infoSpy.mockRestore()
+    createMessagesSpy.mockRestore()
+    rateLimitSpy.mockRestore()
+    effortSpy.mockRestore()
+  })
+
+  test("logs anthropic effort mapping for config fallback", async () => {
+    const app = new Hono()
+    app.post("/v1/messages", (c) => handleCompletion(c))
+
+    const res = await app.request("/v1/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "claude-opus-4",
+        max_tokens: 1024,
+        messages: [{ role: "user", content: "hi" }],
+      } satisfies AnthropicMessagesPayload),
+    })
+
+    expect(res.status).toBe(200)
+    expect(createMessagesSpy).toHaveBeenCalled()
+
+    const infoCall = getFirstInfoCall(infoSpy)
+    expect(infoCall).toContain("[effort=max (config)]")
   })
 })

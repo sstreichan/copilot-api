@@ -2,6 +2,7 @@ import { test, expect, mock, spyOn, afterEach, beforeEach } from "bun:test"
 
 import type { AnthropicMessagesPayload } from "../src/routes/messages/anthropic-types"
 
+import * as configModule from "../src/lib/config"
 import { clearSmartAgentCache } from "../src/lib/smart-agent"
 import { state } from "../src/lib/state"
 import { createMessages } from "../src/services/copilot/create-messages"
@@ -249,6 +250,64 @@ test("does not enable adaptive thinking when tool_choice forces tool use", async
 
   expect(parsed.thinking).toBeUndefined()
   expect(parsed.output_config).toBeUndefined()
+})
+
+test("preserves request output_config effort when adaptive thinking enabled", async () => {
+  state.models = {
+    object: "list",
+    data: [
+      {
+        id: "claude-sonnet-4-20250514",
+        name: "Claude Sonnet 4",
+        object: "model",
+        vendor: "anthropic",
+        version: "20250514",
+        preview: false,
+        model_picker_enabled: true,
+        capabilities: {
+          family: "claude",
+          limits: {},
+          object: "model_capabilities",
+          supports: {
+            adaptive_thinking: true,
+          },
+          tokenizer: "claude",
+          type: "chat.completions",
+        },
+        supported_endpoints: ["/v1/messages"],
+      },
+    ],
+  }
+
+  const payload: AnthropicMessagesPayload = {
+    model: "claude-sonnet-4-20250514",
+    max_tokens: 1024,
+    messages: [{ role: "user", content: "hi" }],
+    output_config: { effort: "medium" },
+  }
+
+  await createMessages(payload)
+
+  const body = (fetchMock.mock.calls[0][1] as { body: string }).body
+  const parsed = JSON.parse(body) as AnthropicMessagesPayload
+
+  expect(parsed.output_config?.effort).toBe("medium")
+})
+
+test("native log effort uses anthropic mapping for config fallback", () => {
+  const effortSpy = spyOn(
+    configModule,
+    "getReasoningEffortForModel",
+  ).mockReturnValue("xhigh")
+
+  const result = configModule.resolveAnthropicEffortForLog(
+    undefined,
+    "claude-sonnet-4-20250514",
+  )
+
+  expect(result).toEqual({ value: "max", source: "config" })
+
+  effortSpy.mockRestore()
 })
 
 test("returns raw Response object", async () => {

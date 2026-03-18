@@ -9,6 +9,7 @@ import {
   getSmallModel,
   isMessagesApiEnabled,
   shouldCompactUseSmallModel,
+  resolveAnthropicEffortForLog,
 } from "~/lib/config"
 import {
   colorizeModel,
@@ -212,8 +213,14 @@ const handleWithNativeMessages = async (
   // the backend-supported anthropic-beta values before forwarding.
   const anthropicBeta = c.req.header("anthropic-beta")
 
+  const { value: effortValue, source: effortSource } =
+    resolveAnthropicEffortForLog(
+      anthropicPayload.output_config?.effort,
+      anthropicPayload.model,
+    )
+
   consola.info(
-    `IN ${cm(options.originalModel)} → ${cm(anthropicPayload.model)} (native)`,
+    `IN ${cm(options.originalModel)} → ${cm(anthropicPayload.model)} (native) [effort=${effortValue} (${effortSource})]`,
   )
   logger.debug("Using native Messages API passthrough")
 
@@ -419,8 +426,12 @@ const handleWithResponsesApi = async (
 
   compactInputByLatestCompaction(responsesPayload)
 
+  const effortValue = responsesPayload.reasoning?.effort
+  const effortSource =
+    anthropicPayload.output_config?.effort ? "request" : "config"
+
   consola.info(
-    `IN ${cm(options.originalModel)} \u2192 ${cm(responsesPayload.model)}`,
+    `IN ${cm(options.originalModel)} \u2192 ${cm(responsesPayload.model)} [effort=${effortValue} (${effortSource})]`,
   )
   logger.debug(
     "Translated Responses payload:",

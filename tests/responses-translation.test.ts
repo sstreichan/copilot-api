@@ -7,6 +7,7 @@ import type {
   ResponsesResult,
 } from "~/services/copilot/create-responses"
 
+import { getReasoningEffortForModel } from "~/lib/config"
 import {
   translateAnthropicMessagesToResponsesPayload,
   translateResponsesResultToAnthropic,
@@ -162,6 +163,44 @@ describe("translateAnthropicMessagesToResponsesPayload", () => {
         text: "first answer",
       },
     ])
+  })
+
+  it("prefers request output_config.effort and maps to Responses values", () => {
+    const payload = {
+      model: "claude-3-5-sonnet",
+      max_tokens: 1024,
+      output_config: {
+        effort: "max",
+      },
+      messages: [
+        {
+          role: "user",
+          content: "hello",
+        },
+      ],
+    } as unknown as AnthropicMessagesPayload
+
+    const result = translateAnthropicMessagesToResponsesPayload(payload)
+
+    expect(result.reasoning?.effort).toBe("xhigh")
+  })
+
+  it("falls back to config effort when request effort is absent", () => {
+    const payload = {
+      model: "unknown-model",
+      max_tokens: 1024,
+      messages: [
+        {
+          role: "user",
+          content: "hello",
+        },
+      ],
+    } as unknown as AnthropicMessagesPayload
+
+    const result = translateAnthropicMessagesToResponsesPayload(payload)
+
+    const expectedEffort = getReasoningEffortForModel(payload.model)
+    expect(result.reasoning?.effort).toBe(expectedEffort)
   })
 })
 

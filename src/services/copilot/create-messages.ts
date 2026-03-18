@@ -203,7 +203,11 @@ const buildEnhancedPayload = (
     temperature: 1,
     ...(supportsAdaptive && {
       thinking: { type: "adaptive" as const },
-      output_config: { effort: getAnthropicEffortForModel(payload.model) },
+      output_config: {
+        effort:
+          payload.output_config?.effort
+          ?? getAnthropicEffortForModel(payload.model),
+      },
     }),
   }
 }

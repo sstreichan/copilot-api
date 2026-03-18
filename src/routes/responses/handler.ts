@@ -4,7 +4,7 @@ import consola from "consola"
 import { streamSSE } from "hono/streaming"
 
 import { awaitApproval } from "~/lib/approval"
-import { getConfig } from "~/lib/config"
+import { getConfig, resolveEffortForLog } from "~/lib/config"
 import {
   colorizeModel,
   createHandlerLogger,
@@ -17,6 +17,7 @@ import { state } from "~/lib/state"
 import { generateRequestIdFromPayload, getUUID } from "~/lib/utils"
 import {
   createResponses,
+  type Reasoning,
   type ResponsesPayload,
   type ResponsesResult,
 } from "~/services/copilot/create-responses"
@@ -82,7 +83,11 @@ export const handleResponses = async (c: Context) => {
 
   const { vision, initiator } = getResponsesRequestOptions(payload)
 
-  consola.info(`IN ${cm(payload.model)}`)
+  const effortForLog = ensureReasoningEffort(payload)
+
+  consola.info(
+    `IN ${cm(payload.model)} [effort=${effortForLog.value} (${effortForLog.source})]`,
+  )
 
   if (state.manualApprove) {
     await awaitApproval()
@@ -148,6 +153,24 @@ export const handleResponses = async (c: Context) => {
 const isAsyncIterable = <T>(value: unknown): value is AsyncIterable<T> =>
   Boolean(value)
   && typeof (value as AsyncIterable<T>)[Symbol.asyncIterator] === "function"
+
+const ensureReasoningEffort = (
+  payload: ResponsesPayload,
+): ReturnType<typeof resolveEffortForLog> => {
+  const effortForLog = resolveEffortForLog(
+    payload.reasoning?.effort ?? undefined,
+    payload.model,
+  )
+
+  if (!payload.reasoning?.effort) {
+    payload.reasoning = {
+      ...payload.reasoning,
+      effort: effortForLog.value as NonNullable<Reasoning>["effort"],
+    }
+  }
+
+  return effortForLog
+}
 
 const isStreamingRequested = (payload: ResponsesPayload): boolean =>
   Boolean(payload.stream)

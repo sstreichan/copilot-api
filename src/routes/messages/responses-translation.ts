@@ -3,6 +3,7 @@ import consola from "consola"
 import {
   getExtraPromptForModel,
   getReasoningEffortForModel,
+  mapAnthropicEffortToResponses,
 } from "~/lib/config"
 import {
   type ResponsesPayload,
@@ -86,7 +87,10 @@ export const translateAnthropicMessagesToResponsesPayload = (
     store: false,
     parallel_tool_calls: true,
     reasoning: {
-      effort: getReasoningEffortForModel(payload.model),
+      effort:
+        payload.output_config?.effort ?
+          mapAnthropicEffortToResponses(payload.output_config.effort)
+        : getReasoningEffortForModel(payload.model),
       summary: "detailed",
     },
     include: ["reasoning.encrypted_content"],
