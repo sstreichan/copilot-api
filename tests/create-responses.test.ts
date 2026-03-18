@@ -73,11 +73,17 @@ const createErrorFetchMock = (status: number) =>
   )
 
 let fetchMock: ReturnType<typeof createFetchMock>
+let capturedTrackRequestSentRequestId: string | undefined
+let capturedScheduleFeedbackRequestId: string | undefined
+let capturedSchedulePostResponseRequestId: string | undefined
 
 beforeEach(() => {
   state.forceAgent = false
   state.interactionId = "test-interaction-id"
   capturedModelCallId = undefined
+  capturedTrackRequestSentRequestId = undefined
+  capturedScheduleFeedbackRequestId = undefined
+  capturedSchedulePostResponseRequestId = undefined
   fetchMock = createFetchMock()
   // @ts-expect-error - Mock fetch doesn't implement all fetch properties
   ;(globalThis as unknown as { fetch: typeof fetch }).fetch = fetchMock
@@ -87,10 +93,11 @@ beforeEach(() => {
     (
       _model: string,
       _accountType: string,
-      _requestId?: string,
+      requestId?: string,
       modelCallId?: string,
       // eslint-disable-next-line max-params
     ) => {
+      capturedTrackRequestSentRequestId = requestId
       capturedModelCallId = modelCallId
     },
   )
@@ -98,6 +105,16 @@ beforeEach(() => {
   spyOn(telemetryModule, "trackResponseError").mockImplementation(() => {})
   spyOn(telemetryModule, "trackPanelRequest").mockImplementation(() => {})
   spyOn(telemetryModule, "trackGhostTextShown").mockImplementation(() => {})
+  spyOn(telemetryModule, "scheduleFeedbackEvents").mockImplementation(
+    (requestId: string) => {
+      capturedScheduleFeedbackRequestId = requestId
+    },
+  )
+  spyOn(telemetryModule, "schedulePostResponseEvents").mockImplementation(
+    (requestId: string) => {
+      capturedSchedulePostResponseRequestId = requestId
+    },
+  )
 })
 
 afterEach(() => {
@@ -194,6 +211,26 @@ describe("Interaction headers (Wave 1/2)", () => {
     expect(capturedModelCallId).toBeDefined()
     expect(typeof capturedModelCallId).toBe("string")
     expect(capturedModelCallId!.length).toBeGreaterThan(0)
+  })
+
+  test("uses x-request-id header for telemetry/scheduler when requestId option is missing", async () => {
+    const payload = {
+      model: "gpt-test",
+      input: [{ role: "user" as const, content: "hi" }],
+    }
+
+    await createResponses(payload, { vision: false, initiator: "user" })
+
+    const headers = (
+      fetchMock.mock.calls[0][1] as { headers: Record<string, string> }
+    ).headers
+    const headerRequestId = headers["x-request-id"]
+
+    expect(typeof headerRequestId).toBe("string")
+    expect(headerRequestId.length).toBeGreaterThan(0)
+    expect(capturedTrackRequestSentRequestId).toBe(headerRequestId)
+    expect(capturedScheduleFeedbackRequestId).toBe(headerRequestId)
+    expect(capturedSchedulePostResponseRequestId).toBe(headerRequestId)
   })
 })
 

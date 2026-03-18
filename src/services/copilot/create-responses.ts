@@ -14,6 +14,7 @@ import { resolveInitiatorWithSmartAgent } from "~/lib/smart-agent"
 import { state } from "~/lib/state"
 import {
   scheduleFeedbackEvents,
+  schedulePostResponseEvents,
   trackRequestSent,
   trackResponseError,
   trackResponseSuccess,
@@ -394,8 +395,16 @@ export const createResponses = async (
 
   prepareInteractionHeaders(sessionId, Boolean(subagentMarker), headers)
 
+  // Extract requestId from already-built headers (do NOT re-generate)
+  const actualRequestId = headers["x-request-id"]
+
   const start = Date.now()
-  trackRequestSent(payload.model, state.accountType, requestId, modelCallId)
+  trackRequestSent(
+    payload.model,
+    state.accountType,
+    actualRequestId,
+    modelCallId,
+  )
 
   // service_tier is not supported by github copilot
   payload.service_tier = null
@@ -412,7 +421,7 @@ export const createResponses = async (
       model: payload.model,
       durationMs: Date.now() - start,
       statusCode: response.status,
-      requestId,
+      requestId: actualRequestId,
       modelCallId,
     })
     throw new HTTPError("Failed to create responses", response)
@@ -420,24 +429,27 @@ export const createResponses = async (
 
   const timeSinceIssuedMs = Date.now() - start
   trackPanelRequest({
-    headerRequestId: requestId,
+    headerRequestId: actualRequestId,
     apiType: "responses",
     modelCallId,
   })
   trackGhostTextShown({
-    headerRequestId: requestId,
+    headerRequestId: actualRequestId,
     ...(state.sku !== undefined ? { sku: state.sku } : {}),
     timeSinceIssuedMs,
     timeSinceDisplayedMs: 0,
   })
 
-  if (requestId) scheduleFeedbackEvents(requestId)
+  if (actualRequestId) {
+    scheduleFeedbackEvents(actualRequestId)
+    schedulePostResponseEvents(actualRequestId, payload.model)
+  }
 
   if (payload.stream) {
     trackResponseSuccess({
       model: payload.model,
       durationMs: Date.now() - start,
-      requestId,
+      requestId: actualRequestId,
       finishReason: "stream",
       modelCallId,
     })
@@ -450,7 +462,7 @@ export const createResponses = async (
   trackResponseSuccess({
     model: payload.model,
     durationMs: Date.now() - start,
-    requestId,
+    requestId: actualRequestId,
     finishReason,
     promptTokens: result.usage?.input_tokens,
     completionTokens: result.usage?.output_tokens,

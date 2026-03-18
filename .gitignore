@@ -39,3 +39,4 @@ docs/plans/
 .beads/daemon-error
 .beads/issues.jsonl
 .beads/last-touched
+.sis/

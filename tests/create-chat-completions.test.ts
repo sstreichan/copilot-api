@@ -183,3 +183,209 @@ describe("Interaction headers", () => {
     expect(trackGhostTextShownCalls).toBe(0)
   })
 })
+
+describe("modelCallId telemetry alignment", () => {
+  let capturedModelCallIdFromRequestSent: string | undefined
+  let capturedSuccessOpts:
+    | telemetryModule.TrackResponseSuccessOptions
+    | undefined
+  let capturedErrorOpts: telemetryModule.TrackResponseErrorOptions | undefined
+  let schedulePostResponseEventsCallCount: number
+
+  beforeEach(() => {
+    fetchCalls = []
+    capturedModelCallIdFromRequestSent = undefined
+    capturedSuccessOpts = undefined
+    capturedErrorOpts = undefined
+    schedulePostResponseEventsCallCount = 0
+    trackPanelRequestCalls = 0
+    trackGhostTextShownCalls = 0
+    state.interactionId = "test-interaction-id"
+    state.forceAgent = false
+
+    spyOn(telemetryModule, "trackRequestSent").mockImplementation(
+      (...args: Parameters<typeof telemetryModule.trackRequestSent>) => {
+        capturedModelCallIdFromRequestSent = args[3]
+      },
+    )
+    spyOn(telemetryModule, "trackResponseSuccess").mockImplementation(
+      (opts) => {
+        capturedSuccessOpts = opts
+      },
+    )
+    spyOn(telemetryModule, "trackResponseError").mockImplementation((opts) => {
+      capturedErrorOpts = opts
+    })
+    spyOn(telemetryModule, "scheduleFeedbackEvents").mockImplementation(
+      () => {},
+    )
+    spyOn(telemetryModule, "schedulePostResponseEvents").mockImplementation(
+      () => {
+        schedulePostResponseEventsCallCount += 1
+      },
+    )
+    spyOn(telemetryModule, "trackPanelRequest").mockImplementation(() => {
+      trackPanelRequestCalls += 1
+    })
+    spyOn(telemetryModule, "trackGhostTextShown").mockImplementation(() => {
+      trackGhostTextShownCalls += 1
+    })
+  })
+
+  afterEach(() => {
+    mock.restore()
+  })
+
+  test("non-stream success passes modelCallId to trackResponseSuccess", async () => {
+    // @ts-expect-error - Mock fetch
+    globalThis.fetch = createFetchMock()
+
+    const payload: ChatCompletionsPayload = {
+      messages: [{ role: "user", content: "hi" }],
+      model: "gpt-test",
+    }
+    await createChatCompletions(payload)
+
+    expect(capturedModelCallIdFromRequestSent).toBeDefined()
+    expect(typeof capturedModelCallIdFromRequestSent).toBe("string")
+    expect(capturedSuccessOpts).toBeDefined()
+    expect(capturedSuccessOpts!.modelCallId).toBe(
+      capturedModelCallIdFromRequestSent,
+    )
+  })
+
+  test("non-stream success calls schedulePostResponseEvents", async () => {
+    // @ts-expect-error - Mock fetch
+    globalThis.fetch = createFetchMock()
+
+    const payload: ChatCompletionsPayload = {
+      messages: [{ role: "user", content: "hi" }],
+      model: "gpt-test",
+    }
+    await createChatCompletions(payload)
+
+    expect(schedulePostResponseEventsCallCount).toBe(1)
+  })
+
+  test("stream success passes modelCallId to trackResponseSuccess", async () => {
+    // @ts-expect-error - Mock fetch
+    globalThis.fetch = mock(
+      (url: string, opts: { headers: Record<string, string> }) => {
+        fetchCalls.push({ url, headers: opts.headers })
+        if (url.includes("copilot_internal")) {
+          return Promise.resolve({ ok: false, status: 500 })
+        }
+        return Promise.resolve({
+          ok: true,
+          body: new ReadableStream({
+            start(controller) {
+              controller.close()
+            },
+          }),
+        })
+      },
+    )
+
+    const payload: ChatCompletionsPayload = {
+      messages: [{ role: "user", content: "hi" }],
+      model: "gpt-test",
+      stream: true,
+    }
+    await createChatCompletions(payload)
+
+    expect(capturedModelCallIdFromRequestSent).toBeDefined()
+    expect(capturedSuccessOpts).toBeDefined()
+    expect(capturedSuccessOpts!.modelCallId).toBe(
+      capturedModelCallIdFromRequestSent,
+    )
+  })
+
+  test("retry failure passes modelCallId to trackResponseError", async () => {
+    let chatCallCount = 0
+    // @ts-expect-error - Mock fetch
+    globalThis.fetch = mock(
+      (url: string, opts: { headers: Record<string, string> }) => {
+        fetchCalls.push({ url, headers: opts.headers })
+        if (url.includes("copilot_internal")) {
+          return Promise.resolve({ ok: false, status: 500 })
+        }
+        chatCallCount++
+        if (chatCallCount === 1) {
+          return Promise.resolve({
+            ok: false,
+            status: 400,
+            json: () =>
+              Promise.resolve({
+                error: { message: "signature cannot be modified" },
+              }),
+            clone() {
+              return this
+            },
+          })
+        }
+        return Promise.resolve({
+          ok: false,
+          status: 500,
+          json: () => Promise.resolve({ error: "retry also failed" }),
+          clone() {
+            return this
+          },
+        })
+      },
+    )
+
+    const payload: ChatCompletionsPayload = {
+      messages: [{ role: "user", content: "hi" }],
+      model: "gpt-test",
+    }
+    try {
+      await createChatCompletions(payload)
+      expect.unreachable("Should have thrown")
+    } catch {
+      // expected to throw
+    }
+
+    expect(capturedModelCallIdFromRequestSent).toBeDefined()
+    expect(capturedErrorOpts).toBeDefined()
+    expect(capturedErrorOpts!.modelCallId).toBe(
+      capturedModelCallIdFromRequestSent,
+    )
+  })
+
+  test("normal error passes modelCallId to trackResponseError", async () => {
+    // @ts-expect-error - Mock fetch
+    globalThis.fetch = mock(
+      (url: string, opts: { headers: Record<string, string> }) => {
+        fetchCalls.push({ url, headers: opts.headers })
+        if (url.includes("copilot_internal")) {
+          return Promise.resolve({ ok: false, status: 500 })
+        }
+        return Promise.resolve({
+          ok: false,
+          status: 503,
+          json: () => Promise.resolve({ error: "service unavailable" }),
+          clone() {
+            return this
+          },
+        })
+      },
+    )
+
+    const payload: ChatCompletionsPayload = {
+      messages: [{ role: "user", content: "hi" }],
+      model: "gpt-test",
+    }
+    try {
+      await createChatCompletions(payload)
+      expect.unreachable("Should have thrown")
+    } catch {
+      // expected to throw
+    }
+
+    expect(capturedModelCallIdFromRequestSent).toBeDefined()
+    expect(capturedErrorOpts).toBeDefined()
+    expect(capturedErrorOpts!.modelCallId).toBe(
+      capturedModelCallIdFromRequestSent,
+    )
+  })
+})

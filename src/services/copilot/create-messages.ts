@@ -21,6 +21,7 @@ import {
   trackResponseSuccess,
   trackResponseError,
   scheduleFeedbackEvents,
+  schedulePostResponseEvents,
   trackPanelRequest,
   trackGhostTextShown,
 } from "~/services/telemetry/telemetry"
@@ -353,6 +354,7 @@ export const createMessages = async (
   }
 
   scheduleFeedbackEvents(requestId)
+  schedulePostResponseEvents(requestId, payload.model)
   const timeSinceIssuedMs = Date.now() - start
   trackPanelRequest({
     headerRequestId: requestId,

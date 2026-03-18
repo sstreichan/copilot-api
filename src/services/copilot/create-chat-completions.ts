@@ -17,6 +17,7 @@ import {
   trackResponseSuccess,
   trackResponseError,
   scheduleFeedbackEvents,
+  schedulePostResponseEvents,
   trackPanelRequest,
   trackGhostTextShown,
 } from "~/services/telemetry/telemetry"
@@ -57,8 +58,9 @@ function trackNonStreamSuccess(opts: {
   model: string
   start: number
   requestId?: string
+  modelCallId?: string
 }): void {
-  const { result, model, start, requestId } = opts
+  const { result, model, start, requestId, modelCallId } = opts
   const finishReason =
     result.choices.length > 0 ? result.choices[0].finish_reason : "stop"
   const serialized = JSON.stringify(result)
@@ -66,6 +68,7 @@ function trackNonStreamSuccess(opts: {
     model,
     durationMs: Date.now() - start,
     requestId,
+    modelCallId,
     finishReason,
     promptTokens: result.usage?.prompt_tokens,
     completionTokens: result.usage?.completion_tokens,
@@ -77,16 +80,18 @@ function trackNonStreamSuccess(opts: {
 async function handleOkResponse(
   response: Response,
   payload: ChatCompletionsPayload,
-  opts: { start: number; requestId?: string },
+  opts: { start: number; requestId?: string; modelCallId?: string },
 ) {
   if (opts.requestId) {
     scheduleFeedbackEvents(opts.requestId)
+    schedulePostResponseEvents(opts.requestId, payload.model)
   }
   if (payload.stream) {
     trackResponseSuccess({
       model: payload.model,
       durationMs: Date.now() - opts.start,
       requestId: opts.requestId,
+      modelCallId: opts.modelCallId,
       finishReason: "stream",
     })
     return events(response)
@@ -97,6 +102,7 @@ async function handleOkResponse(
     model: payload.model,
     start: opts.start,
     requestId: opts.requestId,
+    modelCallId: opts.modelCallId,
   })
   return result
 }
@@ -142,6 +148,7 @@ async function retryWithStrippedReasoningFields(
       durationMs: Date.now() - opts.start,
       statusCode: retryResponse.status,
       requestId: opts.requestId,
+      modelCallId: opts.modelCallId,
     })
     throw new HTTPError(
       "Failed to create chat completions (after retry)",
@@ -214,7 +221,11 @@ export const createChatCompletions = async (
 
   if (response.ok) {
     trackSuccessUiTelemetry({ requestId, modelCallId, start })
-    return handleOkResponse(response, payload, { start, requestId })
+    return handleOkResponse(response, payload, {
+      start,
+      requestId,
+      modelCallId,
+    })
   }
 
   // On error, check if it's an invalid signature error
@@ -238,6 +249,7 @@ export const createChatCompletions = async (
     durationMs: Date.now() - start,
     statusCode: response.status,
     requestId,
+    modelCallId,
   })
   throw new HTTPError("Failed to create chat completions", response)
 }

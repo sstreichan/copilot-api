@@ -28,6 +28,20 @@ export const EVENT_EDIT_HUNK_ACTION = "copilot-chat/edit.hunk.action"
 export const EVENT_PANEL_REQUEST = "panel.request"
 export const EVENT_GHOST_TEXT_SHOWN = "copilot-chat/ghostText.shown"
 
+// MSFT OneCollector event name constants
+export const EVENT_MSFT_RESPONSE_CANCELLED = "response.cancelled"
+export const EVENT_MSFT_INLINE_REQUEST = "inline.request"
+export const EVENT_MSFT_INLINE_DONE = "inline.done"
+export const EVENT_MSFT_INLINE_CONVERSATION_ACCEPT = "inlineConversation.accept"
+export const EVENT_MSFT_PANEL_ACTION_COPY = "panel.action.copy"
+export const EVENT_MSFT_PANEL_ACTION_INSERT = "panel.action.insert"
+export const EVENT_MSFT_PANEL_ACTION_FOLLOWUP = "panel.action.followup"
+export const EVENT_MSFT_CONVERSATION_ACCEPTED_COPY = "conversation.acceptedCopy"
+export const EVENT_MSFT_CONVERSATION_ACCEPTED_INSERT =
+  "conversation.acceptedInsert"
+export const EVENT_MSFT_CONVERSATION_APPLIED_CODEBLOCK =
+  "conversation.appliedCodeblock"
+
 // Application Insights envelope structure
 // Reference: .local/telemetry-fixtures/generate_fixtures.py build_envelope()
 export interface TelemetryEnvelope {
