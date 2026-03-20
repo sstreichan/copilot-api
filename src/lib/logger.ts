@@ -240,6 +240,18 @@ export interface StreamLogOptions {
   premium?: { remaining: number; total: number } | null
 }
 
+export const writeStreamLog = (
+  options: StreamLogOptions,
+  appendNewline = false,
+): void => {
+  const output = formatStreamLog(options)
+  if (!output) {
+    return
+  }
+
+  process.stdout.write(appendNewline ? `${output}\n` : output)
+}
+
 const premiumInfoSymbol = Symbol("premiumInfo")
 const PREMIUM_QUOTA_SNAPSHOT_HEADER = "x-quota-snapshot-premium_interactions"
 
@@ -338,9 +350,13 @@ export const formatStreamLog = ({
   done,
   premium,
 }: StreamLogOptions): string => {
+  if (!done) {
+    return ""
+  }
+
   const displayModel = shouldUseColor() ? colorizeModel(model) : model
-  const base = `\x1b[2K\r↪ ${displayModel} ${chunks}${done ? " ✓" : ""}`
-  if (done && premium) {
+  const base = `\x1b[2K\r↪ ${displayModel} ${chunks} ✓`
+  if (premium) {
     // Color based on remaining percentage: green > 50%, yellow 20-50%, red < 20%
     const pct = premium.remaining / premium.total
     let numColor = "\x1b[31m" // red < 20%

@@ -14,9 +14,9 @@ import {
 import {
   colorizeModel,
   createHandlerLogger,
-  formatStreamLog,
   resolvePremiumInfo,
   shouldUseColor,
+  writeStreamLog,
 } from "~/lib/logger"
 import { findEndpointModel } from "~/lib/models"
 import { checkRateLimit } from "~/lib/rate-limit"
@@ -261,8 +261,14 @@ const handleWithNativeMessages = async (
             chunkCount++
           }
 
-          process.stdout.write(
-            `${formatStreamLog({ model: options.originalModel, chunks: chunkCount, done: true, premium })}\n`,
+          writeStreamLog(
+            {
+              model: options.originalModel,
+              chunks: chunkCount,
+              done: true,
+              premium,
+            },
+            true,
           )
           controller.close()
           return
@@ -282,13 +288,6 @@ const handleWithNativeMessages = async (
         const newEvents = parts.filter((e) => e.trim().length > 0).length
         if (newEvents > 0) {
           chunkCount += newEvents
-          process.stdout.write(
-            formatStreamLog({
-              model: options.originalModel,
-              chunks: chunkCount,
-              done: false,
-            }),
-          )
         }
       },
       cancel() {
@@ -309,8 +308,9 @@ const handleWithNativeMessages = async (
     response,
     "messages/native-non-stream",
   )
-  process.stdout.write(
-    `${formatStreamLog({ model: options.originalModel, chunks: 0, done: true, premium })}\n`,
+  writeStreamLog(
+    { model: options.originalModel, chunks: 0, done: true, premium },
+    true,
   )
   return c.json(jsonResponse)
 }
@@ -350,8 +350,9 @@ const handleWithChatCompletions = async (
       response,
       "messages/chat-non-stream",
     )
-    process.stdout.write(
-      `${formatStreamLog({ model: openAIPayload.model, chunks: 0, done: true, premium })}\n`,
+    writeStreamLog(
+      { model: openAIPayload.model, chunks: 0, done: true, premium },
+      true,
     )
     return c.json(anthropicResponse)
   }
@@ -381,13 +382,6 @@ const handleWithChatCompletions = async (
         }
 
         chunkCount++
-        process.stdout.write(
-          formatStreamLog({
-            model: openAIPayload.model,
-            chunks: chunkCount,
-            done: false,
-          }),
-        )
 
         const chunk = JSON.parse(rawEvent.data) as ChatCompletionChunk
         const events = translateChunkToAnthropicEvents(chunk, streamState)
@@ -403,8 +397,14 @@ const handleWithChatCompletions = async (
     } finally {
       clearInterval(pingInterval)
       const premium = await resolvePremiumInfo(response, "messages/chat-stream")
-      process.stdout.write(
-        `${formatStreamLog({ model: openAIPayload.model, chunks: chunkCount, done: true, premium })}\n`,
+      writeStreamLog(
+        {
+          model: openAIPayload.model,
+          chunks: chunkCount,
+          done: true,
+          premium,
+        },
+        true,
       )
     }
   })
@@ -475,13 +475,6 @@ const handleWithResponsesApi = async (
           }
 
           chunkCount++
-          process.stdout.write(
-            formatStreamLog({
-              model: responsesPayload.model,
-              chunks: chunkCount,
-              done: false,
-            }),
-          )
 
           logger.debug("Responses raw stream event:", data)
 
@@ -522,8 +515,14 @@ const handleWithResponsesApi = async (
           response,
           "messages/responses-stream",
         )
-        process.stdout.write(
-          `${formatStreamLog({ model: responsesPayload.model, chunks: chunkCount, done: true, premium })}\n`,
+        writeStreamLog(
+          {
+            model: responsesPayload.model,
+            chunks: chunkCount,
+            done: true,
+            premium,
+          },
+          true,
         )
       }
     })
@@ -544,8 +543,9 @@ const handleWithResponsesApi = async (
     response,
     "messages/responses-non-stream",
   )
-  process.stdout.write(
-    `${formatStreamLog({ model: responsesPayload.model, chunks: 0, done: true, premium })}\n`,
+  writeStreamLog(
+    { model: responsesPayload.model, chunks: 0, done: true, premium },
+    true,
   )
   return c.json(anthropicResponse)
 }

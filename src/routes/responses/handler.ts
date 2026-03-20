@@ -8,9 +8,9 @@ import { getConfig, resolveEffortForLog } from "~/lib/config"
 import {
   colorizeModel,
   createHandlerLogger,
-  formatStreamLog,
   resolvePremiumInfo,
   shouldUseColor,
+  writeStreamLog,
 } from "~/lib/logger"
 import { checkRateLimit } from "~/lib/rate-limit"
 import { state } from "~/lib/state"
@@ -110,14 +110,6 @@ export const handleResponses = async (c: Context) => {
         for await (const chunk of response) {
           logger.debug("Responses stream chunk:", JSON.stringify(chunk))
           chunkCount++
-          process.stdout.write(
-            formatStreamLog({
-              model: payload.model,
-              chunks: chunkCount,
-              done: false,
-            }),
-          )
-
           const processedData = fixStreamIds(
             (chunk as { data?: string }).data ?? "",
             (chunk as { event?: string }).event,
@@ -132,8 +124,9 @@ export const handleResponses = async (c: Context) => {
         }
       } finally {
         const premium = await resolvePremiumInfo(response, "responses/stream")
-        process.stdout.write(
-          `${formatStreamLog({ model: payload.model, chunks: chunkCount, done: true, premium })}\n`,
+        writeStreamLog(
+          { model: payload.model, chunks: chunkCount, done: true, premium },
+          true,
         )
       }
     })
@@ -144,9 +137,7 @@ export const handleResponses = async (c: Context) => {
     JSON.stringify(response).slice(-400),
   )
   const premium = await resolvePremiumInfo(response, "responses/non-stream")
-  process.stdout.write(
-    `${formatStreamLog({ model: payload.model, chunks: 0, done: true, premium })}\n`,
-  )
+  writeStreamLog({ model: payload.model, chunks: 0, done: true, premium }, true)
   return c.json(response as ResponsesResult)
 }
 

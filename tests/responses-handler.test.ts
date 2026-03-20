@@ -6,6 +6,7 @@ import { stripVTControlCharacters } from "node:util"
 import type {
   ResponsesPayload,
   ResponsesResult,
+  ResponsesStream,
 } from "~/services/copilot/create-responses"
 
 import * as configModule from "~/lib/config"
@@ -34,6 +35,16 @@ const responseResult: ResponsesResult = {
   tools: [],
   top_p: null,
 }
+
+const createStreamResponse = (
+  chunks: Array<{ event?: string; data?: string }>,
+): ResponsesStream =>
+  (async function* () {
+    for (const chunk of chunks) {
+      await Promise.resolve()
+      yield chunk
+    }
+  })() as ResponsesStream
 
 const createApp = () => {
   const app = new Hono()
@@ -228,6 +239,155 @@ describe("handleResponses reasoning effort", () => {
         stripVTControlCharacters(String(call[0])).includes("[470 left]"),
       ),
     ).toBe(true)
+
+    writeSpy.mockRestore()
+  })
+})
+
+describe("handleResponses streaming logs", () => {
+  const originalModels = state.models
+  let createResponsesSpy: ReturnType<
+    typeof spyOn<typeof createResponsesModule, "createResponses">
+  >
+  let rateLimitSpy: ReturnType<
+    typeof spyOn<typeof rateLimitModule, "checkRateLimit">
+  >
+  let getConfigSpy: ReturnType<typeof spyOn<typeof configModule, "getConfig">>
+  let getPremiumInfoSpy: ReturnType<
+    typeof spyOn<typeof loggerModule, "getPremiumInfo">
+  >
+
+  beforeEach(() => {
+    state.models = {
+      object: "list",
+      data: [
+        {
+          id: "gpt-test",
+          name: "gpt-test",
+          object: "model",
+          preview: false,
+          model_picker_enabled: true,
+          vendor: "copilot",
+          version: "1",
+          supported_endpoints: ["/responses"],
+          capabilities: {
+            family: "gpt",
+            object: "model",
+            supports: { streaming: true },
+            tokenizer: "tiktoken",
+            type: "text",
+            limits: { max_prompt_tokens: 1000 },
+          },
+        },
+      ],
+    }
+
+    createResponsesSpy = spyOn(
+      createResponsesModule,
+      "createResponses",
+    ).mockResolvedValue(responseResult)
+    rateLimitSpy = spyOn(rateLimitModule, "checkRateLimit").mockResolvedValue()
+    getConfigSpy = spyOn(configModule, "getConfig").mockReturnValue({
+      ...configModule.getConfig(),
+      useFunctionApplyPatch: true,
+      modelReasoningEfforts: { "gpt-test": "high" },
+    })
+    getPremiumInfoSpy = spyOn(loggerModule, "getPremiumInfo").mockResolvedValue(
+      {
+        remaining: 470,
+        total: 1500,
+      },
+    )
+  })
+
+  afterEach(() => {
+    state.models = originalModels
+    createResponsesSpy.mockRestore()
+    rateLimitSpy.mockRestore()
+    getConfigSpy.mockRestore()
+    getPremiumInfoSpy.mockRestore()
+  })
+
+  test("streaming response logs a single final left line", async () => {
+    const writeSpy = spyOn(process.stdout, "write").mockReturnValue(true)
+    createResponsesSpy.mockResolvedValueOnce(
+      createStreamResponse([
+        {
+          event: "response.created",
+          data: JSON.stringify({
+            type: "response.created",
+            response: {
+              id: "resp-1",
+              model: "gpt-test",
+              output: [],
+              status: "in_progress",
+            },
+          }),
+        },
+        {
+          event: "response.output_item.added",
+          data: JSON.stringify({
+            type: "response.output_item.added",
+            output_index: 0,
+            item: {
+              type: "message",
+              role: "assistant",
+              content: [],
+            },
+          }),
+        },
+        {
+          event: "response.output_text.delta",
+          data: JSON.stringify({
+            type: "response.output_text.delta",
+            output_index: 0,
+            content_index: 0,
+            item_id: "msg-1",
+            delta: "Hello",
+          }),
+        },
+        {
+          event: "response.completed",
+          data: JSON.stringify({
+            type: "response.completed",
+            response: {
+              id: "resp-1",
+              model: "gpt-test",
+              output: [],
+              output_text: "Hello",
+              status: "completed",
+            },
+          }),
+        },
+      ]),
+    )
+
+    const app = createApp()
+    const res = await app.request("/v1/responses", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "gpt-test",
+        stream: true,
+        input: [{ role: "user", content: "hi" }],
+      }),
+    })
+
+    expect(res.status).toBe(200)
+    await res.text()
+
+    const normalizedWrites = writeSpy.mock.calls.map((call) =>
+      stripVTControlCharacters(String(call[0])),
+    )
+    const leftLines = normalizedWrites.filter((value) => value.includes("left"))
+    const progressLines = normalizedWrites.filter((value) =>
+      value.includes("↪"),
+    )
+
+    expect(leftLines).toHaveLength(1)
+    expect(progressLines).toHaveLength(1)
+    expect(progressLines[0]).toContain("↪ gpt-test 4 ✓ [470 left]")
+    expect(getPremiumInfoSpy).toHaveBeenCalledTimes(1)
 
     writeSpy.mockRestore()
   })

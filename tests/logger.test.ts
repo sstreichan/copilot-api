@@ -54,6 +54,16 @@ describe("premium info attachment", () => {
 })
 
 describe("formatStreamLog", () => {
+  test("suppresses in-progress stream output so each request logs once", () => {
+    const log = formatStreamLog({
+      model: "gpt-5-mini",
+      chunks: 41,
+      done: false,
+    })
+
+    expect(log).toBe("")
+  })
+
   test("renders left badge with at most two decimal places", () => {
     const log = formatStreamLog({
       model: "gpt-5-mini",

@@ -5,8 +5,8 @@ import { streamSSE, type SSEMessage } from "hono/streaming"
 import { awaitApproval } from "~/lib/approval"
 import {
   createHandlerLogger,
-  formatStreamLog,
   resolvePremiumInfo,
+  writeStreamLog,
 } from "~/lib/logger"
 import { checkRateLimit } from "~/lib/rate-limit"
 import { state } from "~/lib/state"
@@ -71,8 +71,9 @@ export async function handleCompletion(c: Context) {
       response,
       "chat-completions/non-stream",
     )
-    process.stdout.write(
-      `${formatStreamLog({ model: payload.model, chunks: 0, done: true, premium })}\n`,
+    writeStreamLog(
+      { model: payload.model, chunks: 0, done: true, premium },
+      true,
     )
     return c.json(response)
   }
@@ -85,14 +86,6 @@ export async function handleCompletion(c: Context) {
         logger.debug("Streaming chunk:", JSON.stringify(chunk))
 
         chunkCount++
-        process.stdout.write(
-          formatStreamLog({
-            model: payload.model,
-            chunks: chunkCount,
-            done: false,
-          }),
-        )
-
         // Check for [DONE] marker
         const sseChunk = chunk as SSEMessage
         if (sseChunk.data === "[DONE]") {
@@ -107,8 +100,9 @@ export async function handleCompletion(c: Context) {
         response,
         "chat-completions/stream",
       )
-      process.stdout.write(
-        `${formatStreamLog({ model: payload.model, chunks: chunkCount, done: true, premium })}\n`,
+      writeStreamLog(
+        { model: payload.model, chunks: chunkCount, done: true, premium },
+        true,
       )
     }
   })

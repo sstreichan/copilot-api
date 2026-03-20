@@ -16,6 +16,25 @@ import {
 } from "~/routes/messages/handler"
 import * as createMessagesModule from "~/services/copilot/create-messages"
 
+const createSseResponse = (events: Array<string>): Response => {
+  const encoder = new TextEncoder()
+
+  return new Response(
+    new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const event of events) {
+          controller.enqueue(encoder.encode(event))
+        }
+        controller.close()
+      },
+    }),
+    {
+      status: 200,
+      headers: { "Content-Type": "text/event-stream" },
+    },
+  )
+}
+
 const getFirstInfoCall = (
   infoSpy: ReturnType<typeof spyOn<typeof consola, "info">>,
 ): string => {
@@ -285,6 +304,49 @@ describe("native handler", () => {
         stripVTControlCharacters(String(call[0])).includes("[470 left]"),
       ),
     ).toBe(true)
+
+    writeSpy.mockRestore()
+  })
+
+  test("native streaming logs a single final left line", async () => {
+    const writeSpy = spyOn(process.stdout, "write").mockReturnValue(true)
+    createMessagesSpy.mockResolvedValueOnce(
+      createSseResponse([
+        'event: message_start\ndata: {"type":"message_start"}\n\n',
+        'event: content_block_delta\ndata: {"type":"content_block_delta","delta":{"type":"text_delta","text":"Hello"}}\n\n',
+        'event: message_stop\ndata: {"type":"message_stop"}\n\n',
+      ]),
+    )
+
+    const app = new Hono()
+    app.post("/v1/messages", (c) => handleCompletion(c))
+
+    const res = await app.request("/v1/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "claude-opus-4",
+        stream: true,
+        max_tokens: 1024,
+        messages: [{ role: "user", content: "hi" }],
+      } satisfies AnthropicMessagesPayload),
+    })
+
+    expect(res.status).toBe(200)
+    await res.text()
+
+    const normalizedWrites = writeSpy.mock.calls.map((call) =>
+      stripVTControlCharacters(String(call[0])),
+    )
+    const leftLines = normalizedWrites.filter((value) => value.includes("left"))
+    const progressLines = normalizedWrites.filter((value) =>
+      value.includes("↪"),
+    )
+
+    expect(leftLines).toHaveLength(1)
+    expect(progressLines).toHaveLength(1)
+    expect(progressLines[0]).toContain("↪ claude-opus-4 3 ✓ [470 left]")
+    expect(getPremiumInfoSpy).toHaveBeenCalledTimes(1)
 
     writeSpy.mockRestore()
   })
