@@ -2,6 +2,9 @@ import { test, expect, mock, beforeEach, afterEach, describe } from "bun:test"
 
 import { state } from "../src/lib/state"
 
+const midMonth = new Date("2026-02-15T00:00:00.000Z")
+const earlyMonth = new Date("2026-02-02T00:00:00.000Z")
+
 // Save original state
 let originalForceAgent: boolean
 let originalGithubToken: string | undefined
@@ -26,7 +29,7 @@ describe("resolveInitiatorWithSmartAgent", () => {
       "../src/lib/smart-agent"
     )
 
-    const result = await resolveInitiatorWithSmartAgent("user")
+    const result = await resolveInitiatorWithSmartAgent("user", midMonth)
     expect(result.initiator).toBe("user")
     expect(result.decision).toBeUndefined()
 
@@ -61,7 +64,7 @@ describe("resolveInitiatorWithSmartAgent", () => {
     const { clearSmartAgentCache } = await import("../src/lib/smart-agent")
     clearSmartAgentCache()
 
-    const result = await resolveInitiatorWithSmartAgent("user")
+    const result = await resolveInitiatorWithSmartAgent("user", earlyMonth)
     expect(result.initiator).toBe("agent")
     expect(result.decision?.forceAgent).toBe(true)
   })
@@ -146,11 +149,11 @@ describe("resolveInitiatorWithSmartAgent", () => {
     clearSmartAgentCache()
 
     // First call should fetch
-    await resolveInitiatorWithSmartAgent("user")
+    await resolveInitiatorWithSmartAgent("user", midMonth)
     const firstCallCount = callCount
 
     // Second call should use cache (over budget is cached)
-    await resolveInitiatorWithSmartAgent("user")
+    await resolveInitiatorWithSmartAgent("user", midMonth)
     expect(callCount).toBe(firstCallCount) // No additional fetch
   })
 
@@ -181,11 +184,11 @@ describe("resolveInitiatorWithSmartAgent", () => {
     clearSmartAgentCache()
 
     // First call should fetch
-    await resolveInitiatorWithSmartAgent("user")
+    await resolveInitiatorWithSmartAgent("user", earlyMonth)
     expect(callCount).toBe(1)
 
     // Second call should also fetch (on budget is NOT cached)
-    await resolveInitiatorWithSmartAgent("user")
+    await resolveInitiatorWithSmartAgent("user", earlyMonth)
     expect(callCount).toBe(2)
   })
 })

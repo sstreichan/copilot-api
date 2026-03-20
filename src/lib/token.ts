@@ -19,6 +19,43 @@ import { state } from "./state"
 
 let copilotRefreshLoopController: AbortController | null = null
 
+function inferAccountTypeFromApiUrl(
+  apiUrl: string | undefined,
+): string | undefined {
+  if (!apiUrl) return undefined
+  if (apiUrl.includes("api.business.githubcopilot.com")) return "business"
+  if (apiUrl.includes("api.enterprise.githubcopilot.com")) return "enterprise"
+  if (apiUrl.includes("api.individual.githubcopilot.com")) return "individual"
+  if (apiUrl.includes("api.githubcopilot.com")) return "individual"
+  return undefined
+}
+
+function applyCopilotTokenMetadata(
+  metadata: Awaited<ReturnType<typeof getCopilotToken>>,
+): void {
+  const {
+    token,
+    endpoints,
+    organization_list,
+    enterprise_list,
+    tracking_id,
+    telemetry,
+  } = metadata
+
+  state.copilotToken = token
+  state.copilotApiUrl = endpoints?.api
+  state.copilotTrackingId = tracking_id
+  state.copilotTelemetryEnabled = telemetry === "enabled"
+  state.sku = parseSku(token)
+  state.organizationList = organization_list
+  state.enterpriseList = enterprise_list
+
+  const inferredAccountType = inferAccountTypeFromApiUrl(endpoints?.api)
+  if (inferredAccountType) {
+    state.accountType = inferredAccountType
+  }
+}
+
 export const stopCopilotRefreshLoop = () => {
   if (!copilotRefreshLoopController) {
     return
@@ -48,19 +85,15 @@ export const setupCopilotToken = async () => {
     return
   }
 
-  const { token, refresh_in, endpoints, organization_list, enterprise_list } =
-    await getCopilotToken()
-  state.copilotToken = token
-  state.sku = parseSku(token)
-  state.organizationList = organization_list
-  state.enterpriseList = enterprise_list
-  initTelemetry(token, endpoints?.telemetry)
+  const metadata = await getCopilotToken()
+  applyCopilotTokenMetadata(metadata)
+  initTelemetry(metadata.token, metadata.endpoints?.telemetry)
   trackAuthNewToken()
 
   // Display the Copilot token to the screen
   consola.debug("GitHub Copilot Token fetched successfully!")
   if (state.showToken) {
-    consola.info("Copilot token:", token)
+    consola.info("Copilot token:", metadata.token)
   }
 
   stopCopilotRefreshLoop()
@@ -68,7 +101,7 @@ export const setupCopilotToken = async () => {
   const controller = new AbortController()
   copilotRefreshLoopController = controller
 
-  runCopilotRefreshLoop(refresh_in, controller.signal)
+  runCopilotRefreshLoop(metadata.refresh_in, controller.signal)
     .catch(() => {
       consola.warn("Copilot token refresh loop stopped")
     })
@@ -91,15 +124,16 @@ const runCopilotRefreshLoop = async (
     consola.debug("Refreshing Copilot token")
 
     try {
-      const { token, refresh_in } = await getCopilotToken()
-      state.copilotToken = token
+      const metadata = await getCopilotToken()
+      applyCopilotTokenMetadata(metadata)
+      initTelemetry(metadata.token, metadata.endpoints?.telemetry)
       trackAuthNewToken()
       consola.debug("Copilot token refreshed")
       if (state.showToken) {
-        consola.info("Refreshed Copilot token:", token)
+        consola.info("Refreshed Copilot token:", metadata.token)
       }
 
-      nextRefreshDelayMs = (refresh_in - 60) * 1000
+      nextRefreshDelayMs = (metadata.refresh_in - 60) * 1000
     } catch (error) {
       consola.error("Failed to refresh Copilot token:", error)
       nextRefreshDelayMs = 15_000

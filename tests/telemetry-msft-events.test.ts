@@ -65,6 +65,7 @@ void mock.module("~/lib/config", () => ({
   mergeConfigWithDefaults: getMockConfig,
 }))
 
+import { state } from "../src/lib/state"
 import {
   initTelemetry,
   schedulePostResponseEvents,
@@ -109,6 +110,7 @@ beforeEach(() => {
   Math.random = () => 0
   mockTelemetryEnabled = true
   requestMock.mockClear()
+  state.copilotTrackingId = undefined
   initTelemetry("tid=test-user;exp=9999999999;sku=pro")
 })
 
@@ -346,6 +348,25 @@ describe("telemetry: MSFT wrappers - response and inline", () => {
       editCount: 2,
       editLineCount: 3,
     })
+  })
+
+  it("trackInlineConversationAccept falls back to cached copilot tracking id", async () => {
+    state.copilotTrackingId = "state-track-id"
+
+    trackInlineConversationAccept({
+      requestId: "req-inline-accept-2",
+      headerRequestId: "req-inline-accept-2",
+      conversationId: "conv-4",
+      responseId: "resp-4",
+      messageId: "msg-4",
+    })
+    await flushMicrotasks()
+
+    const payload = getPayload()
+    expect(payload.name).toBe("inlineConversation.accept")
+    expect(payload.data.baseData.properties.copilot_trackingId).toBe(
+      "state-track-id",
+    )
   })
 })
 

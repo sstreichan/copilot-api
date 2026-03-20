@@ -91,8 +91,9 @@ bun run typecheck                         # 类型检查
 ### `tokens.json`
 
 实例注册表，默认位于 `~/.local/share/copilot-api/tokens.json`。
-数组格式，每条含 `name`（唯一名）、`port`（唯一端口）、`token`、`accountType`、`flags`。
-Router 只取 `name` 与 `port`，余者由各实例自行消费。
+数组格式，每条至少含 `name`（唯一名）、`port`（唯一端口）、`token`；`flags` 与 `accountType` 均可选。
+Router 只取 `name` 与 `port`；`token` 与可选 `flags`/`accountType` 由 `start.sh` 转交各实例。
+若条目缺少 `accountType`，`start.sh` 不传 `-a`，交由实例自身从 token endpoint 解析真实账户类型。
 
 ### `session-router` 插件
 

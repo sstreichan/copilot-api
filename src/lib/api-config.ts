@@ -106,6 +106,10 @@ const USER_AGENT = `GitHubCopilotChat/${COPILOT_VERSION}`
 const API_VERSION = "2025-10-01"
 
 export const copilotBaseUrl = (state: State) => {
+  if (state.copilotApiUrl) {
+    return state.copilotApiUrl
+  }
+
   const enterpriseDomain = getEnterpriseDomain()
   if (enterpriseDomain) {
     return `https://copilot-api.${enterpriseDomain}`

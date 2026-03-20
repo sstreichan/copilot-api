@@ -9,6 +9,7 @@ import {
   describe,
 } from "bun:test"
 
+import { getAttachedPremiumInfo } from "../src/lib/logger"
 import { state } from "../src/lib/state"
 import { createResponses } from "../src/services/copilot/create-responses"
 import * as telemetryModule from "../src/services/telemetry/telemetry"
@@ -41,7 +42,11 @@ const createFetchMock = () =>
           error: null,
         }),
       text: () => Promise.resolve('{"itemsReceived":1,"itemsAccepted":1}'),
-      headers: opts.headers,
+      headers: new Headers({
+        ...opts.headers,
+        "x-quota-snapshot-premium_interactions":
+          "ent=300&ov=0.0&ovPerm=false&rem=35.5&rst=2026-04-01T00%3A00%3A00Z",
+      }),
     }),
   )
 
@@ -52,7 +57,11 @@ const createStreamFetchMock = () =>
       ok: true,
       text: () => Promise.resolve('{"itemsReceived":1,"itemsAccepted":1}'),
       body: new ReadableStream(),
-      headers: opts.headers,
+      headers: new Headers({
+        ...opts.headers,
+        "x-quota-snapshot-premium_interactions":
+          "ent=300&ov=0.0&ovPerm=false&rem=35.5&rst=2026-04-01T00%3A00%3A00Z",
+      }),
       [Symbol.asyncIterator]: function* () {},
     }),
   )
@@ -252,6 +261,44 @@ describe("Stream path", () => {
     })
     // events() returns an async iterable
     expect(result).toBeDefined()
+  })
+
+  test("attaches premium info from response header on stream path", async () => {
+    // @ts-expect-error - Mock fetch doesn't implement all fetch properties
+    ;(globalThis as unknown as { fetch: typeof fetch }).fetch =
+      createStreamFetchMock()
+    const payload = {
+      model: "gpt-test",
+      stream: true,
+      input: [{ role: "user" as const, content: "hi" }],
+    }
+
+    const result = await createResponses(payload, {
+      vision: false,
+      initiator: "user",
+    })
+
+    expect(getAttachedPremiumInfo(result)).toEqual({
+      remaining: 106.5,
+      total: 300,
+    })
+  })
+
+  test("attaches premium info from response header", async () => {
+    const payload = {
+      model: "gpt-test",
+      input: [{ role: "user" as const, content: "hi" }],
+    }
+
+    const result = await createResponses(payload, {
+      vision: false,
+      initiator: "user",
+    })
+
+    expect(getAttachedPremiumInfo(result)).toEqual({
+      remaining: 106.5,
+      total: 300,
+    })
   })
 })
 

@@ -9,7 +9,7 @@ import {
   colorizeModel,
   createHandlerLogger,
   formatStreamLog,
-  getPremiumInfo,
+  resolvePremiumInfo,
   shouldUseColor,
 } from "~/lib/logger"
 import { checkRateLimit } from "~/lib/rate-limit"
@@ -131,7 +131,7 @@ export const handleResponses = async (c: Context) => {
           })
         }
       } finally {
-        const premium = await getPremiumInfo()
+        const premium = await resolvePremiumInfo(response, "responses/stream")
         process.stdout.write(
           `${formatStreamLog({ model: payload.model, chunks: chunkCount, done: true, premium })}\n`,
         )
@@ -143,7 +143,7 @@ export const handleResponses = async (c: Context) => {
     "Forwarding native Responses result:",
     JSON.stringify(response).slice(-400),
   )
-  const premium = await getPremiumInfo()
+  const premium = await resolvePremiumInfo(response, "responses/non-stream")
   process.stdout.write(
     `${formatStreamLog({ model: payload.model, chunks: 0, done: true, premium })}\n`,
   )

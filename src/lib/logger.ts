@@ -240,6 +240,98 @@ export interface StreamLogOptions {
   premium?: { remaining: number; total: number } | null
 }
 
+const premiumInfoSymbol = Symbol("premiumInfo")
+const PREMIUM_QUOTA_SNAPSHOT_HEADER = "x-quota-snapshot-premium_interactions"
+
+const formatPremiumRemaining = (value: number): string => {
+  const rounded = Math.round((value + Number.EPSILON) * 100) / 100
+  return rounded.toFixed(2).replace(/\.?0+$/, "")
+}
+
+export const getPremiumInfoFromHeaders = (
+  headers: Headers | Record<string, string> | undefined,
+): { remaining: number; total: number } | null => {
+  if (!headers) return null
+
+  const raw =
+    headers instanceof Headers ?
+      headers.get(PREMIUM_QUOTA_SNAPSHOT_HEADER)
+    : headers[PREMIUM_QUOTA_SNAPSHOT_HEADER]
+
+  if (!raw) return null
+
+  const params = new URLSearchParams(raw)
+  const total = Number(params.get("ent"))
+  const remainingPercent = Number(params.get("rem"))
+
+  if (
+    !Number.isFinite(total)
+    || !Number.isFinite(remainingPercent)
+    || total < 0
+  ) {
+    return null
+  }
+
+  return {
+    remaining: (total * remainingPercent) / 100,
+    total,
+  }
+}
+
+export const attachPremiumInfo = <T extends object>(
+  value: T,
+  premium: { remaining: number; total: number } | null,
+): T => {
+  Object.defineProperty(value, premiumInfoSymbol, {
+    value: premium,
+    enumerable: false,
+    configurable: true,
+  })
+  return value
+}
+
+export const getAttachedPremiumInfo = (
+  value: unknown,
+): { remaining: number; total: number } | null => {
+  if (!value || (typeof value !== "object" && typeof value !== "function")) {
+    return null
+  }
+
+  return (
+    (value as Record<symbol, { remaining: number; total: number } | null>)[
+      premiumInfoSymbol
+    ] ?? null
+  )
+}
+
+export const getPremiumInfo = async (): Promise<{
+  remaining: number
+  total: number
+} | null> => {
+  try {
+    const usage = await getCopilotUsage()
+    const pi = usage.quota_snapshots.premium_interactions
+    if (!pi.unlimited) {
+      return { remaining: pi.remaining, total: pi.entitlement }
+    }
+  } catch {
+    // Ignore errors, don't affect main flow
+  }
+  return null
+}
+
+export const resolvePremiumInfo = async (
+  value: unknown,
+  _context: string,
+): Promise<{ remaining: number; total: number } | null> => {
+  const attached = getAttachedPremiumInfo(value)
+  if (attached) {
+    return attached
+  }
+
+  return getPremiumInfo()
+}
+
 export const formatStreamLog = ({
   model,
   chunks,
@@ -257,23 +349,7 @@ export const formatStreamLog = ({
     else if (pct > 0.2) numColor = "\x1b[33m" // yellow
     const reset = "\x1b[0m"
     const dim = "\x1b[2m"
-    return `${base} [${numColor}${premium.remaining}${reset} ${dim}left${reset}]`
+    return `${base} [${numColor}${formatPremiumRemaining(premium.remaining)}${reset} ${dim}left${reset}]`
   }
   return base
-}
-
-export const getPremiumInfo = async (): Promise<{
-  remaining: number
-  total: number
-} | null> => {
-  try {
-    const usage = await getCopilotUsage()
-    const pi = usage.quota_snapshots.premium_interactions
-    if (!pi.unlimited) {
-      return { remaining: pi.remaining, total: pi.entitlement }
-    }
-  } catch {
-    // Ignore errors, don't affect main flow
-  }
-  return null
 }

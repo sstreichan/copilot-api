@@ -113,6 +113,10 @@ describe("Interaction headers", () => {
     }
     const successResponse = {
       ok: true,
+      headers: new Headers({
+        "x-quota-snapshot-premium_interactions":
+          "ent=300&ov=0.0&ovPerm=false&rem=35.5&rst=2026-04-01T00%3A00%3A00Z",
+      }),
       json: () =>
         Promise.resolve({
           id: "123",
@@ -181,6 +185,39 @@ describe("Interaction headers", () => {
 
     expect(trackPanelRequestCalls).toBe(0)
     expect(trackGhostTextShownCalls).toBe(0)
+  })
+
+  test("attaches premium info from response header without usage api call", async () => {
+    // @ts-expect-error - Mock fetch
+    globalThis.fetch = mock(
+      (url: string, opts: { headers: Record<string, string> }) => {
+        fetchCalls.push({ url, headers: opts.headers })
+        return Promise.resolve({
+          ok: true,
+          headers: new Headers({
+            "x-quota-snapshot-premium_interactions":
+              "ent=300&ov=0.0&ovPerm=false&rem=35.5&rst=2026-04-01T00%3A00%3A00Z",
+          }),
+          json: () =>
+            Promise.resolve({
+              id: "123",
+              object: "chat.completion",
+              choices: [],
+            }),
+        })
+      },
+    )
+
+    const payload: ChatCompletionsPayload = {
+      messages: [{ role: "user", content: "hi" }],
+      model: "gpt-test",
+    }
+    const result = await createChatCompletions(payload)
+
+    expect(
+      fetchCalls.every((call) => !call.url.includes("copilot_internal/user")),
+    ).toBe(true)
+    expect((result as { id: string }).id).toBe("123")
   })
 })
 

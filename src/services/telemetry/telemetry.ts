@@ -301,6 +301,10 @@ export function trackEvent(
     return
   }
 
+  if (state.copilotTelemetryEnabled === false) {
+    return
+  }
+
   // Sample at 30% to reduce telemetry volume
   if (Math.random() > 0.3) {
     return
@@ -468,7 +472,13 @@ export function trackResponseError(opts: TrackResponseErrorOptions): void {
 }
 
 export function trackAuthNewToken(): void {
-  trackEvent(EVENT_AUTH_NEW_TOKEN, {})
+  trackEvent(EVENT_AUTH_NEW_TOKEN, {
+    trackingId: state.copilotTrackingId ?? "",
+    telemetryEnabled:
+      state.copilotTelemetryEnabled === undefined ?
+        ""
+      : String(state.copilotTelemetryEnabled),
+  })
 }
 
 /** Send panel.edit.feedback event (simulates user accepting/rejecting an edit). */
@@ -854,7 +864,7 @@ function buildInlineConversationAcceptProperties(
       conversationId: randomConversationId(),
       responseId: randomTurnId(),
       messageId: randomMessageId(),
-      copilot_trackingId: randomTurnId(),
+      copilot_trackingId: state.copilotTrackingId ?? randomTurnId(),
       reason: "accepted",
       replyType: "inlineEdit",
     },

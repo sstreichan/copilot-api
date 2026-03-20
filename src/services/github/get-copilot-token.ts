@@ -30,10 +30,32 @@ export const getCopilotToken = async () => {
 
 // Trimmed for the sake of simplicity
 interface GetCopilotTokenResponse {
+  agent_mode_auto_approval?: boolean
+  annotations_enabled?: boolean
+  azure_only?: boolean
+  blackbird_clientside_indexing?: boolean
+  chat_enabled?: boolean
+  chat_jetbrains_enabled?: boolean
+  code_quote_enabled?: boolean
+  code_review_enabled?: boolean
+  codesearch?: boolean
+  copilotignore_enabled?: boolean
   expires_at: number
   refresh_in: number
+  individual?: boolean
+  limited_user_quotas?: unknown
+  limited_user_reset_date?: string | null
+  prompt_8k?: boolean
+  public_suggestions?: string
+  sku?: string
+  snippy_load_test_enabled?: boolean
+  telemetry?: string
   token: string
+  tracking_id?: string
+  vsc_electron_fetcher_v2?: boolean
+  xcode?: boolean
+  xcode_chat?: boolean
   endpoints?: { telemetry?: string; [key: string]: string | undefined }
   organization_list?: Array<string>
-  enterprise_list?: Array<string>
+  enterprise_list?: Array<number>
 }

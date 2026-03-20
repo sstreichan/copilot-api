@@ -3,6 +3,7 @@ import { test, expect, mock, spyOn, afterEach, beforeEach } from "bun:test"
 import type { AnthropicMessagesPayload } from "../src/routes/messages/anthropic-types"
 
 import * as configModule from "../src/lib/config"
+import { getAttachedPremiumInfo } from "../src/lib/logger"
 import { clearSmartAgentCache } from "../src/lib/smart-agent"
 import { state } from "../src/lib/state"
 import { createMessages } from "../src/services/copilot/create-messages"
@@ -42,7 +43,11 @@ beforeEach(() => {
       }),
       text: () => Promise.resolve('{"itemsReceived":1,"itemsAccepted":1}'),
       body: new ReadableStream(),
-      headers: opts.headers,
+      headers: new Headers({
+        ...opts.headers,
+        "x-quota-snapshot-premium_interactions":
+          "ent=300&ov=0.0&ovPerm=false&rem=35.5&rst=2026-04-01T00%3A00%3A00Z",
+      }),
     }),
   )
   // @ts-expect-error - Mock fetch doesn't implement all fetch properties
@@ -322,6 +327,21 @@ test("returns raw Response object", async () => {
   expect(response).toHaveProperty("status")
   expect(response).toHaveProperty("body")
   expect(response).toHaveProperty("json")
+})
+
+test("attaches premium info from response header", async () => {
+  const payload: AnthropicMessagesPayload = {
+    model: "claude-sonnet-4-20250514",
+    max_tokens: 1024,
+    messages: [{ role: "user", content: "hi" }],
+  }
+
+  const response = await createMessages(payload)
+
+  expect(getAttachedPremiumInfo(response)).toEqual({
+    remaining: 106.5,
+    total: 300,
+  })
 })
 
 test("throws error when copilot token is missing", async () => {

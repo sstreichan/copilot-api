@@ -86,7 +86,7 @@ export function getCommonProperties(opts: {
   vsCodeVersion?: string
   sku?: string
   organizationList?: Array<string>
-  enterpriseList?: Array<string>
+  enterpriseList?: Array<number>
 }): Record<string, string> {
   const {
     machineId,

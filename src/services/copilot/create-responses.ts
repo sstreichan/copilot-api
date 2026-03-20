@@ -10,6 +10,7 @@ import {
   prepareInteractionHeaders,
 } from "~/lib/api-config"
 import { HTTPError } from "~/lib/error"
+import { attachPremiumInfo, getPremiumInfoFromHeaders } from "~/lib/logger"
 import { resolveInitiatorWithSmartAgent } from "~/lib/smart-agent"
 import { state } from "~/lib/state"
 import {
@@ -453,7 +454,10 @@ export const createResponses = async (
       finishReason: "stream",
       modelCallId,
     })
-    return events(response)
+    return attachPremiumInfo(
+      events(response),
+      getPremiumInfoFromHeaders(response.headers),
+    )
   }
 
   const result = (await response.json()) as ResponsesResult
@@ -469,5 +473,5 @@ export const createResponses = async (
     bytesReceived: serialized.length,
     modelCallId,
   })
-  return result
+  return attachPremiumInfo(result, getPremiumInfoFromHeaders(response.headers))
 }

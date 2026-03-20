@@ -7,9 +7,12 @@ export interface State {
   interactionId: string
   githubToken?: string
   copilotToken?: string
+  copilotApiUrl?: string
+  copilotTrackingId?: string
+  copilotTelemetryEnabled?: boolean
   sku?: string
   organizationList?: Array<string>
-  enterpriseList?: Array<string>
+  enterpriseList?: Array<number>
 
   accountType: string
   models?: ModelsResponse

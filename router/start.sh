@@ -74,7 +74,7 @@ validate_tokens_file() {
       and (.name | type == "string" and length > 0)
       and (.port | type == "number" and . > 0)
       and (.token | type == "string" and length > 0)
-      and ((.accountType // "individual") | type == "string")
+      and ((.accountType? // null) | (type == "string" or type == "null"))
       and ((.flags // []) | type == "array")
       and all((.flags // [])[]; type == "string")
     )
@@ -201,7 +201,7 @@ reserve_router_pane() {
 }
 
 start_instances() {
-  local current_pane total idx entry name port token account_type remaining percent
+  local current_pane total idx entry name port token remaining percent
   local -a flags cmd
 
   current_pane="$TOP_PANE_ID"
@@ -212,7 +212,6 @@ start_instances() {
     name="$(json_get "$entry" '.name')"
     port="$(json_get "$entry" '.port | tostring')"
     token="$(json_get "$entry" '.token')"
-    account_type="$(json_get "$entry" '.accountType // "individual"')"
     mapfile -t flags < <(json_get_lines "$entry" '.flags[]?')
 
     INSTANCE_NAMES+=("$name")
@@ -220,7 +219,10 @@ start_instances() {
 
     tmux select-pane -t "$current_pane" -T ":$port"
 
-    cmd=(bun src/main.ts start -g "$token" -p "$port" -a "$account_type")
+    cmd=(bun src/main.ts start -g "$token" -p "$port")
+    if [[ "$(json_get "$entry" 'has("accountType")')" == "true" ]]; then
+      cmd+=(-a "$(json_get "$entry" '.accountType')")
+    fi
     if ((${#flags[@]} > 0)); then
       cmd+=("${flags[@]}")
     fi

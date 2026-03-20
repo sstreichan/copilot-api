@@ -15,7 +15,7 @@ import {
   colorizeModel,
   createHandlerLogger,
   formatStreamLog,
-  getPremiumInfo,
+  resolvePremiumInfo,
   shouldUseColor,
 } from "~/lib/logger"
 import { findEndpointModel } from "~/lib/models"
@@ -243,7 +243,7 @@ const handleWithNativeMessages = async (
 
   // Stream: use raw body passthrough (NOT streamSSE reconstruction)
   if (anthropicPayload.stream && response.body) {
-    const premium = await getPremiumInfo()
+    const premium = await resolvePremiumInfo(response, "messages/native-stream")
     let chunkCount = 0
     let buffer = ""
     const decoder = new TextDecoder()
@@ -305,7 +305,10 @@ const handleWithNativeMessages = async (
 
   // Non-stream: return JSON directly
   const jsonResponse = await response.json()
-  const premium = await getPremiumInfo()
+  const premium = await resolvePremiumInfo(
+    response,
+    "messages/native-non-stream",
+  )
   process.stdout.write(
     `${formatStreamLog({ model: options.originalModel, chunks: 0, done: true, premium })}\n`,
   )
@@ -343,7 +346,10 @@ const handleWithChatCompletions = async (
       "Translated Anthropic response:",
       JSON.stringify(anthropicResponse),
     )
-    const premium = await getPremiumInfo()
+    const premium = await resolvePremiumInfo(
+      response,
+      "messages/chat-non-stream",
+    )
     process.stdout.write(
       `${formatStreamLog({ model: openAIPayload.model, chunks: 0, done: true, premium })}\n`,
     )
@@ -396,7 +402,7 @@ const handleWithChatCompletions = async (
       }
     } finally {
       clearInterval(pingInterval)
-      const premium = await getPremiumInfo()
+      const premium = await resolvePremiumInfo(response, "messages/chat-stream")
       process.stdout.write(
         `${formatStreamLog({ model: openAIPayload.model, chunks: chunkCount, done: true, premium })}\n`,
       )
@@ -512,7 +518,10 @@ const handleWithResponsesApi = async (
         }
       } finally {
         clearInterval(pingInterval)
-        const premium = await getPremiumInfo()
+        const premium = await resolvePremiumInfo(
+          response,
+          "messages/responses-stream",
+        )
         process.stdout.write(
           `${formatStreamLog({ model: responsesPayload.model, chunks: chunkCount, done: true, premium })}\n`,
         )
@@ -531,7 +540,10 @@ const handleWithResponsesApi = async (
     "Translated Anthropic response:",
     JSON.stringify(anthropicResponse),
   )
-  const premium = await getPremiumInfo()
+  const premium = await resolvePremiumInfo(
+    response,
+    "messages/responses-non-stream",
+  )
   process.stdout.write(
     `${formatStreamLog({ model: responsesPayload.model, chunks: 0, done: true, premium })}\n`,
   )

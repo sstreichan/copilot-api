@@ -192,10 +192,17 @@ beforeEach(() => {
   requestMock.mockClear()
 
   state.copilotToken = "test-copilot-token"
+  state.copilotApiUrl = undefined
+  state.copilotTrackingId = undefined
+  state.copilotTelemetryEnabled = undefined
   state.githubToken = "test-github-token"
   state.vsCodeVersion = "1.0.0"
   state.accountType = "individual"
+  state.organizationList = undefined
+  state.enterpriseList = undefined
   state.forceAgent = false
+
+  initTelemetry("tid=test-user;exp=9999999999;sku=test_sku")
 })
 
 afterEach(() => {
@@ -407,7 +414,7 @@ describe("telemetry integration event-specific routing", () => {
   it("sends ghostText.shown to GH telemetry with vendor-required fields", async () => {
     mockTelemetryEnabled = true
     state.organizationList = ["org-a", "org-b"]
-    state.enterpriseList = ["ent-a"]
+    state.enterpriseList = [999001]
     installFetchMock((url) => {
       if (url === DEFAULT_TELEMETRY_ENDPOINT) {
         return Promise.resolve(
@@ -438,7 +445,7 @@ describe("telemetry integration event-specific routing", () => {
     expect(properties.copilot_trackingId).toBe("track-1")
     expect(properties.clientCompletionId).toBe("completion-1")
     expect(properties.organizations_list).toBe("org-a,org-b")
-    expect(properties.enterprise_list).toBe("ent-a")
+    expect(properties.enterprise_list).toBe("999001")
     expect(properties.client_sessionid).toBeDefined()
     expect(properties.editor_version).toBeDefined()
     expect(properties.editor_plugin_version).toBeDefined()

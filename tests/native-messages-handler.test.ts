@@ -1,10 +1,12 @@
 import { describe, test, expect, beforeEach, afterEach, spyOn } from "bun:test"
 import consola from "consola"
 import { Hono } from "hono"
+import { stripVTControlCharacters } from "node:util"
 
 import type { AnthropicMessagesPayload } from "~/routes/messages/anthropic-types"
 
 import * as configModule from "~/lib/config"
+import * as loggerModule from "~/lib/logger"
 import * as rateLimitModule from "~/lib/rate-limit"
 import { state } from "~/lib/state"
 import {
@@ -200,6 +202,9 @@ describe("native handler", () => {
   let effortSpy: ReturnType<
     typeof spyOn<typeof configModule, "getReasoningEffortForModel">
   >
+  let getPremiumInfoSpy: ReturnType<
+    typeof spyOn<typeof loggerModule, "getPremiumInfo">
+  >
 
   beforeEach(() => {
     state.nativeMessages = true
@@ -215,6 +220,12 @@ describe("native handler", () => {
         headers: { "Content-Type": "application/json" },
       }),
     )
+    getPremiumInfoSpy = spyOn(loggerModule, "getPremiumInfo").mockResolvedValue(
+      {
+        remaining: 470,
+        total: 1500,
+      },
+    )
     rateLimitSpy = spyOn(rateLimitModule, "checkRateLimit").mockResolvedValue()
     effortSpy = spyOn(
       configModule,
@@ -226,6 +237,7 @@ describe("native handler", () => {
     state.nativeMessages = originalNative
     infoSpy.mockRestore()
     createMessagesSpy.mockRestore()
+    getPremiumInfoSpy.mockRestore()
     rateLimitSpy.mockRestore()
     effortSpy.mockRestore()
   })
@@ -249,5 +261,31 @@ describe("native handler", () => {
 
     const infoCall = getFirstInfoCall(infoSpy)
     expect(infoCall).toContain("[effort=max (config)]")
+  })
+
+  test("falls back to usage premium info when native response has no attached quota header", async () => {
+    const writeSpy = spyOn(process.stdout, "write").mockReturnValue(true)
+    const app = new Hono()
+    app.post("/v1/messages", (c) => handleCompletion(c))
+
+    const res = await app.request("/v1/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "claude-opus-4",
+        max_tokens: 1024,
+        messages: [{ role: "user", content: "hi" }],
+      } satisfies AnthropicMessagesPayload),
+    })
+
+    expect(res.status).toBe(200)
+    expect(getPremiumInfoSpy).toHaveBeenCalled()
+    expect(
+      writeSpy.mock.calls.some((call) =>
+        stripVTControlCharacters(String(call[0])).includes("[470 left]"),
+      ),
+    ).toBe(true)
+
+    writeSpy.mockRestore()
   })
 })

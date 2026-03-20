@@ -14,6 +14,7 @@ import {
 } from "~/lib/api-config"
 import { getReasoningEffortForModel } from "~/lib/config"
 import { HTTPError } from "~/lib/error"
+import { attachPremiumInfo, getPremiumInfoFromHeaders } from "~/lib/logger"
 import { resolveInitiatorWithSmartAgent } from "~/lib/smart-agent"
 import { state } from "~/lib/state"
 import {
@@ -377,5 +378,5 @@ export const createMessages = async (
     requestId,
     modelCallId,
   })
-  return result
+  return attachPremiumInfo(result, getPremiumInfoFromHeaders(result.headers))
 }

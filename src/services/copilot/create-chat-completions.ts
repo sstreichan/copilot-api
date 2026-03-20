@@ -10,6 +10,7 @@ import {
   prepareInteractionHeaders,
 } from "~/lib/api-config"
 import { HTTPError } from "~/lib/error"
+import { attachPremiumInfo, getPremiumInfoFromHeaders } from "~/lib/logger"
 import { resolveInitiatorWithSmartAgent } from "~/lib/smart-agent"
 import { state } from "~/lib/state"
 import {
@@ -82,6 +83,7 @@ async function handleOkResponse(
   payload: ChatCompletionsPayload,
   opts: { start: number; requestId?: string; modelCallId?: string },
 ) {
+  const premium = getPremiumInfoFromHeaders(response.headers)
   if (opts.requestId) {
     scheduleFeedbackEvents(opts.requestId)
     schedulePostResponseEvents(opts.requestId, payload.model)
@@ -94,7 +96,7 @@ async function handleOkResponse(
       modelCallId: opts.modelCallId,
       finishReason: "stream",
     })
-    return events(response)
+    return attachPremiumInfo(events(response), premium)
   }
   const result = (await response.json()) as ChatCompletionResponse
   trackNonStreamSuccess({
@@ -104,7 +106,7 @@ async function handleOkResponse(
     requestId: opts.requestId,
     modelCallId: opts.modelCallId,
   })
-  return result
+  return attachPremiumInfo(result, premium)
 }
 
 function trackSuccessUiTelemetry(opts: {

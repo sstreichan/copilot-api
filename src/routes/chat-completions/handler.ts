@@ -6,7 +6,7 @@ import { awaitApproval } from "~/lib/approval"
 import {
   createHandlerLogger,
   formatStreamLog,
-  getPremiumInfo,
+  resolvePremiumInfo,
 } from "~/lib/logger"
 import { checkRateLimit } from "~/lib/rate-limit"
 import { state } from "~/lib/state"
@@ -67,7 +67,10 @@ export async function handleCompletion(c: Context) {
 
   if (isNonStreaming(response)) {
     logger.debug("Non-streaming response:", JSON.stringify(response))
-    const premium = await getPremiumInfo()
+    const premium = await resolvePremiumInfo(
+      response,
+      "chat-completions/non-stream",
+    )
     process.stdout.write(
       `${formatStreamLog({ model: payload.model, chunks: 0, done: true, premium })}\n`,
     )
@@ -100,7 +103,10 @@ export async function handleCompletion(c: Context) {
         await stream.writeSSE(sseChunk)
       }
     } finally {
-      const premium = await getPremiumInfo()
+      const premium = await resolvePremiumInfo(
+        response,
+        "chat-completions/stream",
+      )
       process.stdout.write(
         `${formatStreamLog({ model: payload.model, chunks: chunkCount, done: true, premium })}\n`,
       )

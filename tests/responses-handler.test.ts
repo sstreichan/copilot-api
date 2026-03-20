@@ -9,6 +9,7 @@ import type {
 } from "~/services/copilot/create-responses"
 
 import * as configModule from "~/lib/config"
+import * as loggerModule from "~/lib/logger"
 import * as rateLimitModule from "~/lib/rate-limit"
 import { state } from "~/lib/state"
 import { handleResponses } from "~/routes/responses/handler"
@@ -83,6 +84,9 @@ describe("handleResponses reasoning effort", () => {
   let isContextModelSpy: ReturnType<
     typeof spyOn<typeof configModule, "isResponsesApiContextManagementModel">
   >
+  let getPremiumInfoSpy: ReturnType<
+    typeof spyOn<typeof loggerModule, "getPremiumInfo">
+  >
 
   beforeEach(() => {
     state.models = {
@@ -142,6 +146,12 @@ describe("handleResponses reasoning effort", () => {
       configModule,
       "isResponsesApiContextManagementModel",
     ).mockReturnValue(false)
+    getPremiumInfoSpy = spyOn(loggerModule, "getPremiumInfo").mockResolvedValue(
+      {
+        remaining: 470,
+        total: 1500,
+      },
+    )
   })
 
   afterEach(() => {
@@ -153,6 +163,7 @@ describe("handleResponses reasoning effort", () => {
     resolveEffortSpy.mockRestore()
     getContextModelsSpy.mockRestore()
     isContextModelSpy.mockRestore()
+    getPremiumInfoSpy.mockRestore()
   })
 
   test("fills reasoning effort from config when missing", async () => {
@@ -194,5 +205,30 @@ describe("handleResponses reasoning effort", () => {
     const infoCall = getFirstInfoCall(infoSpy)
     expect(infoCall).toContain("IN gpt-test")
     expect(infoCall).toContain("[effort=minimal (request)]")
+  })
+
+  test("falls back to usage premium info when response has no attached quota header", async () => {
+    const writeSpy = spyOn(process.stdout, "write").mockReturnValue(true)
+    createResponsesSpy.mockResolvedValueOnce(responseResult)
+
+    const app = createApp()
+    const res = await app.request("/v1/responses", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "gpt-test",
+        input: [{ role: "user", content: "hi" }],
+      }),
+    })
+
+    expect(res.status).toBe(200)
+    expect(getPremiumInfoSpy).toHaveBeenCalled()
+    expect(
+      writeSpy.mock.calls.some((call) =>
+        stripVTControlCharacters(String(call[0])).includes("[470 left]"),
+      ),
+    ).toBe(true)
+
+    writeSpy.mockRestore()
   })
 })
