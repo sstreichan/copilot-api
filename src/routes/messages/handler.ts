@@ -326,8 +326,14 @@ const handleWithChatCompletions = async (
   },
 ) => {
   const openAIPayload = translateToOpenAI(anthropicPayload)
+  const { value: effortValue, source: effortSource } =
+    resolveAnthropicEffortForLog(
+      anthropicPayload.output_config?.effort,
+      anthropicPayload.model,
+    )
+
   consola.info(
-    `IN ${cm(options.originalModel)} \u2192 ${cm(openAIPayload.model)}`,
+    `IN ${cm(options.originalModel)} \u2192 ${cm(openAIPayload.model)} [effort=${effortValue} (${effortSource})]`,
   )
   logger.debug(
     "Translated OpenAI request payload:",

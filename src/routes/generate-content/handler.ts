@@ -5,7 +5,13 @@ import consola from "consola"
 import { streamSSE } from "hono/streaming"
 
 import { awaitApproval } from "~/lib/approval"
+import { resolveEffortForLog } from "~/lib/config"
 import { DebugLogger } from "~/lib/debug-logger"
+import {
+  createHandlerLogger,
+  colorizeModel,
+  shouldUseColor,
+} from "~/lib/logger"
 import { checkRateLimit } from "~/lib/rate-limit"
 import { state } from "~/lib/state"
 import { getTokenCount } from "~/lib/tokenizer"
@@ -14,6 +20,9 @@ import {
   type ChatCompletionResponse,
   type ChatCompletionChunk,
 } from "~/services/copilot/create-chat-completions"
+
+const logger = createHandlerLogger("gemini-handler")
+const cm = (model: string) => (shouldUseColor() ? colorizeModel(model) : model)
 
 // Helper function to extract model from URL path
 
@@ -92,6 +101,14 @@ export async function handleGeminiGeneration(
     )
     responsesPayload.stream = stream ? true : null
 
+    const { value: effortValue, source: effortSource } = resolveEffortForLog(
+      undefined,
+      mappedModel,
+    )
+    logger.info(
+      `IN ${cm(model)} \u2192 ${cm(mappedModel)} [effort=${effortValue} (${effortSource})]`,
+    )
+
     const responsesResult = await createResponses(responsesPayload, {
       vision,
       initiator,
@@ -110,6 +127,14 @@ export async function handleGeminiGeneration(
   }
 
   const openAIPayload = translateGeminiToOpenAI(geminiPayload, model, stream)
+
+  const { value: effortValue, source: effortSource } = resolveEffortForLog(
+    undefined,
+    openAIPayload.model,
+  )
+  logger.info(
+    `IN ${cm(model)} \u2192 ${cm(openAIPayload.model)} [effort=${effortValue} (${effortSource})]`,
+  )
 
   // Log request for debugging (async, non-blocking) - only if debug logging is enabled
   if (process.env.DEBUG_GEMINI_REQUESTS === "true") {
