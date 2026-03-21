@@ -41,10 +41,12 @@ GitHub Copilot API 的反向代理，基于 **Hono** 框架（非 Express），�
 - `src/AGENTS.md` - 运行时代码总览；路由、服务、共享状态、配置入口
 - `src/lib/AGENTS.md` - 共享状态、配置、token 生命周期、smart agent、路径与日志约束
 - `src/routes/messages/AGENTS.md` - Anthropic `/v1/messages` 分支顺序、流式不变量、native messages 限制
+- `src/routes/chat-completions/AGENTS.md` - OpenAI chat completions 路由约束、stream/non-stream 分支与上游 service 边界
 - `src/routes/models/AGENTS.md` - 增强版 `/v1/models`，过滤、排序与 limits/capability 映射规则
 - `src/routes/responses/AGENTS.md` - OpenAI Responses 路由、stream ID 同步、tool 预处理规则
 - `src/routes/generate-content/AGENTS.md` - Gemini 路由分流、Responses/codex 分支、流式关闭要求
 - `src/routes/provider/AGENTS.md` - Provider-scoped Anthropic 代理路由、count_tokens 回退与上游透传规则
+- `src/services/AGENTS.md` - service 根层边界与子目录职责分工（copilot/github/providers/telemetry）
 - `src/services/copilot/AGENTS.md` - 上游 Copilot 调用、native messages 后端适配、telemetry 与 header 规则
 - `src/services/github/AGENTS.md` - GitHub 认证、device flow、Copilot token 与 usage 获取边界
 - `src/services/providers/AGENTS.md` - 多提供商上游转发、header allowlist、response 头清洗约束
@@ -121,7 +123,7 @@ bun run dev -- --proxy-env  # 从环境变量读取代理配置
 `router/` 目录实现多实例 copilot-api 的 session-sticky 路由：
 
 - **三层拆分**：`lib.ts`（纯函数）→ `state.ts`（状态与路由决策）→ `sticky-router.ts`（装配壳）
-- **Binding key**：`{x-session-id}:{x-oc-agent}:{x-oc-model}` 三元组决定 sticky 去向
+- **Binding key**：仅在 `x-session-id` 存在时生成 `{session}:{agent}:{model}`，缺失 session 时走 least-loaded
 - **Least-loaded**：无已有绑定时，按各端口总请求数选最闲的实例
 - **Dashboard**：`:4139` 提供实时 SSE 仪表盘，可视化 binding 和路由历史
 - **start.sh**：tmux 编排脚本，一键起多实例 + router + dashboard

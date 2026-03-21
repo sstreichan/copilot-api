@@ -57,11 +57,11 @@ bun run typecheck                         # 类型检查
 
 ### Sticky Binding
 
-每请求携三元标识：`x-session-id`、`x-oc-agent`、`x-oc-model`。
-三者拼成 binding key（`{session}:{agent}:{model}`）。
-已有绑定 → **sticky**（复用旧端口）。
-无绑定 → **least-loaded**（总请求数最少之端口，平局随机）。
-旧端口不再提供该模型 → **rebalance**（重新选择）。
+请求通常携三元标识：`x-session-id`、`x-oc-agent`、`x-oc-model`。
+仅当 `x-session-id` 存在时，才会生成 binding key（`{session}:{agent}:{model}`）。
+已有绑定且端口仍支持该模型 → **sticky**（复用旧端口）。
+无绑定或无 `x-session-id` → **least-loaded**（总请求数最少之端口，平局随机）。
+已有绑定但原端口不再支持该模型 → **rebalance**（重新选择并覆盖绑定）。
 
 另可见 `x-oc-provider`。此项只入 `RouteRecord` 与日志，供人辨来路；
 **不入 binding key**，亦不主导 sticky 去向。
@@ -76,10 +76,16 @@ bun run typecheck                         # 类型检查
 
 请求中无 model → `pickLeastLoaded` 在全部端口中选一个，reason 记为 `nomodel`。
 
+### Model 来源优先级
+
+路由侧先尝试从 request body 解析 `model`，若缺失再回退到 `x-oc-model` header。
+其中 `x-oc-model: _` 视作空值，不参与模型路由决策。
+
 ### Router 自身端点
 
 - `GET /status` —— 回实例状态、binding 表、`modelToPorts`、history 大小，供巡检或脚本探问。
 - `GET /v1/models` —— 将各实例已发现模型去重后并表返回，作 router 视角之模型清册。
+  若同名模型在多实例存在，保留 `context_window` 更大的详情对象。
 
 ### Proxy 转发
 
@@ -194,5 +200,5 @@ import type { Instance } from "./lib"      // 类型单独 import type
 
 > 凡改此处代码者，当先跑测试，后看仪表盘。
 > 改纯函数加测试于 `lib.test.ts`，改路由逻辑加测试于 `state.test.ts`。
-> 切记：**sticky binding 一旦建立，非清非亡不可解**。
+> 切记：**sticky binding 会在 clear 操作或模型可用性变化时重算**。
 > 此乃设计之本意，非 bug 也。

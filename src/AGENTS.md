@@ -17,10 +17,12 @@
 
 - `lib/AGENTS.md` - `state.ts`、`config.ts`、`token.ts`、`smart-agent.ts` 的共享基础设施约束
 - `routes/messages/AGENTS.md` - Anthropic messages / native messages 分支细节
+- `routes/chat-completions/AGENTS.md` - OpenAI chat completions 路由约束、stream/non-stream 分支与 service 边界
 - `routes/models/AGENTS.md` - `/v1/models` 过滤、排序与增强字段映射规则
 - `routes/responses/AGENTS.md` - OpenAI Responses 路由、stream ID sync 与 tool 预处理约束
 - `routes/generate-content/AGENTS.md` - Gemini 路由与 codex/responses 分流
 - `routes/provider/AGENTS.md` - Provider-scoped Anthropic 代理路由、messages/models/count_tokens 分流
+- `services/AGENTS.md` - service 根层边界与子目录职责分工（copilot/github/providers/telemetry）
 - `services/copilot/AGENTS.md` - 上游 Copilot 请求、retry、telemetry、backend workaround
 - `services/github/AGENTS.md` - GitHub auth/device flow、Copilot token 与 usage 获取边界
 - `services/providers/AGENTS.md` - 多 provider 转发、header allowlist、response 透传规则
