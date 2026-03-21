@@ -35,6 +35,21 @@
 - Messages → Responses 路径如命中 `responsesApiContextManagementModels`，必须先 `applyResponsesApiContextManagement()`，再对非 compact 请求执行 `compactInputByLatestCompaction()`
 - `findEndpointModel()` 必须在请求真正发往 service 前映射逻辑模型名；否则 provider/per-endpoint 限制会落在错误模型上
 
+## Effort Parameter Mapping
+
+入站请求携带 Anthropic `output_config.effort`，根据路径翻译到 Copilot 后端不同端点的不同参数名和值：
+
+| 入站 `output_config.effort` | → Copilot `/v1/messages` 出站 | → Copilot `/responses` 出站 |
+|:---:|:---:|:---:|
+| `"low"` | `output_config.effort = "low"` | `reasoning.effort = "low"` |
+| `"medium"` | `output_config.effort = "medium"` | `reasoning.effort = "medium"` |
+| `"high"` | `output_config.effort = "high"` | `reasoning.effort = "high"` |
+| `"max"` | `output_config.effort = "max"` | `reasoning.effort = "xhigh"` |
+
+- Native 路径（`buildEnhancedPayload`）：直传，格式不变
+- Responses 路径（`mapAnthropicEffortToResponses`）：`max` → `xhigh`，其余同名
+- 未传 effort 时，两条路径均从 `modelReasoningEfforts` 配置取默认值（默认 `"high"`）
+
 ## Anti-Patterns
 
 - 调整 native branch 顺序，让 payload 先被 OpenAI/mergeToolResult 逻辑污染
