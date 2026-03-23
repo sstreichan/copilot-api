@@ -52,6 +52,7 @@ function createState() {
   ])
 }
 
+// eslint-disable-next-line max-lines-per-function
 describe("router handlers", () => {
   test("router handler serves status and model catalog", async () => {
     const state = createState()
@@ -154,6 +155,62 @@ describe("router handlers", () => {
     ])
     expect(logs[0]).toContain("reason=new")
     expect(logs[1]).toContain("reason=sticky")
+  })
+
+  test("router handler keeps least-loaded routing when responses request lacks x-session-id header", async () => {
+    const state = createState()
+    const proxiedPorts: Array<string> = []
+    state.modelToPorts.set("gpt-5.4", [4141, 4142])
+
+    const fetchImpl = createFetchStub((input) => {
+      proxiedPorts.push(new URL(toInputUrl(input)).port)
+      return Promise.resolve(new Response("ok"))
+    })
+
+    const handler = createRouterHandler({
+      state,
+      logger: () => {},
+      fetchImpl,
+      now: () => "2026-03-13T00:00:00.000Z",
+    })
+
+    const body = JSON.stringify({
+      model: "gpt-5.4",
+      prompt_cache_key: "responses-session-1",
+      input: [{ role: "user", content: "hello" }],
+    })
+
+    const first = await handler(
+      new Request("http://localhost/v1/responses", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-oc-agent": "atlas",
+          "x-oc-provider": "openai",
+        },
+        body,
+      }),
+    )
+    const second = await handler(
+      new Request("http://localhost/v1/responses", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-oc-agent": "atlas",
+          "x-oc-provider": "openai",
+        },
+        body,
+      }),
+    )
+
+    expect(first.status).toBe(200)
+    expect(second.status).toBe(200)
+    expect(proxiedPorts.sort()).toEqual(["4141", "4142"])
+    expect(state.routeHistory.map((entry) => entry.sid)).toEqual(["-", "-"])
+    expect(state.routeHistory.map((entry) => entry.reason)).toEqual([
+      "new",
+      "new",
+    ])
   })
 
   test("router handler distributes nomodel requests by least-loaded and rejects unknown models", async () => {

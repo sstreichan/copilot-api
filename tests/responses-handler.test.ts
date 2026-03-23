@@ -13,6 +13,7 @@ import * as configModule from "~/lib/config"
 import * as loggerModule from "~/lib/logger"
 import * as rateLimitModule from "~/lib/rate-limit"
 import { state } from "~/lib/state"
+import { generateRequestIdFromPayload, getUUID } from "~/lib/utils"
 import { handleResponses } from "~/routes/responses/handler"
 import * as createResponsesModule from "~/services/copilot/create-responses"
 
@@ -67,6 +68,10 @@ const getFirstInfoCall = (
   return normalizeInfoCall(firstArg)
 }
 
+type CreateResponsesOptions = Parameters<
+  typeof createResponsesModule.createResponses
+>[1]
+
 test("normalizes ANSI-colored info logs before assertions", () => {
   expect(
     normalizeInfoCall(
@@ -75,9 +80,11 @@ test("normalizes ANSI-colored info logs before assertions", () => {
   ).toBe("IN gpt-test [effort=high (config)]")
 })
 
+// eslint-disable-next-line max-lines-per-function
 describe("handleResponses reasoning effort", () => {
   const originalModels = state.models
   let receivedPayload: ResponsesPayload | undefined
+  let receivedOptions: CreateResponsesOptions | undefined
   let infoSpy: ReturnType<typeof spyOn<typeof consola, "info">>
   let createResponsesSpy: ReturnType<
     typeof spyOn<typeof createResponsesModule, "createResponses">
@@ -125,14 +132,16 @@ describe("handleResponses reasoning effort", () => {
     }
 
     receivedPayload = undefined
+    receivedOptions = undefined
     infoSpy = spyOn(consola, "info").mockImplementation(((
       ..._args: Parameters<typeof consola.info>
     ) => {}) as typeof consola.info)
     createResponsesSpy = spyOn(
       createResponsesModule,
       "createResponses",
-    ).mockImplementation((payload: ResponsesPayload) => {
+    ).mockImplementation((payload: ResponsesPayload, options) => {
       receivedPayload = payload
+      receivedOptions = options
       return Promise.resolve(responseResult)
     })
     rateLimitSpy = spyOn(rateLimitModule, "checkRateLimit").mockResolvedValue()
@@ -216,6 +225,113 @@ describe("handleResponses reasoning effort", () => {
     const infoCall = getFirstInfoCall(infoSpy)
     expect(infoCall).toContain("IN gpt-test")
     expect(infoCall).toContain("[effort=minimal (request)]")
+  })
+
+  test("derives stable session identity from prompt_cache_key", async () => {
+    const app = createApp()
+
+    const input = [{ role: "user", content: "hi" }]
+    const res = await app.request("/v1/responses", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "gpt-test",
+        input,
+        prompt_cache_key: "stable-session-key",
+      }),
+    })
+
+    const expectedSessionId = getUUID("stable-session-key")
+
+    expect(res.status).toBe(200)
+    expect(receivedPayload?.prompt_cache_key).toBe("stable-session-key")
+    expect(receivedOptions?.sessionId).toBe(expectedSessionId)
+    expect(receivedOptions?.requestId).toBe(
+      generateRequestIdFromPayload({ messages: input }, expectedSessionId),
+    )
+  })
+
+  test("backfills prompt_cache_key from metadata.user_id session marker", async () => {
+    const app = createApp()
+
+    const input = [{ role: "user", content: "hi" }]
+    const res = await app.request("/v1/responses", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "gpt-test",
+        input,
+        metadata: {
+          user_id: "user_demo_account_business_session_session-from-user-id",
+        },
+      }),
+    })
+
+    const expectedSessionId = getUUID("session-from-user-id")
+
+    expect(res.status).toBe(200)
+    expect(receivedPayload?.prompt_cache_key).toBe("session-from-user-id")
+    expect(receivedOptions?.sessionId).toBe(expectedSessionId)
+    expect(receivedOptions?.requestId).toBe(
+      generateRequestIdFromPayload({ messages: input }, expectedSessionId),
+    )
+  })
+
+  test("strips reasoning encrypted_content from direct responses replay input", async () => {
+    const app = createApp()
+
+    const res = await app.request("/v1/responses", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "gpt-test",
+        input: [
+          {
+            role: "user",
+            content: "hello",
+          },
+          {
+            type: "reasoning",
+            id: "reasoning-1",
+            summary: [{ type: "summary_text", text: "thinking" }],
+            encrypted_content: "encrypted",
+          },
+          {
+            type: "message",
+            role: "assistant",
+            content: [
+              {
+                type: "output_text",
+                text: "answer",
+              },
+            ],
+          },
+        ],
+      }),
+    })
+
+    expect(res.status).toBe(200)
+    expect(receivedPayload?.input).toEqual([
+      {
+        role: "user",
+        content: "hello",
+      },
+      {
+        type: "reasoning",
+        id: "reasoning-1",
+        summary: [{ type: "summary_text", text: "thinking" }],
+      },
+      {
+        type: "message",
+        role: "assistant",
+        content: [
+          {
+            type: "output_text",
+            text: "answer",
+          },
+        ],
+      },
+    ])
   })
 
   test("falls back to usage premium info when response has no attached quota header", async () => {

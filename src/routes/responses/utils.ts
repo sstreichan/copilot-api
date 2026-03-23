@@ -1,6 +1,7 @@
 import type {
   ResponseContextManagementCompactionItem,
   ResponseInputItem,
+  ResponseInputReasoning,
   ResponsesPayload,
 } from "~/services/copilot/create-responses"
 
@@ -88,6 +89,16 @@ export const compactInputByLatestCompaction = (
   payload.input = payload.input.slice(latestCompactionMessageIndex)
 }
 
+export const normalizeResponsesInputForReplay = (
+  payload: ResponsesPayload,
+): void => {
+  if (!Array.isArray(payload.input) || payload.input.length === 0) {
+    return
+  }
+
+  payload.input = payload.input.map((item) => normalizeResponseInputItem(item))
+}
+
 const getLatestCompactionMessageIndex = (
   input: Array<ResponseInputItem>,
 ): number | undefined => {
@@ -146,4 +157,30 @@ const containsVisionContent = (value: unknown): boolean => {
   }
 
   return false
+}
+
+const normalizeResponseInputItem = (
+  item: ResponseInputItem,
+): ResponseInputItem => {
+  if (isReasoningItem(item)) {
+    return normalizeReasoningItem(item)
+  }
+
+  return item
+}
+
+const isReasoningItem = (
+  item: ResponseInputItem,
+): item is ResponseInputReasoning => {
+  return "type" in item && item.type === "reasoning"
+}
+
+const normalizeReasoningItem = (
+  item: ResponseInputReasoning,
+): ResponseInputReasoning => {
+  return {
+    ...(item.id ? { id: item.id } : {}),
+    type: "reasoning",
+    summary: Array.isArray(item.summary) ? item.summary : [],
+  }
 }

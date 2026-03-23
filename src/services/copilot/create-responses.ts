@@ -112,7 +112,7 @@ export interface ResponseInputReasoning {
     type: "summary_text"
     text: string
   }>
-  encrypted_content: string
+  encrypted_content?: string
 }
 
 export interface ResponseInputCompaction {

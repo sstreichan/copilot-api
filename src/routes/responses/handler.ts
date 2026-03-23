@@ -14,7 +14,12 @@ import {
 } from "~/lib/logger"
 import { checkRateLimit } from "~/lib/rate-limit"
 import { state } from "~/lib/state"
-import { generateRequestIdFromPayload, getUUID } from "~/lib/utils"
+import {
+  generateRequestIdFromPayload,
+  getRootSessionIdFromResponsesPayload,
+  getStableSessionKeyFromResponsesPayload,
+  getUUID,
+} from "~/lib/utils"
 import {
   createResponses,
   type Reasoning,
@@ -27,6 +32,7 @@ import {
   applyResponsesApiContextManagement,
   compactInputByLatestCompaction,
   getResponsesRequestOptions,
+  normalizeResponsesInputForReplay,
 } from "./utils"
 
 const logger = createHandlerLogger("responses-handler")
@@ -41,17 +47,29 @@ export const handleResponses = async (c: Context) => {
   const payload = await c.req.json<ResponsesPayload>()
   logger.debug("Responses request payload:", JSON.stringify(payload))
 
-  // not support subagent marker for now , set sessionId = getUUID(requestId)
-  const requestId = generateRequestIdFromPayload({ messages: payload.input })
+  const stableSessionKey = getStableSessionKeyFromResponsesPayload(payload, c)
+  if (!payload.prompt_cache_key?.trim() && stableSessionKey) {
+    payload.prompt_cache_key = stableSessionKey
+  }
+
+  const rootSessionId = getRootSessionIdFromResponsesPayload(payload, c)
+  logger.debug("Extracted root session ID:", rootSessionId)
+
+  const requestId = generateRequestIdFromPayload(
+    { messages: payload.input },
+    rootSessionId,
+  )
   logger.debug("Generated request ID:", requestId)
 
-  const sessionId = getUUID(requestId)
+  const sessionId = rootSessionId ?? getUUID(requestId)
   logger.debug("Extracted session ID:", sessionId)
 
   useFunctionApplyPatch(payload)
 
   // Remove web_search tool as it's not supported by GitHub Copilot
   removeWebSearchTool(payload)
+
+  normalizeResponsesInputForReplay(payload)
 
   compactInputByLatestCompaction(payload)
 

@@ -137,6 +137,24 @@ interface PayloadMessage {
   type?: string
 }
 
+interface ResponsesSessionPayload {
+  prompt_cache_key?: string | null
+  metadata?: {
+    user_id?: string
+  } | null
+}
+
+const extractSessionKeyFromUserId = (
+  userId: string | undefined,
+): string | undefined => {
+  if (!userId) {
+    return undefined
+  }
+
+  const sessionMatch = new RegExp(/_session_(.+)$/).exec(userId)
+  return sessionMatch ? sessionMatch[1] : undefined
+}
+
 const findLastUserContent = (
   messages: Array<PayloadMessage>,
 ): string | null => {
@@ -183,19 +201,58 @@ export const getRootSessionId = (
   anthropicPayload: AnthropicMessagesPayload,
   c: Context,
 ): string | undefined => {
-  let sessionId: string | undefined
-  if (anthropicPayload.metadata?.user_id) {
-    const sessionMatch = new RegExp(/_session_(.+)$/).exec(
-      anthropicPayload.metadata.user_id,
-    )
-    sessionId = sessionMatch ? sessionMatch[1] : undefined
-  } else {
-    sessionId = c.req.header("x-session-id")
-  }
+  const sessionId =
+    anthropicPayload.metadata?.user_id ?
+      extractSessionKeyFromUserId(anthropicPayload.metadata.user_id)
+    : c.req.header("x-session-id")
   if (sessionId) {
     return getUUID(sessionId)
   }
   return sessionId
+}
+
+export const getStableSessionKeyFromResponsesPayload = (
+  responsesPayload: ResponsesSessionPayload,
+  c: Pick<Context, "req">,
+): string | undefined => {
+  if (
+    typeof responsesPayload.prompt_cache_key === "string"
+    && responsesPayload.prompt_cache_key.trim().length > 0
+  ) {
+    return responsesPayload.prompt_cache_key
+  }
+
+  const sessionFromUserId = extractSessionKeyFromUserId(
+    responsesPayload.metadata?.user_id,
+  )
+  if (sessionFromUserId) {
+    return sessionFromUserId
+  }
+
+  const sessionFromHeader = c.req.header("x-session-id")
+  if (
+    typeof sessionFromHeader === "string"
+    && sessionFromHeader.trim().length > 0
+  ) {
+    return sessionFromHeader
+  }
+
+  return undefined
+}
+
+export const getRootSessionIdFromResponsesPayload = (
+  responsesPayload: ResponsesSessionPayload,
+  c: Pick<Context, "req">,
+): string | undefined => {
+  const sessionKey = getStableSessionKeyFromResponsesPayload(
+    responsesPayload,
+    c,
+  )
+  if (!sessionKey) {
+    return undefined
+  }
+
+  return getUUID(sessionKey)
 }
 
 export const getUUID = (content: string): string => {
