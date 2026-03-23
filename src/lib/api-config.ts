@@ -105,7 +105,26 @@ const USER_AGENT = `GitHubCopilotChat/${COPILOT_VERSION}`
 
 const API_VERSION = "2025-10-01"
 
-export const copilotBaseUrl = (state: State) => {
+const COPILOT_BUSINESS_BASE_URL = "https://api.business.githubcopilot.com"
+
+const isCopilotHostRoutableViaBusiness = (host: string): boolean => {
+  return (
+    host === "api.githubcopilot.com"
+    || /^api\.(?:individual|business|enterprise)\.githubcopilot\.com$/u.test(
+      host,
+    )
+  )
+}
+
+const getHostFromBaseUrl = (baseUrl: string): string | null => {
+  try {
+    return new URL(baseUrl).host
+  } catch {
+    return null
+  }
+}
+
+const resolveCopilotOriginBaseUrl = (state: State): string => {
   if (state.copilotApiUrl) {
     return state.copilotApiUrl
   }
@@ -120,6 +139,33 @@ export const copilotBaseUrl = (state: State) => {
     : `https://api.${state.accountType}.githubcopilot.com`
 }
 
+export const copilotHostHeader = (state: State): string | undefined => {
+  const originalBaseUrl = resolveCopilotOriginBaseUrl(state)
+  const originalHost = getHostFromBaseUrl(originalBaseUrl)
+
+  if (!originalHost || !isCopilotHostRoutableViaBusiness(originalHost)) {
+    return undefined
+  }
+
+  const routedHost = getHostFromBaseUrl(COPILOT_BUSINESS_BASE_URL)
+  if (!routedHost || originalHost === routedHost) {
+    return undefined
+  }
+
+  return originalHost
+}
+
+export const copilotBaseUrl = (state: State) => {
+  const originalBaseUrl = resolveCopilotOriginBaseUrl(state)
+  const originalHost = getHostFromBaseUrl(originalBaseUrl)
+
+  if (originalHost && isCopilotHostRoutableViaBusiness(originalHost)) {
+    return COPILOT_BUSINESS_BASE_URL
+  }
+
+  return originalBaseUrl
+}
+
 export const copilotHeaders = (
   state: State,
   requestId?: string,
@@ -131,6 +177,11 @@ export const copilotHeaders = (
       Authorization: `Bearer ${state.copilotToken}`,
       ...getOpencodeOauthHeaders(),
       "Openai-Intent": "conversation-edits",
+    }
+
+    const hostHeader = copilotHostHeader(state)
+    if (hostHeader) {
+      headers.host = hostHeader
     }
 
     if (vision) headers["Copilot-Vision-Request"] = "true"
@@ -163,6 +214,11 @@ export const copilotHeaders = (
 
   if (state.vsCodeSessionId) {
     headers["vscode-sessionid"] = state.vsCodeSessionId
+  }
+
+  const hostHeader = copilotHostHeader(state)
+  if (hostHeader) {
+    headers.host = hostHeader
   }
 
   return headers

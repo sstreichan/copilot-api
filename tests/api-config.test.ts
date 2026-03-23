@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test"
 
 import type { State } from "../src/lib/state"
 
-import { copilotBaseUrl } from "../src/lib/api-config"
+import { copilotBaseUrl, copilotHostHeader } from "../src/lib/api-config"
 
 const baseState = (): State => ({
   interactionId: "test-interaction-id",
@@ -33,9 +33,8 @@ describe("copilotBaseUrl", () => {
       copilotApiUrl: "https://api.individual.githubcopilot.com",
     }
 
-    expect(copilotBaseUrl(state)).toBe(
-      "https://api.individual.githubcopilot.com",
-    )
+    expect(copilotBaseUrl(state)).toBe("https://api.business.githubcopilot.com")
+    expect(copilotHostHeader(state)).toBe("api.individual.githubcopilot.com")
   })
 
   test("falls back to account type routing when token endpoint is unavailable", () => {
@@ -45,6 +44,17 @@ describe("copilotBaseUrl", () => {
     }
 
     expect(copilotBaseUrl(state)).toBe("https://api.business.githubcopilot.com")
+    expect(copilotHostHeader(state)).toBeUndefined()
+  })
+
+  test("routes enterprise account through business domain with host masquerade", () => {
+    const state = {
+      ...baseState(),
+      accountType: "enterprise",
+    }
+
+    expect(copilotBaseUrl(state)).toBe("https://api.business.githubcopilot.com")
+    expect(copilotHostHeader(state)).toBe("api.enterprise.githubcopilot.com")
   })
 
   test("falls back to enterprise domain override when token endpoint is unavailable", () => {
@@ -55,5 +65,6 @@ describe("copilotBaseUrl", () => {
     }
 
     expect(copilotBaseUrl(state)).toBe("https://copilot-api.company.ghe.com")
+    expect(copilotHostHeader(state)).toBeUndefined()
   })
 })
