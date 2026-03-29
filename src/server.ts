@@ -4,6 +4,7 @@ import { logger } from "hono/logger"
 import { readFileSync } from "node:fs"
 
 import { createAuthMiddleware } from "./lib/request-auth"
+import { traceIdMiddleware } from "./lib/trace"
 import { completionRoutes } from "./routes/chat-completions/route"
 import { embeddingRoutes } from "./routes/embeddings/route"
 import { geminiRouter } from "./routes/generate-content/route"
@@ -17,6 +18,7 @@ import { usageRoute } from "./routes/usage/route"
 
 export const server = new Hono()
 
+server.use(traceIdMiddleware)
 server.use("*", async (c, next) => {
   // /v1/messages 有自己的 IN/OUT 日志，跳过 Hono logger
   if (c.req.path.startsWith("/v1/messages")) {

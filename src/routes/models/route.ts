@@ -19,7 +19,6 @@ function buildLimits(model: Model) {
     max_prompt: rawLimits.max_prompt_tokens ?? null,
   }
 
-  // Add thinking_budget if model supports thinking
   if (
     caps.supports.max_thinking_budget !== undefined
     && caps.supports.min_thinking_budget !== undefined
@@ -30,7 +29,6 @@ function buildLimits(model: Model) {
     }
   }
 
-  // Add vision if model supports vision
   if (rawLimits.vision) {
     limits.vision = {
       max_image_size: rawLimits.vision.max_prompt_image_size ?? null,
@@ -51,7 +49,6 @@ interface TransformedModel {
 
 function sortModels<T extends TransformedModel>(models: Array<T>): Array<T> {
   return models.sort((a, b) => {
-    // 1. Chat models first, embeddings/completion last
     const typeOrder: Record<string, number> = {
       chat: 0,
       completion: 1,
@@ -61,15 +58,12 @@ function sortModels<T extends TransformedModel>(models: Array<T>): Array<T> {
     const bTypeOrder = typeOrder[b.type] ?? 1
     if (aTypeOrder !== bTypeOrder) return aTypeOrder - bTypeOrder
 
-    // 2. Premium before non-premium (within same type)
     if (a.is_premium !== b.is_premium) return a.is_premium ? -1 : 1
 
-    // 3. Sort by max_prompt descending (input token capacity)
     const aPrompt = Number(a.limits.max_prompt) || 0
     const bPrompt = Number(b.limits.max_prompt) || 0
     if (aPrompt !== bPrompt) return bPrompt - aPrompt
 
-    // Tie-breaker: if max_prompt is equal, larger context_window first
     const aContext = Number(a.limits.context_window) || 0
     const bContext = Number(b.limits.context_window) || 0
     return bContext - aContext
@@ -79,40 +73,31 @@ function sortModels<T extends TransformedModel>(models: Array<T>): Array<T> {
 modelRoutes.get("/", async (c) => {
   try {
     if (!state.models) {
-      // This should be handled by startup logic, but as a fallback.
       await cacheModels()
     }
 
     const models = state.models?.data
       .filter((m) => m.model_picker_enabled)
       .map((model) => ({
-        // Original fields (backward compatible)
+        ...model,
         id: model.id,
         object: "model",
         type: model.capabilities.type,
-        created: 0, // No date available from source
-        created_at: new Date(0).toISOString(), // No date available from source
+        created: 0,
+        created_at: new Date(0).toISOString(),
         owned_by: model.vendor,
         display_name: model.name,
-
-        // New fields
         family: model.capabilities.family,
         preview: model.preview,
         model_picker_enabled: model.model_picker_enabled,
         endpoints: model.supported_endpoints ?? null,
-
-        // Capability flags
         supports_tool_calls: model.capabilities.supports.tool_calls ?? false,
         supports_parallel_tool_calls:
           model.capabilities.supports.parallel_tool_calls ?? false,
         supports_streaming: model.capabilities.supports.streaming ?? false,
         supports_structured_outputs:
           model.capabilities.supports.structured_outputs ?? false,
-
-        // Limits
         limits: buildLimits(model),
-
-        // Billing
         is_premium: model.billing?.is_premium ?? false,
         billing_multiplier: model.billing?.multiplier ?? 0,
         available_to: model.billing?.restricted_to ?? null,

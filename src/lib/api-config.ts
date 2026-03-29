@@ -27,9 +27,7 @@ export const getGitHubBaseUrl = (): string => {
 
 export const getGitHubApiBaseUrl = (): string => {
   const resolvedDomain = getEnterpriseDomain()
-  return resolvedDomain ?
-      `https://${resolvedDomain}/api/v3`
-    : GITHUB_API_BASE_URL
+  return resolvedDomain ? `https://api.${resolvedDomain}` : GITHUB_API_BASE_URL
 }
 
 export const getOpencodeOauthHeaders = (): Record<string, string> => {
@@ -37,7 +35,7 @@ export const getOpencodeOauthHeaders = (): Record<string, string> => {
     Accept: "application/json",
     "Content-Type": "application/json",
     "User-Agent":
-      "opencode/1.2.16 ai-sdk/provider-utils/3.0.21 runtime/bun/1.3.10, opencode/1.2.16",
+      "opencode/1.3.5 ai-sdk/provider-utils/4.0.21 runtime/bun/1.3.11, opencode/1.3.5",
   }
 }
 
@@ -72,6 +70,15 @@ export const getOauthAppConfig = (): OauthAppConfig => {
     clientId: GITHUB_CLIENT_ID,
     headers: standardHeaders(),
     scope: GITHUB_APP_SCOPES,
+  }
+}
+
+export const prepareForCompact = (
+  headers: Record<string, string>,
+  isCompact?: boolean,
+) => {
+  if (isCompact) {
+    headers["x-initiator"] = "agent"
   }
 }
 
