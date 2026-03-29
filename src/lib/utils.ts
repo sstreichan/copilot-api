@@ -21,7 +21,10 @@ export const isNullish = (value: unknown): value is null | undefined =>
 
 export async function cacheModels(): Promise<void> {
   const models = await getModels()
-  state.models = models
+  state.models = {
+    ...models,
+    data: models.data.filter((model) => model.model_picker_enabled),
+  }
 }
 
 export const cacheVSCodeVersion = async () => {

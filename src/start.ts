@@ -80,9 +80,7 @@ export async function runServer(options: RunServerOptions): Promise<void> {
   await setupCopilotToken()
   await cacheModels()
 
-  const availableModels = (state.models?.data ?? []).filter(
-    (m) => m.model_picker_enabled,
-  )
+  const availableModels = state.models?.data ?? []
   consola.info(formatModelsLog(availableModels))
 
   const serverUrl = `http://localhost:${options.port}`

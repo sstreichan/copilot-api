@@ -2,7 +2,7 @@
 
 ## Overview
 
-这里封装增强版 `/v1/models`：从 `state.models` 取上游模型清单，过滤不可选模型，补齐 limits / capability / billing 字段，并按本项目约定排序后返回。
+这里封装增强版 `/v1/models`：从 `state.models` 取已经过缓存层过滤的模型清单，补齐 limits / capability / billing 字段，并按本项目约定排序后返回。
 
 ## Where To Look
 
@@ -16,7 +16,7 @@
 ## Critical Invariants
 
 - `state.models` 为空时，必须先 `await cacheModels()`；不要假定启动阶段永远已缓存好模型
-- `.filter((m) => m.model_picker_enabled)` 是对外暴露前的硬过滤；不要把未启用模型漏给客户端
+- `cacheModels()` 会在写入 `state.models` 前硬过滤 `model_picker_enabled === false` 的模型；路由层不要重复过滤，也不要把未启用模型重新混回客户端响应
 - `buildLimits()` 要对 `caps.limits ?? {}` 做防御性处理；某些模型（特别是 embeddings）在运行时可能没有完整 limits
 - 返回顺序由 `sortModels()` 固定：`chat` 优先于 `completion` / `embeddings`，同类型内 premium 优先，再按 `max_prompt` / `context_window` 降序
 
@@ -29,7 +29,7 @@
 
 ## Anti-Patterns
 
-- 直接把上游 `state.models.data` 原样返回，跳过本地过滤与排序
+- 绕过 `cacheModels()` 直接缓存上游原始 models，或在路由层重复做 `model_picker_enabled` 过滤
 - 只按模型名排序，丢掉 premium 与 token 容量优先级
 - 对缺失 limits 的模型直接取深层字段，触发运行时异常
 - 在别的路由里复制 models 变形逻辑，而不是统一走这里的 `/v1/models`
