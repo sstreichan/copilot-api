@@ -1,3 +1,5 @@
+import type { MiddlewareHandler } from "hono/types"
+
 import { Hono } from "hono"
 import { cors } from "hono/cors"
 import { logger } from "hono/logger"
@@ -17,6 +19,7 @@ import { tokenRoute } from "./routes/token/route"
 import { usageRoute } from "./routes/usage/route"
 
 export const server = new Hono()
+const honoLogger: MiddlewareHandler = logger()
 
 server.use(traceIdMiddleware)
 server.use("*", async (c, next) => {
@@ -24,8 +27,9 @@ server.use("*", async (c, next) => {
   if (c.req.path.startsWith("/v1/messages")) {
     return next()
   }
-  // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any
-  return logger()(c as any, next)
+
+  const loggerContext = c as Parameters<typeof honoLogger>[0]
+  return honoLogger(loggerContext, next)
 })
 server.use(cors())
 server.use(

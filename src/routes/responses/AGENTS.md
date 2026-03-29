@@ -11,7 +11,7 @@
 | Route entry | `route.ts`, `handler.ts` | stream / non-stream 共用 `handleResponses()` |
 | Stream ID sync | `stream-id-sync.ts` | 修正 added/done 事件 ID 不一致 |
 | Vision / initiator detection | `utils.ts` | 只看 `payload.input` 与最后一项 role |
-| Payload preflight | `handler.ts` | `apply_patch` function 化、`web_search` 过滤、端点支持校验 |
+| Payload preflight | `handler.ts` | `apply_patch` function 化、按配置处理 `web_search`、端点支持校验 |
 
 ## Critical Invariants
 
@@ -23,7 +23,7 @@
 ## Project-Specific Rules
 
 - `apply_patch` custom tool 会被改写成单一 `input: string` 的 function tool；改 schema 时要同步依赖这个形状的客户端
-- `web_search` tool 在这里被无条件移除，因为 Copilot Responses 后端不支持它
+- `web_search` tool 是否移除由 `useResponsesApiWebSearch` 配置决定；关闭时才在这里剥离
 - 当模型不支持 `/responses` 时，直接返回 400 `invalid_request_error`；不要把这个失败拖到上游 fetch
 - `stream-id-sync.ts` 会在 `response.output_item.added` 缺少 `item.id` 时补造 `oi_*` ID；后续事件必须复用该映射
 

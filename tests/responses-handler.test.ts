@@ -227,6 +227,69 @@ describe("handleResponses reasoning effort", () => {
     expect(infoCall).toContain("[effort=minimal (request)]")
   })
 
+  test("keeps web_search tools when config enables them", async () => {
+    const app = createApp()
+
+    const webSearchTool = {
+      type: "web_search",
+      user_location: { type: "approximate", country: "CN" },
+    }
+
+    const res = await app.request("/v1/responses", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "gpt-test",
+        input: [{ role: "user", content: "hi" }],
+        tools: [webSearchTool],
+      }),
+    })
+
+    expect(res.status).toBe(200)
+    expect(receivedPayload?.tools).toEqual([webSearchTool])
+  })
+
+  test("removes web_search tools when config disables them", async () => {
+    getConfigSpy.mockReturnValue({
+      ...configModule.getConfig(),
+      useFunctionApplyPatch: true,
+      useResponsesApiWebSearch: false,
+      modelReasoningEfforts: { "gpt-test": "high" },
+    })
+
+    const app = createApp()
+
+    const res = await app.request("/v1/responses", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "gpt-test",
+        input: [{ role: "user", content: "hi" }],
+        tools: [
+          {
+            type: "web_search",
+          },
+          {
+            type: "function",
+            name: "keep_me",
+            parameters: null,
+            strict: false,
+          },
+        ],
+      }),
+    })
+
+    expect(res.status).toBe(200)
+    expect(receivedPayload?.tools).toEqual([
+      {
+        type: "function",
+        name: "keep_me",
+        parameters: null,
+        strict: false,
+      },
+    ])
+  })
+
   test("derives stable session identity from prompt_cache_key", async () => {
     const app = createApp()
 

@@ -220,7 +220,7 @@ Native messages 的隐含行为：
 | **Thinking block 内容问题** | 空 thinking、`"Thinking..."` 占位符、含 `"@"` 的签名可能导致 400。可考虑预防性过滤（参考 caozhiyuan fork）。 |
 | **tool_result + text 混合导致 premium 计费** | skill invocations、edit hooks、todo reminders 会在 user 消息中混入 text blocks。`mergeToolResultForClaude` 将它们合并到 tool_result 中，避免额外 premium 消耗。 |
 | **Responses API stream ID 不一致** | Copilot 在 added/done 事件返回不同 ID，`@ai-sdk/openai` 会报 "text part not found"。由 `stream-id-sync.ts` 同步 ID。 |
-| **`web_search` tool 不被 Copilot 支持** | responses 路径在发送前自动移除 `web_search` tool。 |
+| **`web_search` tool 不被 Copilot 支持** | 当 `useResponsesApiWebSearch=false` 时，responses 路径会在发送前移除 `web_search` tool；默认保留并按配置转发。 |
 
 ## 调试 Copilot 后端
 

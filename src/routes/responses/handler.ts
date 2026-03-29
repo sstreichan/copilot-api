@@ -4,7 +4,11 @@ import consola from "consola"
 import { streamSSE } from "hono/streaming"
 
 import { awaitApproval } from "~/lib/approval"
-import { getConfig, resolveEffortForLog } from "~/lib/config"
+import {
+  getConfig,
+  isResponsesApiWebSearchEnabled,
+  resolveEffortForLog,
+} from "~/lib/config"
 import {
   colorizeModel,
   createHandlerLogger,
@@ -66,8 +70,9 @@ export const handleResponses = async (c: Context) => {
 
   useFunctionApplyPatch(payload)
 
-  // Remove web_search tool as it's not supported by GitHub Copilot
-  removeWebSearchTool(payload)
+  if (!isResponsesApiWebSearchEnabled()) {
+    removeWebSearchTool(payload)
+  }
 
   normalizeResponsesInputForReplay(payload)
 
