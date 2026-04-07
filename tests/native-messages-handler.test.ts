@@ -7,13 +7,14 @@ import type { AnthropicMessagesPayload } from "~/routes/messages/anthropic-types
 
 import * as configModule from "~/lib/config"
 import * as loggerModule from "~/lib/logger"
+import * as modelsModule from "~/lib/models"
 import * as rateLimitModule from "~/lib/rate-limit"
 import { state } from "~/lib/state"
 import {
   getInitiatorFromPayload,
-  handleCompletion,
   isClaudeModel,
-} from "~/routes/messages/handler"
+} from "~/routes/messages/api-flows"
+import { handleCompletion } from "~/routes/messages/handler"
 import * as createMessagesModule from "~/services/copilot/create-messages"
 
 const createSseResponse = (events: Array<string>): Response => {
@@ -224,6 +225,12 @@ describe("native handler", () => {
   let getPremiumInfoSpy: ReturnType<
     typeof spyOn<typeof loggerModule, "getPremiumInfo">
   >
+  let findEndpointModelSpy: ReturnType<
+    typeof spyOn<typeof modelsModule, "findEndpointModel">
+  >
+  let isMessagesApiEnabledSpy: ReturnType<
+    typeof spyOn<typeof configModule, "isMessagesApiEnabled">
+  >
 
   beforeEach(() => {
     state.nativeMessages = true
@@ -250,6 +257,28 @@ describe("native handler", () => {
       configModule,
       "getReasoningEffortForModel",
     ).mockReturnValue("xhigh")
+    isMessagesApiEnabledSpy = spyOn(
+      configModule,
+      "isMessagesApiEnabled",
+    ).mockReturnValue(true)
+    findEndpointModelSpy = spyOn(
+      modelsModule,
+      "findEndpointModel",
+    ).mockReturnValue({
+      id: "claude-opus-4",
+      name: "claude-opus-4",
+      version: "claude-opus-4-20250514",
+      object: "model",
+      created: 0,
+      owned_by: "anthropic",
+      capabilities: {
+        family: "claude-opus-4",
+        type: "chat",
+        limits: { max_prompt_tokens: 200000 },
+        supports: { adaptive_thinking: false },
+      },
+      supported_endpoints: ["/v1/messages"],
+    } as unknown as ReturnType<typeof modelsModule.findEndpointModel>)
   })
 
   afterEach(() => {
@@ -259,6 +288,8 @@ describe("native handler", () => {
     getPremiumInfoSpy.mockRestore()
     rateLimitSpy.mockRestore()
     effortSpy.mockRestore()
+    findEndpointModelSpy.mockRestore()
+    isMessagesApiEnabledSpy.mockRestore()
   })
 
   test("logs anthropic effort mapping for config fallback", async () => {

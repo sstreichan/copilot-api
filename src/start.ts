@@ -8,16 +8,18 @@ import invariant from "tiny-invariant"
 
 import { mergeConfigWithDefaults } from "./lib/config"
 import { formatModelsLog } from "./lib/models-log"
+import { initOpencodeVersion } from "./lib/opencode"
 import { ensurePaths } from "./lib/paths"
 import { initProxyFromEnv } from "./lib/proxy"
 import { generateEnvScript } from "./lib/shell"
 import { state } from "./lib/state"
-import { setupCopilotToken, setupGitHubToken } from "./lib/token"
+import { logUser, setupCopilotToken, setupGitHubToken } from "./lib/token"
 import {
   cacheMacMachineId,
   cacheModels,
   cacheVSCodeVersion,
   cacheVsCodeSessionId,
+  cacheVsCodeDeviceId,
 } from "./lib/utils"
 
 interface RunServerOptions {
@@ -38,6 +40,8 @@ interface RunServerOptions {
 export async function runServer(options: RunServerOptions): Promise<void> {
   // Ensure config is merged with defaults at startup
   mergeConfigWithDefaults()
+
+  await initOpencodeVersion()
 
   if (options.proxyEnv) {
     initProxyFromEnv()
@@ -69,10 +73,12 @@ export async function runServer(options: RunServerOptions): Promise<void> {
   await cacheVSCodeVersion()
   cacheMacMachineId()
   cacheVsCodeSessionId()
+  await cacheVsCodeDeviceId()
 
   if (options.githubToken) {
     state.githubToken = options.githubToken
     consola.info("Using provided GitHub token")
+    await logUser()
   } else {
     await setupGitHubToken()
   }
@@ -120,6 +126,8 @@ export async function runServer(options: RunServerOptions): Promise<void> {
         CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
         CLAUDE_CODE_ATTRIBUTION_HEADER: "0",
         CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION: "false",
+        CLAUDE_CODE_DISABLE_TERMINAL_TITLE: "true",
+        CLAUDE_PLUGIN_ENABLE_QUESTION_RULES: "true",
       },
       "claude",
     )

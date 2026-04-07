@@ -10,13 +10,16 @@ import type { SubagentMarker } from "~/routes/messages/subagent-marker"
 import {
   copilotBaseUrl,
   copilotHeaders,
+  prepareForCompact,
   prepareInteractionHeaders,
+  prepareMessageProxyHeaders,
 } from "~/lib/api-config"
 import { getReasoningEffortForModel } from "~/lib/config"
 import { HTTPError } from "~/lib/error"
 import { attachPremiumInfo, getPremiumInfoFromHeaders } from "~/lib/logger"
 import { resolveInitiatorWithSmartAgent } from "~/lib/smart-agent"
 import { state } from "~/lib/state"
+import { parseUserIdMetadata } from "~/lib/utils"
 import {
   trackRequestSent,
   trackResponseSuccess,
@@ -33,6 +36,7 @@ export interface CreateMessagesOptions {
   subagentMarker?: SubagentMarker | null
   requestId?: string
   sessionId?: string
+  isCompact?: boolean
 }
 
 /**
@@ -292,12 +296,20 @@ export const createMessages = async (
     "x-initiator": initiator,
   }
 
-  if (options.sessionId || options.subagentMarker) {
-    prepareInteractionHeaders(
-      options.sessionId,
-      Boolean(options.subagentMarker),
-      headers,
-    )
+  prepareInteractionHeaders(
+    options.sessionId,
+    Boolean(options.subagentMarker),
+    headers,
+  )
+
+  prepareForCompact(headers, options.isCompact)
+
+  const { safetyIdentifier, sessionId } = parseUserIdMetadata(
+    payload.metadata?.user_id,
+  )
+  // from claude code
+  if (safetyIdentifier && sessionId) {
+    prepareMessageProxyHeaders(headers)
   }
 
   // Extract requestId from already-built headers (do NOT re-generate)

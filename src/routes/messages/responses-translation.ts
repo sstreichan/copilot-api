@@ -41,6 +41,7 @@ import {
   type AnthropicTextBlock,
   type AnthropicThinkingBlock,
   type AnthropicTool,
+  type AnthropicToolResultContentBlock,
   type AnthropicToolResultBlock,
   type AnthropicToolUseBlock,
   type AnthropicUserContentBlock,
@@ -69,7 +70,8 @@ export const translateAnthropicMessagesToResponsesPayload = (
   const translatedTools = convertAnthropicTools(payload.tools)
   const toolChoice = convertAnthropicToolChoice(payload.tool_choice)
 
-  const { safetyIdentifier, sessionId: promptCacheKey } = parseUserIdMetadata(
+  // Remove safetyIdentifier to align with vscode copilot
+  const { sessionId: promptCacheKey } = parseUserIdMetadata(
     payload.metadata?.user_id,
   )
 
@@ -83,7 +85,6 @@ export const translateAnthropicMessagesToResponsesPayload = (
     tools: translatedTools,
     tool_choice: toolChoice,
     metadata: payload.metadata ? { ...payload.metadata } : null,
-    safety_identifier: safetyIdentifier,
     prompt_cache_key: promptCacheKey,
     stream: payload.stream ?? null,
     store: false,
@@ -449,7 +450,7 @@ const translateSystemPrompt = (
   const text = system
     .map((block, index) => {
       if (index === 0) {
-        return block.text + extraPrompt
+        return block.text + "\n\n" + extraPrompt + "\n\n"
       }
       return block.text
     })
@@ -773,7 +774,7 @@ const isResponseOutputRefusal = (
   && (block as { type?: unknown }).type === "refusal"
 
 const convertToolResultContent = (
-  content: string | Array<AnthropicTextBlock | AnthropicImageBlock>,
+  content: string | Array<AnthropicToolResultContentBlock>,
 ): string | Array<ResponseInputContent> => {
   if (typeof content === "string") {
     return content
@@ -789,6 +790,10 @@ const convertToolResultContent = (
         }
         case "image": {
           result.push(createImageContent(block))
+          break
+        }
+        case "tool_reference": {
+          result.push(createTextContent(`Tool ${block.tool_name} loaded`))
           break
         }
         default: {

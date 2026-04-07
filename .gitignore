@@ -40,3 +40,10 @@ docs/plans/
 .beads/issues.jsonl
 .beads/last-touched
 .sis/
+
+# opencode
+.opencode/plans
+.opencode/package-lock.json
+
+# vsix build artifacts
+*.vsix

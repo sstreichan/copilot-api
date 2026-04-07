@@ -12,6 +12,8 @@ import {
 import {
   colorizeModel,
   createHandlerLogger,
+  debugJson,
+  debugJsonTail,
   resolvePremiumInfo,
   shouldUseColor,
   writeStreamLog,
@@ -49,7 +51,7 @@ export const handleResponses = async (c: Context) => {
   await checkRateLimit(state)
 
   const payload = await c.req.json<ResponsesPayload>()
-  logger.debug("Responses request payload:", JSON.stringify(payload))
+  debugJson(logger, "Responses request payload:", payload)
 
   const stableSessionKey = getStableSessionKeyFromResponsesPayload(payload, c)
   if (!payload.prompt_cache_key?.trim() && stableSessionKey) {
@@ -102,7 +104,7 @@ export const handleResponses = async (c: Context) => {
     selectedModel?.capabilities.limits.max_prompt_tokens,
   )
 
-  logger.debug("Translated Responses payload:", JSON.stringify(payload))
+  debugJson(logger, "Translated Responses payload:", payload)
 
   const { vision, initiator } = getResponsesRequestOptions(payload)
 
@@ -131,7 +133,7 @@ export const handleResponses = async (c: Context) => {
 
       try {
         for await (const chunk of response) {
-          logger.debug("Responses stream chunk:", JSON.stringify(chunk))
+          debugJson(logger, "Responses stream chunk:", chunk)
           chunkCount++
           const processedData = fixStreamIds(
             (chunk as { data?: string }).data ?? "",
@@ -155,10 +157,10 @@ export const handleResponses = async (c: Context) => {
     })
   }
 
-  logger.debug(
-    "Forwarding native Responses result:",
-    JSON.stringify(response).slice(-400),
-  )
+  debugJsonTail(logger, "Forwarding native Responses result:", {
+    value: response,
+    tailLength: 400,
+  })
   const premium = await resolvePremiumInfo(response, "responses/non-stream")
   writeStreamLog({ model: payload.model, chunks: 0, done: true, premium }, true)
   return c.json(response as ResponsesResult)

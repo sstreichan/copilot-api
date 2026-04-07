@@ -5,6 +5,8 @@ import { streamSSE, type SSEMessage } from "hono/streaming"
 import { awaitApproval } from "~/lib/approval"
 import {
   createHandlerLogger,
+  debugJson,
+  debugJsonTail,
   resolvePremiumInfo,
   writeStreamLog,
 } from "~/lib/logger"
@@ -24,7 +26,7 @@ export async function handleCompletion(c: Context) {
   await checkRateLimit(state)
 
   let payload = await c.req.json<ChatCompletionsPayload>()
-  logger.debug("Request payload:", JSON.stringify(payload).slice(-400))
+  debugJsonTail(logger, "Request payload:", { value: payload, tailLength: 400 })
 
   // Find the selected model
   const selectedModel = state.models?.data.find(
@@ -50,7 +52,7 @@ export async function handleCompletion(c: Context) {
       ...payload,
       max_tokens: selectedModel?.capabilities.limits.max_output_tokens,
     }
-    logger.debug("Set max_tokens to:", JSON.stringify(payload.max_tokens))
+    debugJson(logger, "Set max_tokens to:", payload.max_tokens)
   }
 
   // not support subagent marker for now , set sessionId = getUUID(requestId)
@@ -66,7 +68,7 @@ export async function handleCompletion(c: Context) {
   })
 
   if (isNonStreaming(response)) {
-    logger.debug("Non-streaming response:", JSON.stringify(response))
+    debugJson(logger, "Non-streaming response:", response)
     const premium = await resolvePremiumInfo(
       response,
       "chat-completions/non-stream",
@@ -83,7 +85,7 @@ export async function handleCompletion(c: Context) {
     let chunkCount = 0
     try {
       for await (const chunk of response) {
-        logger.debug("Streaming chunk:", JSON.stringify(chunk))
+        debugJson(logger, "Streaming chunk:", chunk)
 
         chunkCount++
         // Check for [DONE] marker

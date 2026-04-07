@@ -20,6 +20,7 @@ export interface State {
 
   macMachineId?: string
   vsCodeSessionId?: string
+  vsCodeDeviceId: string
 
   manualApprove: boolean
   rateLimitWait: boolean
@@ -46,4 +47,5 @@ export const state: State = {
   verbose: false,
   forceAgent: false,
   nativeMessages: false,
+  vsCodeDeviceId: randomUUID(),
 }
