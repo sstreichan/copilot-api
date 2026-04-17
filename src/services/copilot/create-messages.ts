@@ -53,6 +53,35 @@ const isThinkingBlockError = (errorBody: unknown): boolean => {
 }
 
 /**
+ * Check if error response indicates that the configured reasoning effort
+ * is not supported by the target model. Backend signals this with
+ * `code: "invalid_reasoning_effort"` and a message listing supported values.
+ */
+const isInvalidReasoningEffortError = (errorBody: unknown): boolean => {
+  if (errorBody === null || errorBody === undefined) return false
+  const text =
+    typeof errorBody === "string" ? errorBody : JSON.stringify(errorBody)
+  return text.includes("invalid_reasoning_effort")
+}
+
+/**
+ * Parse supported effort values out of the backend error message.
+ * Example substring: `supported values: [medium]` or `[low, medium]`.
+ * Returns [] if nothing can be parsed.
+ */
+const parseSupportedEfforts = (errorBody: unknown): Array<string> => {
+  if (errorBody === null || errorBody === undefined) return []
+  const text =
+    typeof errorBody === "string" ? errorBody : JSON.stringify(errorBody)
+  const match = /supported values:\s*\[([^\]]*)\]/i.exec(text)
+  if (!match) return []
+  return match[1]
+    .split(",")
+    .map((s) => s.trim().replaceAll(/["'\\]/g, ""))
+    .filter((s) => s.length > 0)
+}
+
+/**
  * Strip thinking blocks from assistant messages to avoid signature validation errors.
  * Only modifies assistant messages that have array content.
  */
@@ -244,6 +273,44 @@ const sendWithSignatureRetry = async (
     .clone()
     .json()
     .catch(() => null)
+
+  if (response.status === 400 && isInvalidReasoningEffortError(errorBody)) {
+    const supported = parseSupportedEfforts(errorBody)
+    const currentEffort = enhancedPayload.output_config?.effort
+    const fallbackEffort =
+      supported.find((v) => v !== currentEffort) ?? supported[0]
+    if (fallbackEffort && enhancedPayload.output_config) {
+      consola.warn(
+        `invalid_reasoning_effort (current=${currentEffort ?? "<unset>"}), retrying with effort=${fallbackEffort}`,
+      )
+      const retryPayload = {
+        ...enhancedPayload,
+        output_config: {
+          ...enhancedPayload.output_config,
+          effort: fallbackEffort,
+        },
+      }
+      const retryResponse = await fetch(url, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(retryPayload),
+      })
+      if (!retryResponse.ok) {
+        consola.error(
+          "Effort-downgrade retry also failed",
+          retryResponse.status,
+        )
+        throw new HTTPError(
+          "Failed to create native messages (after effort retry)",
+          retryResponse,
+        )
+      }
+      return retryResponse
+    }
+    consola.warn(
+      "invalid_reasoning_effort detected but no usable supported values parsed from backend",
+    )
+  }
 
   if (response.status === 400 && isThinkingBlockError(errorBody)) {
     consola.warn(
