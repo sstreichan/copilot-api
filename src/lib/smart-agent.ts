@@ -69,7 +69,7 @@ function resetStaleHysteresisIfCrossDay(
   ) {
     return
   }
-  consola.debug(
+  consola.info(
     "[quota] Smart agent: cross-day (UTC) detected, clearing stale hysteresis state",
   )
   updateSmartAgentCache(null, 0)
