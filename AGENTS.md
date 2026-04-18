@@ -44,7 +44,7 @@ bun run typecheck      # 类型检查
 常用启动标志：
 
 - `-M`：Claude 模型走原生 `/v1/messages`
-- `-F`：启用 Smart Agent（暗渡之门，按配额转圜流向，详情参见 `src/lib/smart-agent.ts`）
+- `-F`：启用暗渡之门（按配额转圜流向，详情参见 `src/lib/smart-agent.ts`）
 - `-a business`：指定账户类型
 - `--manual`：手动审批每个请求
 - `--proxy-env`：从环境变量读取代理配置
@@ -82,8 +82,8 @@ bun run typecheck      # 类型检查
 - `src/services/telemetry/AGENTS.md` - telemetry envelope、identity、fire-and-forget
 - `tests/AGENTS.md` - Bun 测试布局、mock 约定、fixtures、断言风格
 - `tests/generate-content/AGENTS.md` - Gemini / codex 测试约束
-- `tests/router/AGENTS.md` - Sticky Router 测试规约：fetch/time 注入与 sticky 之验证
-- `router/AGENTS.md` - Sticky Router 之内里：session-sticky、least-loaded、dashboard、start.sh
+- `tests/router/AGENTS.md` - 多实例调遣之器测试规约：fetch/time 注入与 sticky 之验证
+- `router/AGENTS.md` - 多实例调遣之器之内里：session-sticky、least-loaded、dashboard、start.sh
 - `claude-plugin/AGENTS.md` - Claude Code plugin / marketplace 与 `__SUBAGENT_MARKER__`
 - `openspec/AGENTS.md` - proposal、delta spec、validate / archive 工作流
 
@@ -110,5 +110,5 @@ bd close bd-42 --reason "完成" --json
 ## 近期高价值变更提示
 
 - Claude `-M` 原生 messages 分支别有上游约束；相关兼容逻辑集中在 `src/services/copilot/create-messages.ts`。
-- Smart Agent（`-F`）之取舍，并 token / usage 判别之机，俱归 `src/lib/smart-agent.ts` 与相关 usage service 收束。
+- 暗渡之门（`-F`）之取舍，并 token / usage 判别之机，俱归 `src/lib/smart-agent.ts` 与相关 usage service 收束。
 - Provider-scoped 路由、Responses API、`/v1/models` 增强能力都已有现成实现；改动前先读对应目录 AGENTS。

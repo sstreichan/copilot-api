@@ -101,10 +101,11 @@ bun run typecheck                         # 类型检查
 Router 只取 `name` 与 `port`；`token` 与可选 `flags`/`accountType` 由 `start.sh` 转交各实例。
 若条目缺少 `accountType`，`start.sh` 不传 `-a`，交由实例自身从 token endpoint 解析真实账户类型。
 
-### `session-router` 插件
+### OpenCode 注记插件
 
-OpenCode 侧插件，位于 `~/.config/opencode/plugins/session-router.ts`。
-于 `chat.headers` 钩子中注入四个 header：
+仓库内随附之 OpenCode 插件位于 `.opencode/plugins/subagent-marker.js`；它专司注入 `__SUBAGENT_MARKER__`，并不主持多实例路由。
+
+若外场另配 session-sticky 所用插件，其职责当是在 `chat.headers` 钩子中注入下列四个 header：
 - `x-session-id` — `input.sessionID`，会话标识（binding key 之首段）
 - `x-oc-agent` — `input.agent` 的 name，代理名称
 - `x-oc-model` — `input.model.id`，模型 ID

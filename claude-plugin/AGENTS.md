@@ -6,7 +6,7 @@
 
 ## Structure
 
-- `.claude-plugin/plugin.json` - 插件元数据
+- `.claude-plugin/plugin.json` - 插件元数据（位于 `claude-plugin/.claude-plugin/plugin.json`）
 - `hooks/hooks.json` - `SubagentStart` hook 声明
 - `scripts/subagent-start-marker.js` - `SubagentStart` marker 生产脚本
 - `scripts/session-start-rules.js` - `SessionStart` 注入项目规则

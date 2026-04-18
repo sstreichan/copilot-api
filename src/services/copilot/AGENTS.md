@@ -19,7 +19,7 @@
 - `create-messages.ts` 是 backend workaround 收口点：`reorderAssistantBlocks`、`stripThinkingBlocks`、`anthropic-beta` allowlist、adaptive thinking、vision header、`compactType` 透传都放这里
 - `create-messages.ts` 在模型命中 `modelSupportsToolSearch` 时自动附加 `ADVANCED_TOOL_USE_BETA = "advanced-tool-use-2025-11-20"`；不要在 route 层重复拼接
 - `create-chat-completions.ts` 遇 `invalid_reasoning_effort` 会自动降级 `reasoning_effort`（如 `xhigh` → `high`）后单次重试；这条 fallback 不要外泄到 route 或 lib
-- `X-Initiator` 由显式 options 与 smart-agent 决策共同决定；不要跳过 `resolveInitiatorWithSmartAgent()`
+- `X-Initiator` 由显式 options 与暗渡之门决断共同决定；不要跳过 `resolveInitiatorWithSmartAgent()`
 - telemetry 发送、成功/失败打点、feedback scheduling 在 service 层做，不回推到 route handler
 - `isThinkingBlockError` 宽匹配（JSON.stringify + toLowerCase + "signature" 或 "cannot be modified"）触发 strip-thinking retry；项目里没有通用 retry/backoff 框架
 - `api-config.ts` 组装 `X-Interaction-Id` / `X-Agent-Task-Id` / `X-Interaction-Type` 请求头，三个 `create-*` service 共享调用
