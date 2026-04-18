@@ -41,6 +41,41 @@ export function clearSmartAgentCache(): void {
 }
 
 /**
+ * Returns the UTC date key (YYYY-MM-DD) for cross-day comparison.
+ *
+ * Aligned with GitHub Copilot premium quota reset at UTC 00:00.
+ */
+function getUtcDateKey(date: Date): string {
+  return date.toISOString().slice(0, 10)
+}
+
+/**
+ * Reset stale forceAgent state across UTC day boundaries.
+ *
+ * GitHub Copilot premium quota resets at UTC 00:00. If a previous protection
+ * decision was made on a different UTC day, clear the stale state so hysteresis
+ * cannot self-perpetuate across days. Without this, a process started yesterday
+ * would carry yesterday's forceAgent=true into today, triggering hysteresis
+ * against today's (smaller) `expected` and indefinitely maintaining protection.
+ */
+function resetStaleHysteresisIfCrossDay(
+  cacheTimestamp: number,
+  currentDate: Date,
+): void {
+  if (
+    !state.smartAgentDecision?.forceAgent
+    || cacheTimestamp <= 0
+    || getUtcDateKey(new Date(cacheTimestamp)) === getUtcDateKey(currentDate)
+  ) {
+    return
+  }
+  consola.debug(
+    "[quota] Smart agent: cross-day (UTC) detected, clearing stale hysteresis state",
+  )
+  updateSmartAgentCache(null, 0)
+}
+
+/**
  * Get decision, using cache only when over budget (forceAgent=true).
  *
  * Caching strategy:
@@ -52,8 +87,11 @@ export function clearSmartAgentCache(): void {
 async function getDecisionWithSmartCache(
   now?: Date,
 ): Promise<SmartAgentDecision> {
-  const currentTime = Date.now()
+  const currentDate = now ?? new Date()
+  const currentTime = currentDate.getTime()
   const cacheTimestamp = state.smartAgentCacheTimestamp ?? 0
+
+  resetStaleHysteresisIfCrossDay(cacheTimestamp, currentDate)
 
   // Only use cache if:
   // 1. Cache exists
@@ -73,6 +111,7 @@ async function getDecisionWithSmartCache(
   if (
     !decision.forceAgent
     && state.smartAgentDecision?.forceAgent
+    && state.smartAgentDecision.reason !== "error"
     && decision.remaining !== undefined
     && decision.expected !== undefined
     && decision.idealDaily !== undefined

@@ -41,10 +41,14 @@ export interface SmartAgentDecision {
 }
 
 /**
- * Get days in month from the current date.
+ * Get days in month from the current date (UTC).
+ *
+ * Aligned with GitHub Copilot premium quota reset which occurs at UTC 00:00.
  */
 function getDaysInMonth(now: Date): number {
-  return new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate()
+  return new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0),
+  ).getUTCDate()
 }
 
 /**
@@ -62,7 +66,7 @@ export async function getSmartAgentDecision(
     const usage = await getCopilotUsage()
     const quota = usage.quota_snapshots.premium_interactions
     const daysInMonth = getDaysInMonth(now)
-    const dayOfMonth = now.getDate()
+    const dayOfMonth = now.getUTCDate()
     const expectedRemaining = Math.max(
       5,
       quota.entitlement - dayOfMonth * (quota.entitlement / daysInMonth),

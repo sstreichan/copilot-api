@@ -268,6 +268,137 @@ describe("hysteresis - cross-day protection", () => {
   })
 })
 
+describe("hysteresis - cross-day UTC reset", () => {
+  const originalFetch = globalThis.fetch
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch
+    clearSmartAgentCache()
+    state.forceAgent = false
+  })
+
+  test("clears stale forceAgent state from a previous UTC day before evaluating hysteresis", async () => {
+    // Simulates the real bug: a process started on 2026-04-16 wrote
+    // forceAgent=true into state. Now it's 2026-04-18 UTC and quota has
+    // recovered (remaining > today's expected). Without cross-day reset,
+    // hysteresis would read the stale forceAgent=true and self-perpetuate.
+    state.forceAgent = true
+    state.smartAgentDecision = {
+      forceAgent: true,
+      remaining: 130,
+      expected: 130,
+      idealDaily: 10,
+    }
+    // Cache timestamp is from 2026-04-16 UTC
+    state.smartAgentCacheTimestamp = new Date("2026-04-16T22:00:00Z").getTime()
+
+    // Today (2026-04-18 UTC): entitlement=300, dayOfMonth=18, daysInMonth=30
+    // expected = 300 - 18*10 = 120, remaining = 130 > 120 → fresh forceAgent=false
+    // Stale state must be cleared first; hysteresis must NOT trigger.
+    // @ts-expect-error - Mock fetch
+    globalThis.fetch = mock(() =>
+      Promise.resolve({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            quota_reset_date: "2026-04-30",
+            quota_snapshots: {
+              premium_interactions: {
+                entitlement: 300,
+                remaining: 130,
+              },
+            },
+          }),
+      }),
+    )
+
+    const result = await resolveInitiatorWithSmartAgent(
+      "user",
+      new Date("2026-04-18T01:00:00Z"),
+    )
+    // Expected: hysteresis cleared, falls through to defaultInitiator ("user")
+    expect(result.initiator).toBe("user")
+  })
+
+  test("two processes started on different days produce identical decisions for the same quota state", async () => {
+    // Process A: started 2026-04-16, has accumulated state
+    // Process B: just started today, no state
+    // Both query at 2026-04-18 with identical quota → must reach same verdict.
+    state.forceAgent = true
+
+    // @ts-expect-error - Mock fetch
+    globalThis.fetch = mock(() =>
+      Promise.resolve({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            quota_reset_date: "2026-04-30",
+            quota_snapshots: {
+              premium_interactions: {
+                entitlement: 300,
+                remaining: 130,
+              },
+            },
+          }),
+      }),
+    )
+    const today = new Date("2026-04-18T01:00:00Z")
+
+    // Process A: stale state from 2026-04-16
+    state.smartAgentDecision = {
+      forceAgent: true,
+      remaining: 140,
+      expected: 140,
+      idealDaily: 10,
+    }
+    state.smartAgentCacheTimestamp = new Date("2026-04-16T22:00:00Z").getTime()
+    const resultA = await resolveInitiatorWithSmartAgent("user", today)
+
+    // Process B: fresh, no state
+    clearSmartAgentCache()
+    const resultB = await resolveInitiatorWithSmartAgent("user", today)
+
+    expect(resultA.initiator).toBe(resultB.initiator)
+  })
+
+  test("keeps protection within the same UTC day even if local day differs", async () => {
+    // Setup: protection entered at 2026-04-18T22:00 UTC.
+    // Same UTC day, even if local timezone (e.g. UTC+8) crossed midnight.
+    state.forceAgent = true
+    state.smartAgentDecision = {
+      forceAgent: true,
+      remaining: 130,
+      expected: 120,
+      idealDaily: 10,
+    }
+    state.smartAgentCacheTimestamp = new Date("2026-04-18T22:00:00Z").getTime()
+
+    // Query 1 hour later, still 2026-04-18 UTC
+    // @ts-expect-error - Mock fetch
+    globalThis.fetch = mock(() =>
+      Promise.resolve({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            quota_reset_date: "2026-04-30",
+            quota_snapshots: {
+              premium_interactions: {
+                entitlement: 300,
+                remaining: 130,
+              },
+            },
+          }),
+      }),
+    )
+    const result = await resolveInitiatorWithSmartAgent(
+      "user",
+      new Date("2026-04-18T23:00:00Z"),
+    )
+    // No cross-day clear → hysteresis still active → maintain protection
+    expect(result.initiator).toBe("agent")
+  })
+})
+
 describe("getSmartAgentDecision", () => {
   const originalFetch = globalThis.fetch
 
@@ -337,5 +468,90 @@ describe("getSmartAgentDecision", () => {
     const result = await getSmartAgentDecision(new Date("2026-02-15"))
     expect(result.forceAgent).toBe(true)
     expect(result.error).toBeDefined()
+  })
+})
+
+describe("hysteresis - error decision should not seed protection", () => {
+  const originalFetch = globalThis.fetch
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch
+    clearSmartAgentCache()
+    state.forceAgent = false
+  })
+
+  test("does not enter hysteresis after error recovery when remaining within margin", async () => {
+    // Bug: error decision writes {forceAgent:true, reason:"error"} to state.
+    // Subsequent successful fresh decision (forceAgent=false, on-budget within margin)
+    // would otherwise be captured by hysteresis using the error-seeded state.
+    state.forceAgent = true
+    // Seed: prior error decision wrote forceAgent=true with reason "error"
+    state.smartAgentDecision = {
+      forceAgent: true,
+      reason: "error",
+      error: "network failure",
+    }
+    // Same UTC day to isolate from cross-day reset
+    state.smartAgentCacheTimestamp = new Date("2026-04-18T01:00:00Z").getTime()
+
+    // Fresh recovery: remaining=125, expected=120, idealDaily=10
+    // 125 > 120 → fresh forceAgent=false; but 125 <= 120+10=130 within margin
+    // Without fix: hysteresis triggers (error state seeds it) → force agent
+    // With fix: hysteresis skipped (reason==="error") → returns defaultInitiator
+    // @ts-expect-error - Mock fetch
+    globalThis.fetch = mock(() =>
+      Promise.resolve({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            quota_reset_date: "2026-04-30",
+            quota_snapshots: {
+              premium_interactions: {
+                entitlement: 300,
+                remaining: 125,
+              },
+            },
+          }),
+      }),
+    )
+    const result = await resolveInitiatorWithSmartAgent(
+      "user",
+      new Date("2026-04-18T02:00:00Z"),
+    )
+    expect(result.initiator).toBe("user")
+  })
+
+  test("normal exit still works after error recovery when remaining exceeds margin", async () => {
+    // Same error-seeded state, but recovery shows ample remaining → should exit normally.
+    state.forceAgent = true
+    state.smartAgentDecision = {
+      forceAgent: true,
+      reason: "error",
+      error: "network failure",
+    }
+    state.smartAgentCacheTimestamp = new Date("2026-04-18T01:00:00Z").getTime()
+
+    // remaining=200 ≫ expected 120 + margin 10 → normal exit
+    // @ts-expect-error - Mock fetch
+    globalThis.fetch = mock(() =>
+      Promise.resolve({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            quota_reset_date: "2026-04-30",
+            quota_snapshots: {
+              premium_interactions: {
+                entitlement: 300,
+                remaining: 200,
+              },
+            },
+          }),
+      }),
+    )
+    const result = await resolveInitiatorWithSmartAgent(
+      "user",
+      new Date("2026-04-18T02:00:00Z"),
+    )
+    expect(result.initiator).toBe("user")
   })
 })
