@@ -11,7 +11,9 @@
 | Route entry | `route.ts`, `handler.ts` | stream / non-stream 共用 `handleResponses()` |
 | Stream ID sync | `stream-id-sync.ts` | 修正 added/done 事件 ID 不一致 |
 | Vision / initiator detection | `utils.ts` | 只看 `payload.input` 与最后一项 role |
-| Payload preflight | `handler.ts` | `apply_patch` function 化、按配置处理 `web_search`、端点支持校验 |
+| Payload preflight | `handler.ts` | `apply_patch` function 化、按配置处理 `web_search`、端点支持校验、`prompt_cache_key` 注入 |
+| Input normalization | `utils.ts` (`normalizeResponsesInputForReplay`) | 把 replay input 整理成上游可接受形态 |
+| Compact input collapse | `utils.ts` (`compactInputByLatestCompaction`) | 仅保留最近一次 compaction 之后的 input 项 |
 
 ## Critical Invariants
 
@@ -26,6 +28,8 @@
 - `web_search` tool 是否移除由 `useResponsesApiWebSearch` 配置决定；关闭时才在这里剥离
 - 当模型不支持 `/responses` 时，直接返回 400 `invalid_request_error`；不要把这个失败拖到上游 fetch
 - `stream-id-sync.ts` 会在 `response.output_item.added` 缺少 `item.id` 时补造 `oi_*` ID；后续事件必须复用该映射
+- `prompt_cache_key` 缺失时由 `stableSessionKey` 注入；`normalizeResponsesInputForReplay()` 与 `compactInputByLatestCompaction()` 必须在 stream id sync 之前完成
+- `compactInputByLatestCompaction()` 在 messages → responses 路径（`api-flows.ts`）也复用；改语义时两处一并验
 
 ## Anti-Patterns
 

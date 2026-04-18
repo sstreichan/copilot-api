@@ -12,6 +12,9 @@
 - `router/` - 多实例调遣之器单元测试（lib.test.ts, state.test.ts, proxy.test.ts, integration.test.ts）；注入 `fetchImpl`/`now` 参数 mock
 - `router/` 有独立测试约定；详见 `tests/router/AGENTS.md`
 - `telemetry*.test.ts` - telemetry 与 identity
+- `chat-completions-handler.test.ts`, `messages-handler.test.ts` - route handler 行为
+- `provider-auth.test.ts` - provider auth (x-api-key / Authorization Bearer) 切换
+- `token-refresh.test.ts` - wall-clock token 刷新调度
 - `fixtures/` - 录制数据；优先复用，不要请求真实 API
 
 ## Project-Specific Conventions

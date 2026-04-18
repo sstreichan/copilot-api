@@ -15,7 +15,7 @@
 
 ## Critical Invariants
 
-- 上游认证固定走 `x-api-key: providerConfig.apiKey`；不要把 Copilot/GitHub token 混入 provider 请求
+- 上游认证由 `providerConfig.authType` 决定：默认 `x-api-key`，`authType === "authorization"` 时改写 `Authorization: Bearer ${apiKey}`；不要把 Copilot/GitHub token 混入 provider 请求
 - 只有 `anthropic-version`、`anthropic-beta`、`accept`、`user-agent` 四类头会从客户端继续透传；其余 header 默认丢弃
 - `createProviderProxyResponse()` 必须删除 hop-by-hop response headers（`content-length`、`transfer-encoding` 等）后再回给客户端
 - `forwardProviderMessages()` 只 POST 到 `${baseUrl}/v1/messages`，`forwardProviderModels()` 只 GET `${baseUrl}/v1/models`；不要在 service 层猜测额外端点

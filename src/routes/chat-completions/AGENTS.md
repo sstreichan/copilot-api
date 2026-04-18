@@ -2,14 +2,14 @@
 
 ## Overview
 
-这里承载 OpenAI-compatible `/v1/chat/completions` 路由：负责请求前置处理（限流、token 统计、manual approve、max_tokens 默认补全）并调用 Copilot chat-completions service。
+这里承载 OpenAI-compatible `/v1/chat/completions` 路由：负责请求前置处理（限流、manual approve、`max_tokens` 默认补全）并调用 Copilot chat-completions service。
 
 ## Where To Look
 
 | Task | Location | Notes |
 |------|----------|-------|
 | Route entry | `route.ts` | `POST /`，异常统一 `forwardError()` |
-| Main handler | `handler.ts` | 限流、token 统计、manual approve、stream/non-stream 分支 |
+| Main handler | `handler.ts` | 限流、manual approve、`max_tokens` 默认值、stream/non-stream 分支 |
 | Upstream call | `~/services/copilot/create-chat-completions.ts` | `x-initiator` 决策、thinking 签名重试、telemetry |
 
 ## Critical Invariants
@@ -32,5 +32,4 @@
 
 - 在 route 层复制 `isThinkingBlockError` 与 retry 逻辑，绕过 service 边界。
 - 直接返回上游流而不经 `streamSSE`，导致日志与结束语义不一致。
-- 跳过 token 统计失败保护（当前约定是 warn 并继续请求）。
 - 手动构造 `x-request-id` 或 `x-initiator` 覆盖 service 计算结果。

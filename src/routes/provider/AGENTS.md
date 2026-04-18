@@ -17,7 +17,7 @@
 | Provider messages proxy | `messages/handler.ts` | 读取 provider config、转发 `/v1/messages` |
 | Provider token counting | `messages/count-tokens-handler.ts` | Anthropic → OpenAI 转换后本地 tokenizer 计算 |
 | Provider models proxy | `models/route.ts` | 透传 `/v1/models`，保留上游 status/header |
-| Upstream fetch boundary | `~/services/providers/anthropic-proxy.ts` | header allowlist、response header strip |
+| Upstream fetch boundary | `~/services/providers/anthropic-proxy.ts` | header allowlist、auth 切换（x-api-key / Bearer）、response header strip |
 
 ## Critical Invariants
 
@@ -25,6 +25,7 @@
 - `messages/handler.ts` 只为 payload 注入 provider config 里的 `temperature` / `top_p` / `top_k` 默认值；显式请求值优先，不要覆盖已给定参数
 - Provider streaming 只在 `payload.stream === true` 且上游 `content-type` 包含 `text/event-stream` 时走 `streamSSE()`；其它情况统一走 `createProviderProxyResponse()`
 - `messages/count_tokens` 不访问 provider 上游；它复用 `translateToOpenAI()` + 本地 tokenizer，找不到模型时允许用 provider fallback model
+- `messages/handler.ts` 在收到上游 usage 后会用 `adjustInputTokens(providerConfig, usage)` 按 provider 配置修正 input_tokens；stream / non-stream 两路均要走
 
 ## Project-Specific Rules
 

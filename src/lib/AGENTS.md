@@ -10,11 +10,13 @@
 |------|----------|-------|
 | Runtime singleton state | `state.ts` | 全局唯一真相源；含 interactionId（per-session UUID） |
 | Config file / defaults | `config.ts`, `paths.ts` | `COPILOT_API_HOME`、`config.json`、默认 prompts |
-| Token lifecycle | `token.ts` | GitHub/Copilot token 获取与刷新循环；AbortController 管理生命周期 |
+| Token lifecycle | `token.ts` | GitHub/Copilot token 获取与刷新；wall-clock 按 token 剩余时间分段重新调度，AbortController 管理生命周期 |
 | Rate limit / approval | `rate-limit.ts`, `approval.ts` | `-r` / `-w` 与手动确认 |
 | Logging / debug | `logger.ts`, `debug-logger.ts`, `models-log.ts` | stream log、debug dump、models 输出 |
 | 暗渡之门策略 | `smart-agent.ts` | forceAgent / 配额决断与缓存 |
-| API request config | `api-config.ts` | Copilot headers 组装（interaction、intent、request ID） |
+| API request config | `api-config.ts` | Copilot headers 组装（interaction、intent、request ID）；含 `prepareForCompact`、`USER_AGENT`、`COPILOT_VERSION` |
+| Compact 标记 | `compact.ts` | compact request / auto-continue prompt 常量与 `CompactType` 枚举 |
+| Subagent 标记解析 | `subagent.ts` | `__SUBAGENT_MARKER__` 解析与 metadata 抽取 |
 
 ## Project-Specific Conventions
 

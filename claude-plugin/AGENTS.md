@@ -8,7 +8,9 @@
 
 - `.claude-plugin/plugin.json` - 插件元数据
 - `hooks/hooks.json` - `SubagentStart` hook 声明
-- `scripts/subagent-start-marker.js` - marker 生产脚本
+- `scripts/subagent-start-marker.js` - `SubagentStart` marker 生产脚本
+- `scripts/session-start-rules.js` - `SessionStart` 注入项目规则
+- `scripts/user-prompt-submit-reminder.js` - `UserPromptSubmit` 注入提醒文本
 
 ## Project-Specific Rules
 
