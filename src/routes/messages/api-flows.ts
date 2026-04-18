@@ -4,6 +4,8 @@ import type { ContentfulStatusCode } from "hono/utils/http-status"
 
 import { streamSSE } from "hono/streaming"
 
+import type { CompactType } from "~/lib/compact"
+import type { SubagentMarker } from "~/lib/subagent"
 import type { Model } from "~/services/copilot/get-models"
 
 import {
@@ -40,8 +42,6 @@ import {
   type ResponseStreamEvent,
 } from "~/services/copilot/create-responses"
 
-import type { SubagentMarker } from "./subagent-marker"
-
 import {
   type AnthropicMessagesPayload,
   type AnthropicStreamState,
@@ -58,7 +58,7 @@ export interface FlowBaseOptions {
   subagentMarker?: SubagentMarker | null
   requestId: string
   sessionId?: string
-  isCompact?: boolean
+  compactType?: CompactType
 }
 
 interface ResponsesFlowOptions extends FlowBaseOptions {
@@ -75,7 +75,7 @@ export const handleWithChatCompletions = async (
   anthropicPayload: AnthropicMessagesPayload,
   options: FlowBaseOptions,
 ) => {
-  const { logger, subagentMarker, requestId, sessionId } = options
+  const { logger, subagentMarker, requestId, sessionId, compactType } = options
   const openAIPayload = translateToOpenAI(anthropicPayload)
   debugJson(logger, "Translated OpenAI request payload:", openAIPayload)
 
@@ -83,6 +83,7 @@ export const handleWithChatCompletions = async (
     subagentMarker,
     requestId,
     sessionId,
+    compactType,
   })
 
   if (isNonStreaming(response)) {
@@ -165,7 +166,7 @@ export const handleWithResponsesApi = async (
     selectedModel,
     requestId,
     sessionId,
-    isCompact,
+    compactType,
   } = options
 
   const responsesPayload =
@@ -176,7 +177,7 @@ export const handleWithResponsesApi = async (
     selectedModel?.capabilities.limits.max_prompt_tokens,
   )
 
-  if (!isCompact) {
+  if (compactType === 0) {
     compactInputByLatestCompaction(responsesPayload)
   }
 
@@ -189,6 +190,7 @@ export const handleWithResponsesApi = async (
     subagentMarker,
     requestId,
     sessionId,
+    compactType,
   })
 
   if (responsesPayload.stream && isAsyncIterable(response)) {
@@ -234,7 +236,7 @@ export const handleWithMessagesApi = async (
     selectedModel,
     requestId,
     sessionId,
-    isCompact,
+    compactType,
   } = options
 
   prepareMessagesApiPayload(anthropicPayload, selectedModel)
@@ -247,7 +249,7 @@ export const handleWithMessagesApi = async (
     subagentMarker,
     requestId,
     sessionId,
-    isCompact,
+    compactType,
   })
 
   if (anthropicPayload.stream && response.body) {

@@ -53,5 +53,5 @@
 ## Anti-Patterns
 
 - 调整 native branch 顺序，让 payload 先被 OpenAI/mergeToolResult 逻辑污染
-- 在这里实现 Vertex AI block 顺序修复；那属于 `create-messages.ts`
+- 在这里实现上游后端 block 顺序修复；那属于 `create-messages.ts`
 - 把 raw native stream 改成翻译后再输出，破坏上游 SSE 兼容性

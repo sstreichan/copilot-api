@@ -426,3 +426,63 @@ describe("modelCallId telemetry alignment", () => {
     )
   })
 })
+
+describe("Initiator detection (last-message role)", () => {
+  beforeEach(() => {
+    fetchCalls = []
+    state.interactionId = "test-interaction-id"
+    state.forceAgent = false
+
+    spyOn(telemetryModule, "trackRequestSent").mockImplementation(() => {})
+    spyOn(telemetryModule, "trackResponseSuccess").mockImplementation(() => {})
+    spyOn(telemetryModule, "trackResponseError").mockImplementation(() => {})
+    spyOn(telemetryModule, "scheduleFeedbackEvents").mockImplementation(
+      () => {},
+    )
+    spyOn(telemetryModule, "schedulePostResponseEvents").mockImplementation(
+      () => {},
+    )
+    spyOn(telemetryModule, "trackPanelRequest").mockImplementation(() => {})
+    spyOn(telemetryModule, "trackGhostTextShown").mockImplementation(() => {})
+  })
+
+  afterEach(() => {
+    mock.restore()
+  })
+
+  test("sets x-initiator to agent if tool/assistant present at end", async () => {
+    // @ts-expect-error - Mock fetch
+    globalThis.fetch = createFetchMock()
+
+    const payload: ChatCompletionsPayload = {
+      messages: [
+        { role: "user", content: "hi" },
+        { role: "tool", content: "tool call", tool_call_id: "call_1" },
+      ],
+      model: "gpt-test",
+    }
+    await createChatCompletions(payload, { requestId: "1" })
+
+    const chatCall = fetchCalls.find((c) => c.url.includes("chat/completions"))
+    expect(chatCall).toBeDefined()
+    expect(chatCall!.headers["x-initiator"]).toBe("agent")
+  })
+
+  test("sets x-initiator to user if only user messages present", async () => {
+    // @ts-expect-error - Mock fetch
+    globalThis.fetch = createFetchMock()
+
+    const payload: ChatCompletionsPayload = {
+      messages: [
+        { role: "user", content: "hi" },
+        { role: "user", content: "hello again" },
+      ],
+      model: "gpt-test",
+    }
+    await createChatCompletions(payload, { requestId: "1" })
+
+    const chatCall = fetchCalls.find((c) => c.url.includes("chat/completions"))
+    expect(chatCall).toBeDefined()
+    expect(chatCall!.headers["x-initiator"]).toBe("user")
+  })
+})

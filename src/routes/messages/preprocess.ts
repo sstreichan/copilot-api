@@ -1,6 +1,16 @@
 import type { Model } from "~/services/copilot/get-models"
 
-import { getReasoningEffortForModel } from "~/lib/config"
+import {
+  COMPACT_AUTO_CONTINUE,
+  COMPACT_REQUEST,
+  compactAutoContinuePromptStarts,
+  compactMessageSections,
+  compactSummaryPromptStart,
+  compactSystemPromptStart,
+  compactTextOnlyGuard,
+  type CompactType,
+} from "~/lib/compact"
+import { getAnthropicEffortForModel } from "~/services/copilot/create-messages"
 
 import type {
   AnthropicMessage,
@@ -9,25 +19,12 @@ import type {
   AnthropicToolResultBlock,
 } from "./anthropic-types"
 
-const compactSystemPromptStart =
-  "You are a helpful AI assistant tasked with summarizing conversations"
-const compactTextOnlyGuard =
-  "CRITICAL: Respond with TEXT ONLY. Do NOT call any tools."
-const compactSummaryPromptStart =
-  "Your task is to create a detailed summary of the conversation so far"
-const compactMessageSections = ["Pending Tasks:", "Current Work:"] as const
 export const TOOL_REFERENCE_TURN_BOUNDARY = "Tool loaded."
 
-const getAnthropicEffortForModel = (
-  model: string,
-): "low" | "medium" | "high" | "max" => {
-  const reasoningEffort = getReasoningEffortForModel(model)
-
-  if (reasoningEffort === "xhigh") return "max"
-  if (reasoningEffort === "none" || reasoningEffort === "minimal") return "low"
-
-  return reasoningEffort
-}
+const IDE_EXECUTE_CODE_TOOL = "mcp__ide__executeCode"
+const IDE_GET_DIAGNOSTICS_TOOL = "mcp__ide__getDiagnostics"
+const IDE_GET_DIAGNOSTICS_DESCRIPTION =
+  "Get language diagnostics from VS Code. Returns errors, warnings, information, and hints for files in the workspace."
 
 const getCompactCandidateText = (message: AnthropicMessage): string => {
   if (message.role !== "user") {
@@ -60,25 +57,46 @@ const isCompactMessage = (lastMessage: AnthropicMessage): boolean => {
   )
 }
 
-export const isCompactRequest = (
-  anthropicPayload: AnthropicMessagesPayload,
+const isCompactAutoContinueMessage = (
+  lastMessage: AnthropicMessage,
 ): boolean => {
+  const text = getCompactCandidateText(lastMessage)
+  return (
+    Boolean(text)
+    && compactAutoContinuePromptStarts.some((promptStart) =>
+      text.startsWith(promptStart),
+    )
+  )
+}
+
+export const getCompactType = (
+  anthropicPayload: AnthropicMessagesPayload,
+): CompactType => {
   const lastMessage = anthropicPayload.messages.at(-1)
   if (lastMessage && isCompactMessage(lastMessage)) {
-    return true
+    return COMPACT_REQUEST
+  }
+
+  if (lastMessage && isCompactAutoContinueMessage(lastMessage)) {
+    return COMPACT_AUTO_CONTINUE
   }
 
   const system = anthropicPayload.system
   if (typeof system === "string") {
-    return system.startsWith(compactSystemPromptStart)
+    return system.startsWith(compactSystemPromptStart) ? COMPACT_REQUEST : 0
   }
-  if (!Array.isArray(system)) return false
+  if (!Array.isArray(system)) return 0
 
-  return system.some(
+  const hasCompactSystemPrompt = system.some(
     (msg) =>
       typeof msg.text === "string"
       && msg.text.startsWith(compactSystemPromptStart),
   )
+  if (hasCompactSystemPrompt) {
+    return COMPACT_REQUEST
+  }
+
+  return 0
 }
 
 const mergeContentWithText = (
@@ -148,8 +166,15 @@ export const stripToolReferenceTurnBoundary = (
 
 export const mergeToolResultForClaude = (
   anthropicPayload: AnthropicMessagesPayload,
+  options?: {
+    skipLastMessage?: boolean
+  },
 ): void => {
-  for (const msg of anthropicPayload.messages) {
+  const lastMessageIndex = anthropicPayload.messages.length - 1
+
+  for (const [index, msg] of anthropicPayload.messages.entries()) {
+    if (options?.skipLastMessage && index === lastMessageIndex) continue
+
     if (msg.role !== "user" || !Array.isArray(msg.content)) continue
 
     const toolResults: Array<AnthropicToolResultBlock> = []
@@ -171,6 +196,30 @@ export const mergeToolResultForClaude = (
 
     msg.content = mergeToolResult(toolResults, textBlocks)
   }
+}
+
+// align with vscode copilot claude agent tools
+export const sanitizeIdeTools = (payload: AnthropicMessagesPayload): void => {
+  if (!payload.tools || payload.tools.length === 0) {
+    return
+  }
+
+  payload.tools = payload.tools.flatMap((tool) => {
+    if (tool.name === IDE_EXECUTE_CODE_TOOL) {
+      return []
+    }
+
+    if (tool.name === IDE_GET_DIAGNOSTICS_TOOL) {
+      return [
+        {
+          ...tool,
+          description: IDE_GET_DIAGNOSTICS_DESCRIPTION,
+        },
+      ]
+    }
+
+    return [tool]
+  })
 }
 
 const hasToolRef = (block: AnthropicToolResultBlock) => {
@@ -225,6 +274,8 @@ export const prepareMessagesApiPayload = (
   stripCacheControl(payload)
   filterAssistantThinkingBlocks(payload)
 
+  const hasThinking = Boolean(payload.thinking)
+
   // https://platform.claude.com/docs/en/build-with-claude/extended-thinking#extended-thinking-with-tool-use
   // Using tool_choice: {"type": "any"} or tool_choice: {"type": "tool", "name": "..."} will result in an error because these options force tool use, which is incompatible with extended thinking.
   const toolChoice = payload.tool_choice
@@ -234,10 +285,21 @@ export const prepareMessagesApiPayload = (
     payload.thinking = {
       type: "adaptive",
     }
+    // align with vscode copilot
+    if (!hasThinking) {
+      payload.thinking.display = "summarized"
+    }
+    if (payload.model === "claude-opus-4.7") {
+      payload.thinking.display = "summarized"
+    }
+    let finalEffort: "low" | "medium" | "high" | "xhigh" | "max" =
+      payload.output_config?.effort ?? getAnthropicEffortForModel(payload.model)
+    const reasoningEffort = selectedModel.capabilities.supports.reasoning_effort
+    if (reasoningEffort && !reasoningEffort.includes(finalEffort)) {
+      finalEffort = reasoningEffort.at(-1) as typeof finalEffort
+    }
     payload.output_config = {
-      effort:
-        payload.output_config?.effort
-        ?? getAnthropicEffortForModel(payload.model),
+      effort: finalEffort,
     }
   }
 }

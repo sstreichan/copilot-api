@@ -24,7 +24,7 @@
 ## Project-Specific Rules
 
 - `chat-completions` 路径目前不处理 subagent marker（`handler.ts` 注释已声明）；不要在这里引入 messages 路径的 marker 合并逻辑。
-- `create-chat-completions.ts` 会根据最后一条 message role 推导 `x-initiator`（assistant/tool → agent，其余 → user），并与 smart-agent 决策合并；不要在 route 层重复判断。
+- `create-chat-completions.ts` 会据末条 message role 推导 `x-initiator`（assistant/tool → agent，余者 → user），并与暗渡门下之决断合流；不要在 route 层重复判断。
 - 上游 400 若命中 thinking/signature 错误，会触发“strip reasoning fields 后重试”分支（`reasoning_opaque` + `reasoning_text`）；route 层不要复制这套重试。
 - vision 请求依赖 service 侧自动检测 image content 并设置 header，route 层不做额外 header 拼接。
 

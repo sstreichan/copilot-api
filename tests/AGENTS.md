@@ -9,7 +9,7 @@
 - `create-messages.test.ts`, `create-chat-completions.test.ts`, `create-responses.test.ts` - service 边界测试
 - `native-messages-handler.test.ts`, `anthropic-*.test.ts`, `responses-*.test.ts` - Anthropic / Responses 路径
 - `generate-content/` - Gemini 路由、translation、streaming、codex/responses 分支；详见 `tests/generate-content/AGENTS.md`
-- `router/` - Sticky router 单元测试（lib.test.ts, state.test.ts, proxy.test.ts, integration.test.ts）；注入 `fetchImpl`/`now` 参数 mock
+- `router/` - 多实例调遣之器单元测试（lib.test.ts, state.test.ts, proxy.test.ts, integration.test.ts）；注入 `fetchImpl`/`now` 参数 mock
 - `router/` 有独立测试约定；详见 `tests/router/AGENTS.md`
 - `telemetry*.test.ts` - telemetry 与 identity
 - `fixtures/` - 录制数据；优先复用，不要请求真实 API

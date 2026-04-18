@@ -23,7 +23,7 @@
 ## Project-Specific Rules
 
 - `getProviderConfig()` 已负责 baseUrl trim、apiKey trim、enabled/type 校验；service 层假定拿到的是合法 `ResolvedProviderConfig`
-- provider service 不参与 telemetry、smart-agent、interaction headers；这些仅属于 Copilot service 边界
+- provider service 不参与 telemetry、暗渡之门、interaction headers；这些仅属于 Copilot service 边界
 
 ## Anti-Patterns
 

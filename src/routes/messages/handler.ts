@@ -29,8 +29,9 @@ import {
   handleWithResponsesApi,
 } from "./api-flows"
 import {
-  isCompactRequest,
+  getCompactType,
   mergeToolResultForClaude,
+  sanitizeIdeTools,
   stripToolReferenceTurnBoundary,
 } from "./preprocess"
 import { parseSubagentMarkerFromFirstUser } from "./subagent-marker"
@@ -45,13 +46,14 @@ export async function handleCompletion(c: Context) {
   const originalModel = anthropicPayload.model
   debugJson(logger, "Anthropic request payload:", anthropicPayload)
 
-  const isCompact = isCompactRequest(anthropicPayload)
-  if (isCompact) {
-    logger.debug("Is compact request:", isCompact)
+  const compactType = getCompactType(anthropicPayload)
+  if (compactType !== 0) {
+    logger.debug("Compact request type:", compactType)
     if (shouldCompactUseSmallModel()) {
       anthropicPayload.model = getSmallModel()
     }
   }
+  sanitizeIdeTools(anthropicPayload)
 
   const subagentMarker = parseSubagentMarkerFromFirstUser(anthropicPayload)
   if (subagentMarker) {
@@ -64,11 +66,11 @@ export async function handleCompletion(c: Context) {
   const anthropicBeta = c.req.header("anthropic-beta")
   logger.debug("Anthropic Beta header:", anthropicBeta)
   const noTools = !anthropicPayload.tools || anthropicPayload.tools.length === 0
-  if (anthropicBeta && noTools && !isCompact) {
+  if (anthropicBeta && noTools && compactType === 0) {
     anthropicPayload.model = getSmallModel()
   }
 
-  if (!isCompact) {
+  if (compactType === 0) {
     stripToolReferenceTurnBoundary(anthropicPayload)
     mergeToolResultForClaude(anthropicPayload)
   }
@@ -99,7 +101,7 @@ export async function handleCompletion(c: Context) {
       selectedModel,
       requestId,
       sessionId,
-      isCompact,
+      compactType,
       logger,
     })
   }
@@ -110,7 +112,7 @@ export async function handleCompletion(c: Context) {
       selectedModel,
       requestId,
       sessionId,
-      isCompact,
+      compactType,
       logger,
     })
   }
@@ -119,7 +121,7 @@ export async function handleCompletion(c: Context) {
     subagentMarker,
     requestId,
     sessionId,
-    isCompact,
+    compactType,
     logger,
   })
 }

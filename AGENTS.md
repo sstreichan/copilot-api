@@ -29,7 +29,7 @@ GitHub Copilot API 反向代理，基于 **Hono**，对外暴露 OpenAI / Anthro
 - 不要猜测；不确定时先验证，无法验证就明确说明。
 - 默认中文回复。
 - 收到明确任务或 skill 指令时直接执行；只有确实缺少关键上下文时才提问。
-- 运行时代码优先查看 `src/`；测试优先查看 `tests/`；Sticky Router 查看 `router/`；提案流程查看 `openspec/`。
+- 运行时代码优先查看 `src/`；测试优先查看 `tests/`；多实例调遣之器（Sticky Router）藏于 `router/`；提案流程查看 `openspec/`。
 - `.vendor/`、`.sisyphus/`、`.debates/`、`history/`、`experiments/` 默认不是主运行时逻辑，除非任务明确涉及。
 
 ## 快速参考
@@ -44,7 +44,7 @@ bun run typecheck      # 类型检查
 常用启动标志：
 
 - `-M`：Claude 模型走原生 `/v1/messages`
-- `-F`：启用 Smart Agent
+- `-F`：启用 Smart Agent（暗渡之门，按配额转圜流向，详情参见 `src/lib/smart-agent.ts`）
 - `-a business`：指定账户类型
 - `--manual`：手动审批每个请求
 - `--proxy-env`：从环境变量读取代理配置
@@ -52,10 +52,10 @@ bun run typecheck      # 类型检查
 ## 架构总览
 
 - 主链路：`客户端兼容 API → OpenAI 中间格式（多数模型）→ GitHub Copilot API`
-- 例外：`-M` 时，Claude 模型绕过中间格式，直接走 Copilot 原生 `/v1/messages`；该分支实际对接 **Vertex AI**，校验更严格。
+- 例外：`-M` 时，Claude 模型绕过中间格式，直接走 Copilot 原生 `/v1/messages`；该分支上游校验更严格。
 - 路由通常双注册在 `/` 与 `/v1/`；新增公开端点时，先检查是否需要双前缀同时挂载。
 - 共享运行时状态的唯一真相源是 `src/lib/state.ts`；不要复制平行状态缓存。
-- 后端兼容补丁放 `src/services/copilot/*`；`handler.ts` 负责路由分发与翻译编排，不承载 Vertex AI / Copilot workaround。
+- 后端兼容补丁放 `src/services/copilot/*`；`handler.ts` 负责路由分发与翻译编排，不承载上游 workaround。
 
 ## 必须记住的跨目录约束
 
@@ -82,8 +82,8 @@ bun run typecheck      # 类型检查
 - `src/services/telemetry/AGENTS.md` - telemetry envelope、identity、fire-and-forget
 - `tests/AGENTS.md` - Bun 测试布局、mock 约定、fixtures、断言风格
 - `tests/generate-content/AGENTS.md` - Gemini / codex 测试约束
-- `tests/router/AGENTS.md` - Sticky Router 测试模式、fetch/time 注入与 sticky 断言
-- `router/AGENTS.md` - Sticky Router：session-sticky、least-loaded、dashboard、start.sh
+- `tests/router/AGENTS.md` - Sticky Router 测试规约：fetch/time 注入与 sticky 之验证
+- `router/AGENTS.md` - Sticky Router 之内里：session-sticky、least-loaded、dashboard、start.sh
 - `claude-plugin/AGENTS.md` - Claude Code plugin / marketplace 与 `__SUBAGENT_MARKER__`
 - `openspec/AGENTS.md` - proposal、delta spec、validate / archive 工作流
 
@@ -92,7 +92,7 @@ bun run typecheck      # 类型检查
 - 改 CLI 启动、flags、middleware、全局配置：先看 `src/AGENTS.md`
 - 改 Claude / Messages / thinking / tool calling：先看 `src/routes/messages/AGENTS.md` 与 `src/services/copilot/AGENTS.md`
 - 改 OpenAI chat / responses / models 兼容层：先看对应 `src/routes/*/AGENTS.md`
-- 改多实例调度或 dashboard：先看 `router/AGENTS.md`
+- 改多实例调遣或 dashboard：先看 `router/AGENTS.md`
 - 改测试或补回归：先看 `tests/AGENTS.md`
 - 做 proposal / spec / architecture 级变更：先看 `openspec/AGENTS.md`
 
@@ -109,6 +109,6 @@ bd close bd-42 --reason "完成" --json
 
 ## 近期高价值变更提示
 
-- Claude `-M` 原生 messages 分支存在 Vertex AI 特有约束；相关兼容逻辑集中在 `src/services/copilot/create-messages.ts`。
-- Smart Agent (`-F`) 与 token / usage 判定逻辑集中在 `src/lib/smart-agent.ts` 及相关 usage service。
+- Claude `-M` 原生 messages 分支别有上游约束；相关兼容逻辑集中在 `src/services/copilot/create-messages.ts`。
+- Smart Agent（`-F`）之取舍，并 token / usage 判别之机，俱归 `src/lib/smart-agent.ts` 与相关 usage service 收束。
 - Provider-scoped 路由、Responses API、`/v1/models` 增强能力都已有现成实现；改动前先读对应目录 AGENTS。

@@ -2,7 +2,7 @@
 
 ## Overview
 
-`src/lib/` 承载跨路由共享的基础设施：状态、配置、日志、错误、限流、路径、token 生命周期和 smart-agent 决策都从这里出发。
+`src/lib/` 承载跨路由共享之基础设施：状态、配置、日志、错误、限流、路径、token 生命周期，与暗渡门下之决断，俱从此出。
 
 ## Where To Look
 
@@ -13,7 +13,7 @@
 | Token lifecycle | `token.ts` | GitHub/Copilot token 获取与刷新循环；AbortController 管理生命周期 |
 | Rate limit / approval | `rate-limit.ts`, `approval.ts` | `-r` / `-w` 与手动确认 |
 | Logging / debug | `logger.ts`, `debug-logger.ts`, `models-log.ts` | stream log、debug dump、models 输出 |
-| Smart agent policy | `smart-agent.ts` | forceAgent / quota 决策与缓存 |
+| 暗渡之门策略 | `smart-agent.ts` | forceAgent / 配额决断与缓存 |
 | API request config | `api-config.ts` | Copilot headers 组装（interaction、intent、request ID） |
 
 ## Project-Specific Conventions
@@ -23,7 +23,7 @@
 - `config.ts` 同时承载 provider 配置：`providers.<name>.baseUrl/apiKey/models.<model>.{temperature,topP,topK}`；取用时统一走 `getProviderConfig()`，不要在路由里手动 trim/校验
 - `paths.ts` 支持 `COPILOT_API_HOME` 覆盖默认目录；改路径逻辑时要兼顾 Windows/WSL 使用方式
 - `token.ts` 的刷新循环和 telemetry 初始化耦合，改认证链路时别漏 `trackAuthNewToken()` / `initTelemetry()`
-- `smart-agent.ts` 只缓存 `forceAgent=true` 的决策；“还在预算内”不是缓存项
+- `smart-agent.ts` 只缓存 `forceAgent=true` 之决断；“尚在预算之内”不作缓存之项
 - `api-config.ts` 组装请求头后被三个 `create-*` service 共享调用，不要在 service 内重复构造 header
 - `logger.ts` 的 `getPremiumInfo()` / `formatStreamLog()` 现在被 chat-completions、messages、responses 三条路由共用；progress log 可以失败，但不能改写 SSE/JSON 响应内容
 

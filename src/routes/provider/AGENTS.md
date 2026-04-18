@@ -35,5 +35,5 @@
 ## Anti-Patterns
 
 - 在 route 层拼 `x-api-key` / `anthropic-beta` / `user-agent`，绕开 provider service 的统一 header 处理
-- 把 provider 路由混入 Copilot native messages / Responses 的特例逻辑；这里是纯 provider proxy，不共享 smart-agent / telemetry 语义
+- 把 provider 路由混入 Copilot native messages / Responses 之特例逻辑；此处纯为 provider proxy，不与暗渡之门 / telemetry 同谭
 - provider `count_tokens` 失败时抛 500；当前约定是保守返回 `{ input_tokens: 1 }`

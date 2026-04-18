@@ -1,11 +1,12 @@
 import consola from "consola"
 import { randomUUID } from "node:crypto"
 
+import type { CompactType } from "~/lib/compact"
+import type { SubagentMarker } from "~/lib/subagent"
 import type {
   AnthropicAssistantMessage,
   AnthropicMessagesPayload,
 } from "~/routes/messages/anthropic-types"
-import type { SubagentMarker } from "~/routes/messages/subagent-marker"
 
 import {
   copilotBaseUrl,
@@ -36,7 +37,7 @@ export interface CreateMessagesOptions {
   subagentMarker?: SubagentMarker | null
   requestId?: string
   sessionId?: string
-  isCompact?: boolean
+  compactType?: CompactType
 }
 
 /**
@@ -126,7 +127,7 @@ const hasImageContent = (payload: AnthropicMessagesPayload): boolean =>
 /**
  * Map config reasoning effort to Anthropic adaptive thinking effort level.
  */
-const getAnthropicEffortForModel = (
+export const getAnthropicEffortForModel = (
   model: string,
 ): "low" | "medium" | "high" | "max" => {
   const reasoningEffort = getReasoningEffortForModel(model)
@@ -142,11 +143,25 @@ const getAnthropicEffortForModel = (
  * Uses a whitelist to only pass known-safe betas to the Copilot backend.
  */
 const INTERLEAVED_THINKING_BETA = "interleaved-thinking-2025-05-14"
+const ADVANCED_TOOL_USE_BETA = "advanced-tool-use-2025-11-20"
 const allowedAnthropicBetas = new Set([
   INTERLEAVED_THINKING_BETA,
   "context-management-2025-06-27",
-  "advanced-tool-use-2025-11-20",
+  ADVANCED_TOOL_USE_BETA,
 ])
+
+const TOOL_SEARCH_SUPPORTED_MODELS = [
+  "claude-sonnet-4.5",
+  "claude-sonnet-4.6",
+  "claude-opus-4.5",
+  "claude-opus-4.6",
+] as const
+
+const modelSupportsToolSearch = (modelId: string): boolean => {
+  return TOOL_SEARCH_SUPPORTED_MODELS.some((prefix) =>
+    modelId.toLowerCase().startsWith(prefix),
+  )
+}
 
 const resolveAnthropicBetaHeader = (
   options: CreateMessagesOptions,
@@ -159,15 +174,24 @@ const resolveAnthropicBetaHeader = (
       .map((item) => item.trim())
       .filter((item) => item.length > 0)
       .filter((item) => allowedAnthropicBetas.has(item))
-    const uniqueFilteredBetas = [...new Set(filteredBeta)]
+    const dedupedBetas = [...new Set(filteredBeta)]
     // Adaptive thinking conflicts with interleaved-thinking beta
     const finalFilteredBetas =
       supportsAdaptive ?
-        uniqueFilteredBetas.filter((item) => item !== INTERLEAVED_THINKING_BETA)
-      : uniqueFilteredBetas
+        dedupedBetas.filter((item) => item !== INTERLEAVED_THINKING_BETA)
+      : dedupedBetas
 
-    if (finalFilteredBetas.length > 0) {
-      return finalFilteredBetas.join(",")
+    // in vscode copilot extension, advanced-tool-use is enabled by default
+    // align header with vscode copilot extension
+
+    // will remove append ADVANCED_TOOL_USE_BETA in next github copilot extension version (>0.44.1)
+    const copilotHeaderSet =
+      modelSupportsToolSearch(payload.model) ? [ADVANCED_TOOL_USE_BETA] : []
+    const headerSet = new Set([...copilotHeaderSet, ...finalFilteredBetas])
+    const uniqueFilteredBetas = [...headerSet]
+
+    if (uniqueFilteredBetas.length > 0) {
+      return uniqueFilteredBetas.join(",")
     }
 
     return undefined
@@ -182,11 +206,11 @@ const resolveAnthropicBetaHeader = (
 
 /**
  * Reorder assistant message content blocks so text comes before tool_use.
- * Vertex AI rejects requests where text blocks follow tool_use blocks
+ * The upstream backend rejects requests where text blocks follow tool_use blocks
  * in assistant messages, reporting "tool_use without tool_result".
  *
  * CRITICAL: thinking/redacted_thinking blocks must NOT be moved.
- * Vertex AI validates that thinking blocks remain in their original
+ * The upstream backend validates that thinking blocks remain in their original
  * positions — reordering them triggers:
  *   "thinking or redacted_thinking blocks in the latest assistant
  *    message cannot be modified"
@@ -369,7 +393,7 @@ export const createMessages = async (
     headers,
   )
 
-  prepareForCompact(headers, options.isCompact)
+  prepareForCompact(headers, options.compactType)
 
   const { safetyIdentifier, sessionId } = parseUserIdMetadata(
     payload.metadata?.user_id,
@@ -401,7 +425,7 @@ export const createMessages = async (
     headers["anthropic-beta"] = betaHeader
   }
 
-  // Reorder assistant blocks: Vertex AI requires tool_use at end
+  // Reorder assistant blocks: upstream backend requires tool_use at end
   reorderAssistantBlocks(payload)
 
   const enhancedPayload = buildEnhancedPayload(payload, adaptiveThinkingEnabled)

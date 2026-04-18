@@ -12,7 +12,6 @@ import {
 } from "~/lib/logger"
 import { checkRateLimit } from "~/lib/rate-limit"
 import { state } from "~/lib/state"
-import { getTokenCount } from "~/lib/tokenizer"
 import { generateRequestIdFromPayload, getUUID, isNullish } from "~/lib/utils"
 import {
   createChatCompletions,
@@ -33,16 +32,16 @@ export async function handleCompletion(c: Context) {
     (model) => model.id === payload.model,
   )
 
-  // Calculate and display token count
-  try {
-    if (selectedModel) {
-      const tokenCount = await getTokenCount(payload, selectedModel)
-      logger.info("Current token count:", tokenCount)
-    } else {
-      logger.warn("No model selected, skipping token count calculation")
-    }
-  } catch (error) {
-    logger.warn("Failed to calculate token count:", error)
+  if (selectedModel?.id === "gpt-5.4") {
+    return c.json(
+      {
+        error: {
+          message: "Please use `/v1/responses` or `/v1/messages` API",
+          type: "invalid_request_error",
+        },
+      },
+      400,
+    )
   }
 
   if (state.manualApprove) await awaitApproval()

@@ -2,11 +2,13 @@ import consola from "consola"
 import { events } from "fetch-event-stream"
 import { randomUUID } from "node:crypto"
 
-import type { SubagentMarker } from "~/routes/messages/subagent-marker"
+import type { CompactType } from "~/lib/compact"
+import type { SubagentMarker } from "~/lib/subagent"
 
 import {
   copilotBaseUrl,
   copilotHeaders,
+  prepareForCompact,
   prepareInteractionHeaders,
 } from "~/lib/api-config"
 import { HTTPError } from "~/lib/error"
@@ -172,6 +174,7 @@ export const createChatCompletions = async (
     subagentMarker?: SubagentMarker | null
     requestId?: string
     sessionId?: string
+    compactType?: CompactType
   },
 ) => {
   if (!state.copilotToken) throw new Error("Copilot token not found")
@@ -210,6 +213,8 @@ export const createChatCompletions = async (
 
   // Extract requestId from already-built headers (do NOT re-generate)
   const requestId = headers["x-request-id"]
+
+  prepareForCompact(headers, options?.compactType)
 
   const start = Date.now()
   trackRequestSent(payload.model, state.accountType, requestId, modelCallId)

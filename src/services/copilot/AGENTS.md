@@ -9,7 +9,7 @@
 | Task | Location | Notes |
 |------|----------|-------|
 | Chat Completions upstream | `create-chat-completions.ts` | OpenAI-compatible 主调用器 |
-| Native messages upstream | `create-messages.ts` | Vertex AI / native messages 适配集中地 |
+| Native messages upstream | `create-messages.ts` | native messages 适配集中地 |
 | Responses upstream | `create-responses.ts` | Copilot Responses API |
 | Models metadata | `get-models.ts` | capability / limits / supported_endpoints |
 | Embeddings | `create-embeddings.ts` | OpenAI-compatible embeddings |
@@ -33,5 +33,5 @@
 
 - 在 handler、translation 或测试 helper 里复制 backend workaround
 - 重新引入通用重试掩盖真实上游错误
-- 修改 thinking block 顺序或内容再发给 Vertex AI
+- 修改 thinking block 顺序或内容再发给上游后端
 - 直接 hardcode model → effort / capability 映射而不走现有 metadata/config 逻辑
