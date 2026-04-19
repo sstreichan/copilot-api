@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import { rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { Script, createContext } from "node:vm"
 
 import {
   createDashboardHandler,
@@ -35,7 +36,10 @@ async function createDashboardPath(): Promise<string> {
     tmpdir(),
     `sticky-router-dashboard-${crypto.randomUUID()}.html`,
   )
-  await Bun.write(dashboardPath, "<html><body>dashboard</body></html>")
+  await Bun.write(
+    dashboardPath,
+    Bun.file(new URL("../../router/dashboard.html", import.meta.url)),
+  )
   return dashboardPath
 }
 
@@ -50,6 +54,132 @@ function createState() {
     { name: "alpha", port: 4141 },
     { name: "beta", port: 4142 },
   ])
+}
+
+type DashboardInstanceStatus = {
+  name: string
+  cooldownUntil: string | null
+  remainingCooldownMs: number
+  upstreamRetryAfter: string | null
+}
+
+type DashboardStatusPayload = {
+  instances: Array<DashboardInstanceStatus>
+}
+
+function isDashboardInstanceStatus(
+  value: unknown,
+): value is DashboardInstanceStatus {
+  if (!value || typeof value !== "object") {
+    return false
+  }
+
+  const candidate = value as Record<string, unknown>
+  return (
+    typeof candidate.name === "string"
+    && (typeof candidate.cooldownUntil === "string"
+      || candidate.cooldownUntil === null)
+    && typeof candidate.remainingCooldownMs === "number"
+    && (typeof candidate.upstreamRetryAfter === "string"
+      || candidate.upstreamRetryAfter === null)
+  )
+}
+
+function isDashboardStatusPayload(
+  value: unknown,
+): value is DashboardStatusPayload {
+  if (!value || typeof value !== "object") {
+    return false
+  }
+
+  const candidate = value as Record<string, unknown>
+  return (
+    Array.isArray(candidate.instances)
+    && candidate.instances.every((item) => isDashboardInstanceStatus(item))
+  )
+}
+
+function extractInlineScript(html: string): string {
+  const scriptOpen = html.indexOf("<script>")
+  const scriptClose = html.indexOf("</script>", scriptOpen)
+  if (scriptOpen === -1 || scriptClose === -1) {
+    throw new TypeError("dashboard inline script missing")
+  }
+
+  return html.slice(scriptOpen + "<script>".length, scriptClose).trim()
+}
+
+function renderInstancesFromDashboard(
+  instances: Array<DashboardInstanceStatus>,
+  scriptSource: string,
+): string {
+  const elements = {
+    "sse-status": { textContent: "", className: "" },
+    "clear-bindings": {
+      addEventListener() {},
+      disabled: false,
+      textContent: "",
+    },
+    "clear-history": {
+      addEventListener() {},
+      disabled: false,
+      textContent: "",
+    },
+    "instance-count": { textContent: "0" },
+    "binding-count": { textContent: "0" },
+    "history-count": { textContent: "0" },
+    "instances-body": { innerHTML: "" },
+    "bindings-body": { innerHTML: "" },
+    "history-body": { innerHTML: "" },
+  }
+
+  const sandbox = {
+    document: {
+      getElementById(id: keyof typeof elements) {
+        return elements[id]
+      },
+      querySelectorAll() {
+        return []
+      },
+    },
+    window: {
+      confirm() {
+        return false
+      },
+      alert() {},
+    },
+    fetch: (url: string | URL) =>
+      Promise.resolve({
+        ok: true,
+        json: () =>
+          Promise.resolve(
+            String(url).includes("/api/status") ?
+              { instances: [], sessionBindings: {}, routeHistorySize: 0 }
+            : [],
+          ),
+      }),
+    setInterval: () => 0,
+    EventSource: class {
+      addEventListener() {}
+      onopen: (() => undefined) | null = null
+      onerror: (() => undefined) | null = null
+      onmessage: ((event: { data: string }) => Promise<void>) | null = null
+    },
+    console,
+  }
+  const context = createContext(sandbox)
+  const scriptContext = context as typeof sandbox & {
+    renderInstances?: (items: Array<DashboardInstanceStatus>) => void
+  }
+
+  new Script(scriptSource).runInContext(context)
+  const { renderInstances } = scriptContext
+  if (typeof renderInstances !== "function") {
+    throw new TypeError("dashboard renderInstances missing")
+  }
+
+  renderInstances(instances)
+  return elements["instances-body"].innerHTML
 }
 
 // eslint-disable-next-line max-lines-per-function
@@ -75,6 +205,9 @@ describe("router handlers", () => {
           healthy: true,
           requestCounts: {},
           lastActive: null,
+          cooldownUntil: null,
+          remainingCooldownMs: 0,
+          upstreamRetryAfter: null,
         },
         {
           name: "beta",
@@ -83,6 +216,9 @@ describe("router handlers", () => {
           healthy: true,
           requestCounts: {},
           lastActive: null,
+          cooldownUntil: null,
+          remainingCooldownMs: 0,
+          upstreamRetryAfter: null,
         },
       ],
       sessionBindings: {},
@@ -332,7 +468,7 @@ describe("dashboard handler", () => {
 
     expect(html.status).toBe(200)
     expect(html.headers.get("content-type")).toBe("text/html; charset=utf-8")
-    expect(await html.text()).toContain("dashboard")
+    expect(await html.text()).toContain("Sticky Router Dashboard")
     expect(await clearHistory.json()).toEqual({ ok: true, cleared: 1 })
     expect(await clearBindings.json()).toEqual({ ok: true, cleared: 1 })
     expect(state.routeHistory).toEqual([])
@@ -349,5 +485,67 @@ describe("dashboard handler", () => {
       "dashboard cleared route history count=1",
       "dashboard cleared active bindings count=1",
     ])
+  })
+
+  test("dashboard html renders local cooldown time, readable remaining duration, and upstream Retry-After", async () => {
+    const state = createState()
+    const fixedNowMs = new Date("2026-04-19T15:26:09.000Z").getTime()
+    const cooldownUntilMs = fixedNowMs + (8 * 60 * 60 + 23 * 60 + 7) * 1000
+    state.portCooldownUntil.set(4141, cooldownUntilMs)
+    state.portCooldownRetryAfter.set(4141, "30187")
+
+    const handler = createDashboardHandler({
+      state,
+      logger: () => {},
+      dashboardFile: Bun.file(dashboardPath),
+      nowMs: () => fixedNowMs,
+    })
+
+    const statusResponse = await handler(
+      new Request("http://localhost/api/status"),
+    )
+    const statusPayloadRaw = await statusResponse.json()
+    expect(isDashboardStatusPayload(statusPayloadRaw)).toBe(true)
+    if (!isDashboardStatusPayload(statusPayloadRaw)) {
+      throw new TypeError("unexpected dashboard status payload")
+    }
+
+    const statusPayload = statusPayloadRaw
+    const alpha = statusPayload.instances.find((item) => item.name === "alpha")
+
+    expect(alpha).toBeDefined()
+    if (!alpha) {
+      throw new TypeError("alpha instance status missing")
+    }
+
+    expect(alpha.name).toBe("alpha")
+    expect(typeof alpha.cooldownUntil).toBe("string")
+    expect(typeof alpha.remainingCooldownMs).toBe("number")
+    expect(alpha.upstreamRetryAfter).toBe("30187")
+    expect(alpha.remainingCooldownMs).toBeGreaterThan(0)
+
+    const dashboardResponse = await handler(new Request("http://localhost/"))
+    const html = await dashboardResponse.text()
+
+    const scriptContent = extractInlineScript(html)
+    const rowsHtml = renderInstancesFromDashboard([alpha], scriptContent)
+    const expectedLocalCooldown = new Date(
+      alpha.cooldownUntil ?? "",
+    ).toLocaleString(undefined, {
+      year: "numeric",
+      month: "numeric",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+      second: "2-digit",
+      timeZoneName: "short",
+    })
+    expect(rowsHtml).toContain(
+      `cooldownLocal: <strong>${expectedLocalCooldown}</strong>`,
+    )
+    expect(rowsHtml).toContain("remaining: <strong>8h 23m 7s</strong>")
+    expect(rowsHtml).toContain(
+      `upstreamRetryAfter: <strong>${alpha.upstreamRetryAfter}</strong>`,
+    )
   })
 })

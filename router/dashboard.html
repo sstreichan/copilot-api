@@ -178,7 +178,7 @@
         <div class="scroll">
           <table>
             <thead>
-              <tr><th>Name</th><th>Port</th><th>Status</th><th>Model Requests</th><th>Last Active</th></tr>
+              <tr><th>Name</th><th>Port</th><th>Status</th><th>Model Requests</th><th>Cooldown</th><th>Last Active</th></tr>
             </thead>
             <tbody id="instances-body"></tbody>
           </table>
@@ -231,6 +231,35 @@
       return Number.isNaN(date.getTime()) ? value : date.toLocaleTimeString('en-GB')
     }
 
+    const fmtLocalDateTime = (value) => {
+      if (!value) return '-'
+      const date = new Date(value)
+      if (Number.isNaN(date.getTime())) return value
+      return date.toLocaleString(undefined, {
+        year: 'numeric',
+        month: 'numeric',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+        second: '2-digit',
+        timeZoneName: 'short',
+      })
+    }
+
+    const formatCooldownRemaining = (value) => {
+      const totalMs = Number(value || 0)
+      if (!Number.isFinite(totalMs) || totalMs <= 0) return '-'
+      const totalSeconds = Math.ceil(totalMs / 1000)
+      const hours = Math.floor(totalSeconds / 3600)
+      const minutes = Math.floor((totalSeconds % 3600) / 60)
+      const seconds = totalSeconds % 60
+      const parts = []
+      if (hours > 0) parts.push(`${hours}h`)
+      if (hours > 0 || minutes > 0) parts.push(`${minutes}m`)
+      parts.push(`${seconds}s`)
+      return parts.join(' ')
+    }
+
     const formatRelativeTime = (value) => {
       if (!value) return { label: '-', className: 'muted', title: '' }
       const date = new Date(value)
@@ -281,7 +310,7 @@
       byId('instance-count').textContent = String(instances.length)
       const body = byId('instances-body')
       if (!instances.length) {
-        body.innerHTML = '<tr><td colspan="5" class="empty">No instances discovered.</td></tr>'
+        body.innerHTML = '<tr><td colspan="6" class="empty">No instances discovered.</td></tr>'
         return
       }
       body.innerHTML = instances.map((item) => {
@@ -295,6 +324,14 @@
             : '<span class="muted">none</span>'
           }
         `.trim()
+        const cooldownUntil = item.cooldownUntil || '-'
+        const remainingCooldownMs = Number(item.remainingCooldownMs || 0)
+        const upstreamRetryAfter = item.upstreamRetryAfter || '-'
+        const cooldownHtml = `
+          <div class="model-detail">cooldownLocal: <strong>${fmtLocalDateTime(cooldownUntil)}</strong></div>
+          <div class="model-detail">remaining: <strong>${formatCooldownRemaining(remainingCooldownMs)}</strong></div>
+          <div class="model-detail">upstreamRetryAfter: <strong>${upstreamRetryAfter}</strong></div>
+        `.trim()
         const last = formatRelativeTime(item.lastActive)
         return `
           <tr>
@@ -302,6 +339,7 @@
             <td><code>${item.port}</code></td>
             <td><span class="tag ${item.healthy ? 'up' : 'down'}">${item.healthy ? 'up' : 'down'}</span></td>
             <td>${countsHtml}</td>
+            <td>${cooldownHtml}</td>
             <td class="last-active" data-last-active="${item.lastActive || ''}"><span class="${last.className}" title="${last.title}">${last.label}</span></td>
           </tr>
         `

@@ -4,6 +4,7 @@ import { join } from "node:path"
 
 import { readPort, parseInstances } from "./lib"
 import {
+  DEFAULT_INSTANCE_COOLDOWN_MS,
   createDashboardHandler,
   createRouterHandler,
   createStickyRouterState,
@@ -16,6 +17,11 @@ const TOKENS_PATH =
   process.env.TOKENS_PATH
   || join(homedir(), ".local/share/copilot-api/tokens.json")
 const LOG_FILE = process.env.STICKY_ROUTER_LOG_FILE || "/tmp/sticky-router.log"
+const DEFAULT_COOLDOWN_MS =
+  readPort(
+    "ROUTER_DEFAULT_COOLDOWN_SECONDS",
+    DEFAULT_INSTANCE_COOLDOWN_MS / 1000,
+  ) * 1000
 const MAX_LINES = 200
 const TRIM_TO = 150
 const DASHBOARD_FILE = Bun.file(new URL("./dashboard.html", import.meta.url))
@@ -47,6 +53,7 @@ export async function main() {
     fetch: createRouterHandler({
       state,
       logger: log,
+      defaultCooldownMs: DEFAULT_COOLDOWN_MS,
     }),
   })
 

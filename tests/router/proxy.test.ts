@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 
 import {
+  createRouterHandler,
   createStickyRouterState,
   discoverModels,
   proxyTo,
@@ -34,7 +35,45 @@ function createState() {
   ])
 }
 
-describe("router I/O helpers", () => {
+function createRouterRequest(body: string): Request {
+  return new Request("http://localhost/v1/messages", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-oc-agent": "atlas",
+      "x-oc-provider": "openai",
+    },
+    body,
+  })
+}
+
+function createRouterHandlerForTest(options: {
+  state: ReturnType<typeof createState>
+  fetchImpl: typeof fetch
+  logger?: (line: string) => void
+  fixedNowMs?: number
+  nowText?: string
+}) {
+  const fixedNowMs =
+    options.fixedNowMs ?? new Date("2026-03-13T00:00:00.000Z").getTime()
+  let now: () => string
+  if (options.nowText) {
+    const nowText = options.nowText
+    now = () => nowText
+  } else {
+    now = () => "2026-03-13T00:00:00.000Z"
+  }
+
+  return createRouterHandler({
+    state: options.state,
+    logger: options.logger ?? (() => {}),
+    fetchImpl: options.fetchImpl,
+    now,
+    nowMs: () => fixedNowMs,
+  })
+}
+
+describe("router discovery and proxy helpers", () => {
   test("discoverModels populates model maps and logs failures", async () => {
     const state = createState()
     const logs: Array<string> = []
@@ -145,5 +184,216 @@ describe("router I/O helpers", () => {
       error: "upstream connection failed on port 4141",
     })
     expect(logs).toEqual(["PROXY ERROR → :4141: connect ECONNREFUSED"])
+  })
+})
+
+describe("router handler cooldown semantics", () => {
+  test("router handler sets cooldown on upstream 429 using Retry-After seconds", async () => {
+    const state = createState()
+    state.modelToPorts.set("gpt-4.1", [4141, 4142])
+    state.sessionBindings.set("session-1:atlas:gpt-4.1", 4141)
+    const logs: Array<string> = []
+    const fixedNowMs = new Date("2026-03-13T00:00:00.000Z").getTime()
+
+    const fetchImpl = createFetchStub((input) => {
+      const port = new URL(toInputUrl(input)).port
+      if (port === "4141") {
+        return Promise.resolve(
+          new Response("too-many", {
+            status: 429,
+            headers: { "Retry-After": "7" },
+          }),
+        )
+      }
+      return Promise.resolve(new Response("ok", { status: 200 }))
+    })
+
+    const handler = createRouterHandlerForTest({
+      state,
+      logger: (line) => logs.push(line),
+      fetchImpl,
+      fixedNowMs,
+    })
+
+    const res = await handler(
+      new Request("http://localhost/v1/messages", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-session-id": "session-1",
+          "x-oc-agent": "atlas",
+          "x-oc-provider": "openai",
+        },
+        body: '{"model":"gpt-4.1"}',
+      }),
+    )
+
+    expect(res.status).toBe(429)
+    expect(state.portCooldownUntil.get(4141)).toBe(fixedNowMs + 7000)
+    expect(state.portCooldownRetryAfter.get(4141)).toBe("7")
+    expect(logs.some((line) => line.includes("cooldown"))).toBe(true)
+  })
+
+  test("router handler excludes cooling ports on nomodel least-loaded path", async () => {
+    const state = createState()
+    const fixedNowMs = new Date("2026-03-13T00:00:00.000Z").getTime()
+    state.portCooldownUntil.set(4141, fixedNowMs + 30_000)
+
+    let proxiedPort = ""
+    const fetchImpl = createFetchStub((input) => {
+      proxiedPort = new URL(toInputUrl(input)).port
+      return Promise.resolve(new Response("ok", { status: 200 }))
+    })
+
+    const handler = createRouterHandlerForTest({
+      state,
+      fetchImpl,
+      fixedNowMs,
+    })
+
+    const res = await handler(createRouterRequest("{}"))
+
+    expect(res.status).toBe(200)
+    expect(proxiedPort).toBe("4142")
+  })
+
+  test("router handler records cooldown on nomodel upstream 429", async () => {
+    const state = createState()
+    const fixedNowMs = new Date("2026-03-13T00:00:00.000Z").getTime()
+    state.portCooldownUntil.set(4142, fixedNowMs + 30_000)
+
+    const fetchImpl = createFetchStub(() =>
+      Promise.resolve(
+        new Response("too-many", {
+          status: 429,
+          headers: { "Retry-After": "5" },
+        }),
+      ),
+    )
+
+    const handler = createRouterHandlerForTest({
+      state,
+      fetchImpl,
+      fixedNowMs,
+    })
+
+    const res = await handler(createRouterRequest("{}"))
+
+    expect(res.status).toBe(429)
+    expect(state.portCooldownUntil.get(4141)).toBe(fixedNowMs + 5000)
+  })
+
+  test("router handler returns 503 on nomodel when all instances are cooling", async () => {
+    const state = createState()
+    const fixedNowMs = new Date("2026-03-13T00:00:00.000Z").getTime()
+    state.portCooldownUntil.set(4141, fixedNowMs + 3000)
+    state.portCooldownUntil.set(4142, fixedNowMs + 5000)
+
+    let proxied = false
+    const fetchImpl = createFetchStub(() => {
+      proxied = true
+      return Promise.resolve(new Response("ok", { status: 200 }))
+    })
+
+    const handler = createRouterHandlerForTest({
+      state,
+      fetchImpl,
+      fixedNowMs,
+    })
+
+    const res = await handler(createRouterRequest("{}"))
+
+    expect(res.status).toBe(503)
+    expect(res.headers.get("Retry-After")).toBe("3")
+    expect(await res.json()).toEqual({
+      error: "all upstream instances are cooling down for nomodel routing",
+    })
+    expect(proxied).toBe(false)
+  })
+
+  test("router handler uses default cooldown when Retry-After is invalid", async () => {
+    const state = createState()
+    state.modelToPorts.set("gpt-4.1", [4141])
+    const fixedNowMs = new Date("2026-03-13T00:00:00.000Z").getTime()
+
+    const fetchImpl = createFetchStub(() =>
+      Promise.resolve(
+        new Response("too-many", {
+          status: 429,
+          headers: { "Retry-After": "invalid" },
+        }),
+      ),
+    )
+
+    const handler = createRouterHandlerForTest({
+      state,
+      fetchImpl,
+      fixedNowMs,
+    })
+
+    const res = await handler(createRouterRequest('{"model":"gpt-4.1"}'))
+
+    expect(res.status).toBe(429)
+    expect(state.portCooldownUntil.get(4141)).toBe(fixedNowMs + 60000)
+    expect(state.portCooldownRetryAfter.get(4141)).toBe("invalid")
+  })
+
+  test("router handler parses Retry-After http-date on upstream 429", async () => {
+    const state = createState()
+    state.modelToPorts.set("gpt-4.1", [4141])
+    const fixedNowMs = new Date("2026-03-13T00:00:00.000Z").getTime()
+
+    const retryAfter = "Fri, 13 Mar 2026 00:00:05 GMT"
+    const fetchImpl = createFetchStub(() =>
+      Promise.resolve(
+        new Response("too-many", {
+          status: 429,
+          headers: { "Retry-After": retryAfter },
+        }),
+      ),
+    )
+
+    const handler = createRouterHandlerForTest({
+      state,
+      fetchImpl,
+      fixedNowMs,
+    })
+
+    const res = await handler(createRouterRequest('{"model":"gpt-4.1"}'))
+
+    expect(res.status).toBe(429)
+    expect(state.portCooldownUntil.get(4141)).toBe(
+      new Date("2026-03-13T00:00:05.000Z").getTime(),
+    )
+    expect(state.portCooldownRetryAfter.get(4141)).toBe(retryAfter)
+  })
+
+  test("router handler returns 503 with min Retry-After when all candidates are cooling", async () => {
+    const state = createState()
+    state.modelToPorts.set("gpt-4.1", [4141, 4142])
+    const fixedNowMs = new Date("2026-03-13T00:00:00.000Z").getTime()
+    state.portCooldownUntil.set(4141, fixedNowMs + 3000)
+    state.portCooldownUntil.set(4142, fixedNowMs + 5000)
+
+    let proxied = false
+    const fetchImpl = createFetchStub(() => {
+      proxied = true
+      return Promise.resolve(new Response("ok", { status: 200 }))
+    })
+
+    const handler = createRouterHandlerForTest({
+      state,
+      fetchImpl,
+      fixedNowMs,
+    })
+
+    const res = await handler(createRouterRequest('{"model":"gpt-4.1"}'))
+
+    expect(res.status).toBe(503)
+    expect(res.headers.get("Retry-After")).toBe("3")
+    expect(await res.json()).toEqual({
+      error: "all upstream instances are cooling down for model: gpt-4.1",
+    })
+    expect(proxied).toBe(false)
   })
 })

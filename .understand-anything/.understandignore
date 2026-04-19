@@ -1,0 +1,46 @@
+# .understandignore — patterns for files/dirs to exclude from analysis
+# Syntax: same as .gitignore (globs, # comments, ! negation, trailing / for dirs)
+# Lines below are suggestions — uncomment to activate.
+# Use ! prefix to force-include something excluded by defaults.
+#
+# Built-in defaults (always excluded unless negated):
+#   node_modules/, .git/, dist/, build/, obj/, *.lock, *.min.js, etc.
+#
+# --- From .gitignore (uncomment to exclude) ---
+
+# *.local
+# .aider*
+# .eslintcache
+# .vendor/
+# experiments/
+# tmp/bug-analysis-feature-branch-large-toolcall-failure.md
+# tmp/codex-gemini-plan-v2.md
+# tmp/codex-gemini-plan.md
+# tmp/gpt5-review-analysis.md
+# tmp/implementation-plan-simple.md
+# ai-memory-solutions.md
+# claude-mem-setup-guide.md
+# .debates/
+# history/
+# docs/plans/
+# .beads/.jsonl.lock
+# .beads/.local_version
+# .sisyphus/
+# .beads/daemon-error
+# .beads/issues.jsonl
+# .beads/last-touched
+# .sis/
+# .opencode/plans
+# .opencode/package-lock.json
+# *.vsix
+
+# --- Detected directories (uncomment to exclude) ---
+
+# tests/
+# docs/
+
+# --- Test file patterns (uncomment to exclude) ---
+
+# *.test.*
+# *.spec.*
+# *.snap

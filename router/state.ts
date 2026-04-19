@@ -14,6 +14,7 @@ const DEFAULT_ENCODER = new TextEncoder()
 
 export const DEFAULT_HISTORY_LIMIT = 200
 export const DEFAULT_SSE_RETRY_MS = 2000
+export const DEFAULT_INSTANCE_COOLDOWN_MS = 60_000
 
 export interface ProxyContext {
   body: string
@@ -40,6 +41,9 @@ export interface StatusPayload {
     healthy: boolean
     requestCounts: Record<string, number>
     lastActive: string | null
+    cooldownUntil: string | null
+    remainingCooldownMs: number
+    upstreamRetryAfter: string | null
   }>
   sessionBindings: Record<string, number>
   modelToPorts: Record<string, Array<number>>
@@ -57,6 +61,8 @@ export interface StickyRouterState {
   portModelCounts: Map<number, Map<string, number>>
   portLastActive: Map<number, string>
   modelDetails: Map<string, Record<string, unknown>>
+  portCooldownUntil: Map<number, number>
+  portCooldownRetryAfter: Map<number, string | null>
 }
 
 export interface RouterHandlerOptions {
@@ -64,12 +70,15 @@ export interface RouterHandlerOptions {
   logger: (line: string) => void
   fetchImpl?: typeof fetch
   now?: () => string
+  nowMs?: () => number
+  defaultCooldownMs?: number
 }
 
 export interface PortSelectionInput {
   sessionId: string | null
   agent: string
   model: string
+  nowMs?: number
 }
 
 export interface ProxyToOptions {
@@ -85,6 +94,7 @@ export interface DashboardHandlerOptions {
   dashboardFile: Bun.BunFile
   encoder?: TextEncoder
   sseRetryMs?: number
+  nowMs?: () => number
 }
 
 export function createStickyRouterState(
@@ -103,15 +113,100 @@ export function createStickyRouterState(
     portModelCounts: new Map<number, Map<string, number>>(),
     portLastActive: new Map<number, string>(),
     modelDetails: new Map<string, Record<string, unknown>>(),
+    portCooldownUntil: new Map<number, number>(),
+    portCooldownRetryAfter: new Map<number, string | null>(),
   }
 }
 
-export function getStatusPayload(state: StickyRouterState): StatusPayload {
+export function getRemainingCooldownMs(
+  state: StickyRouterState,
+  port: number,
+  nowMs: number,
+): number {
+  const cooldownUntil = state.portCooldownUntil.get(port)
+  if (cooldownUntil === undefined) {
+    return 0
+  }
+
+  const remainingCooldownMs = cooldownUntil - nowMs
+  if (remainingCooldownMs <= 0) {
+    state.portCooldownUntil.delete(port)
+    state.portCooldownRetryAfter.delete(port)
+    return 0
+  }
+
+  return remainingCooldownMs
+}
+
+export function getAvailablePorts(
+  state: StickyRouterState,
+  ports: Array<number>,
+  nowMs: number,
+): Array<number> {
+  return ports.filter(
+    (port) => getRemainingCooldownMs(state, port, nowMs) === 0,
+  )
+}
+
+export function getMinRemainingCooldownMs(
+  state: StickyRouterState,
+  ports: Array<number>,
+  nowMs: number,
+): number {
+  let minRemaining = Number.POSITIVE_INFINITY
+
+  for (const port of ports) {
+    const remainingCooldownMs = getRemainingCooldownMs(state, port, nowMs)
+    if (remainingCooldownMs > 0 && remainingCooldownMs < minRemaining) {
+      minRemaining = remainingCooldownMs
+    }
+  }
+
+  return Number.isFinite(minRemaining) ? minRemaining : 0
+}
+
+export function parseRetryAfterMs(
+  retryAfter: string | null,
+  nowMs: number,
+): number | null {
+  if (!retryAfter) {
+    return null
+  }
+
+  const value = retryAfter.trim()
+  if (!value) {
+    return null
+  }
+
+  const seconds = Number(value)
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    return Math.ceil(seconds * 1000)
+  }
+
+  const dateMs = Date.parse(value)
+  if (Number.isFinite(dateMs)) {
+    return Math.max(0, dateMs - nowMs)
+  }
+
+  return null
+}
+
+export function getStatusPayload(
+  state: StickyRouterState,
+  nowMs = Date.now(),
+): StatusPayload {
   return {
     instances: state.instances.map((instance) => {
       const modelCounts = state.portModelCounts.get(instance.port)
       const requestCounts: Record<string, number> =
         modelCounts ? Object.fromEntries(modelCounts) : {}
+      const remainingCooldownMs = getRemainingCooldownMs(
+        state,
+        instance.port,
+        nowMs,
+      )
+      const cooldownUntil = state.portCooldownUntil.get(instance.port)
+      const upstreamRetryAfter = state.portCooldownRetryAfter.get(instance.port)
       return {
         name: instance.name,
         port: instance.port,
@@ -119,6 +214,13 @@ export function getStatusPayload(state: StickyRouterState): StatusPayload {
         healthy: state.portToModels.has(instance.port),
         requestCounts,
         lastActive: state.portLastActive.get(instance.port) || null,
+        cooldownUntil:
+          cooldownUntil !== undefined && remainingCooldownMs > 0 ?
+            new Date(cooldownUntil).toISOString()
+          : null,
+        remainingCooldownMs,
+        upstreamRetryAfter:
+          remainingCooldownMs > 0 ? (upstreamRetryAfter ?? null) : null,
       }
     }),
     sessionBindings: Object.fromEntries(state.sessionBindings),
@@ -322,8 +424,14 @@ export function pickPort(
   input: PortSelectionInput,
 ): { port: number; reason: string; bindingKey: string | null } | null {
   const { sessionId, agent, model } = input
+  const nowMs = input.nowMs ?? Date.now()
   const ports = state.modelToPorts.get(model)
   if (!ports || ports.length === 0) {
+    return null
+  }
+
+  const availablePorts = getAvailablePorts(state, ports, nowMs)
+  if (availablePorts.length === 0) {
     return null
   }
 
@@ -331,12 +439,12 @@ export function pickPort(
 
   if (bindingKey) {
     const bound = state.sessionBindings.get(bindingKey)
-    if (bound !== undefined && ports.includes(bound)) {
+    if (bound !== undefined && availablePorts.includes(bound)) {
       return { port: bound, reason: "sticky", bindingKey }
     }
   }
 
-  const port = pickLeastLoaded(state, ports)
+  const port = pickLeastLoaded(state, availablePorts)
 
   const hadBinding = bindingKey ? state.sessionBindings.has(bindingKey) : false
   if (bindingKey) {
@@ -381,106 +489,309 @@ export async function proxyTo(options: ProxyToOptions): Promise<Response> {
   }
 }
 
+interface RouterRuntime {
+  state: StickyRouterState
+  logger: (line: string) => void
+  fetchImpl: typeof fetch
+  now: () => string
+  nowMs: () => number
+  defaultCooldownMs: number
+}
+
+interface RouterRequestContext {
+  req: Request
+  url: URL
+  bodyText: string
+  sessionId: string | null
+  agent: string
+  provider: string
+  model: string
+  requestNowMs: number
+}
+
+function handleBuiltinRoutes(
+  runtime: RouterRuntime,
+  req: Request,
+  url: URL,
+): Response | null {
+  if (url.pathname === "/status" && req.method === "GET") {
+    return Response.json(getStatusPayload(runtime.state, runtime.nowMs()))
+  }
+
+  if (url.pathname === "/v1/models" && req.method === "GET") {
+    const allModels = new Set<string>()
+    for (const models of runtime.state.portToModels.values()) {
+      for (const model of models) {
+        allModels.add(model)
+      }
+    }
+
+    return Response.json({
+      object: "list",
+      data: [...allModels].map((id) => {
+        const details = runtime.state.modelDetails.get(id)
+        return details ?? { id, object: "model" }
+      }),
+    })
+  }
+
+  return null
+}
+
+function buildRequestContext(params: {
+  req: Request
+  url: URL
+  bodyText: string
+  requestNowMs: number
+}): RouterRequestContext {
+  const sessionId = params.req.headers.get("x-session-id")
+  const agent = getHeaderValue(params.req, "x-oc-agent")
+  const provider = getHeaderValue(params.req, "x-oc-provider")
+  const headerModel = getHeaderValue(params.req, "x-oc-model")
+  const model =
+    parseModelFromBody(params.bodyText)
+    || (headerModel === "_" ? "" : headerModel)
+
+  return {
+    req: params.req,
+    url: params.url,
+    bodyText: params.bodyText,
+    sessionId,
+    agent,
+    provider,
+    model,
+    requestNowMs: params.requestNowMs,
+  }
+}
+
+function applyCooldownOn429(
+  runtime: RouterRuntime,
+  proxied: Response,
+  params: {
+    port: number
+    instanceName: string
+    model: string
+    requestNowMs: number
+  },
+) {
+  if (proxied.status !== 429) {
+    return
+  }
+
+  const retryAfter = proxied.headers.get("Retry-After")
+  const retryAfterMs = parseRetryAfterMs(retryAfter, params.requestNowMs)
+  const cooldownMs = retryAfterMs ?? runtime.defaultCooldownMs
+  const cooldownUntilMs = params.requestNowMs + cooldownMs
+
+  runtime.state.portCooldownUntil.set(params.port, cooldownUntilMs)
+  runtime.state.portCooldownRetryAfter.set(params.port, retryAfter)
+  runtime.logger(
+    `cooldown set instance=${params.instanceName}:${params.port} model=${params.model} until=${new Date(cooldownUntilMs).toISOString()} retry-after=${retryAfter || "_"}`,
+  )
+}
+
+function createAllCoolingResponse(
+  runtime: RouterRuntime,
+  params: {
+    sessionId: string | null
+    agent: string
+    provider: string
+    model: string
+    ports: Array<number>
+    requestNowMs: number
+    error: string
+  },
+): Response | null {
+  const minRemainingCooldownMs = getMinRemainingCooldownMs(
+    runtime.state,
+    params.ports,
+    params.requestNowMs,
+  )
+  if (minRemainingCooldownMs <= 0) {
+    return null
+  }
+
+  const retryAfterSeconds = Math.max(
+    1,
+    Math.ceil(minRemainingCooldownMs / 1000),
+  )
+  runtime.logger(
+    `ALL COOLDOWN sid=${params.sessionId || "-"} agent=${params.agent} model=${params.model} provider=${params.provider} retry-after=${retryAfterSeconds}`,
+  )
+
+  return Response.json(
+    { error: params.error },
+    {
+      status: 503,
+      headers: { "Retry-After": String(retryAfterSeconds) },
+    },
+  )
+}
+
+async function handleNoModelRequest(
+  runtime: RouterRuntime,
+  request: RouterRequestContext,
+): Promise<Response> {
+  const allPorts = runtime.state.instances.map((instance) => instance.port)
+  const availablePorts = getAvailablePorts(
+    runtime.state,
+    allPorts,
+    request.requestNowMs,
+  )
+
+  if (availablePorts.length === 0) {
+    const allCoolingResponse = createAllCoolingResponse(runtime, {
+      sessionId: request.sessionId,
+      agent: request.agent,
+      provider: request.provider,
+      model: "_",
+      ports: allPorts,
+      requestNowMs: request.requestNowMs,
+      error: "all upstream instances are cooling down for nomodel routing",
+    })
+    if (allCoolingResponse) {
+      return allCoolingResponse
+    }
+  }
+
+  const port = pickLeastLoaded(runtime.state, availablePorts)
+  const instanceName = getInstanceName(runtime.state, port)
+  const routeRecord: RouteRecord = {
+    ts: runtime.now(),
+    sid: request.sessionId || "-",
+    agent: request.agent,
+    model: "_",
+    provider: request.provider,
+    port,
+    reason: "nomodel",
+    instanceName,
+  }
+  recordRoute(runtime.state, routeRecord)
+  runtime.logger(
+    `sid=${routeRecord.sid} agent=${request.agent} provider=${request.provider} → ${instanceName}:${port} model=(none) reason=nomodel`,
+  )
+
+  const proxied = await proxyTo({
+    port,
+    context: { body: request.bodyText, req: request.req, url: request.url },
+    logger: runtime.logger,
+    fetchImpl: runtime.fetchImpl,
+  })
+  applyCooldownOn429(runtime, proxied, {
+    port,
+    instanceName,
+    model: "_",
+    requestNowMs: request.requestNowMs,
+  })
+
+  return proxied
+}
+
+async function handleModelRequest(
+  runtime: RouterRuntime,
+  request: RouterRequestContext,
+): Promise<Response> {
+  const result = pickPort(runtime.state, {
+    sessionId: request.sessionId,
+    agent: request.agent,
+    model: request.model,
+    nowMs: request.requestNowMs,
+  })
+
+  if (!result) {
+    const modelPorts = runtime.state.modelToPorts.get(request.model) || []
+    const allCoolingResponse = createAllCoolingResponse(runtime, {
+      sessionId: request.sessionId,
+      agent: request.agent,
+      provider: request.provider,
+      model: request.model,
+      ports: modelPorts,
+      requestNowMs: request.requestNowMs,
+      error: `all upstream instances are cooling down for model: ${request.model}`,
+    })
+    if (allCoolingResponse) {
+      return allCoolingResponse
+    }
+
+    runtime.logger(
+      `NO PORT sid=${request.sessionId || "-"} agent=${request.agent} model=${request.model} provider=${request.provider}`,
+    )
+    return Response.json(
+      { error: `no instance serves model: ${request.model}` },
+      { status: 502 },
+    )
+  }
+
+  const instanceName = getInstanceName(runtime.state, result.port)
+  const routeRecord: RouteRecord = {
+    ts: runtime.now(),
+    sid: request.sessionId || "-",
+    agent: request.agent,
+    model: request.model,
+    provider: request.provider,
+    port: result.port,
+    reason: result.reason,
+    instanceName,
+  }
+  recordRoute(runtime.state, routeRecord)
+  runtime.logger(
+    `sid=${routeRecord.sid} agent=${request.agent} provider=${request.provider} → ${instanceName}:${result.port} model=${request.model} reason=${result.reason}`,
+  )
+
+  const proxied = await proxyTo({
+    port: result.port,
+    context: { body: request.bodyText, req: request.req, url: request.url },
+    logger: runtime.logger,
+    fetchImpl: runtime.fetchImpl,
+  })
+  applyCooldownOn429(runtime, proxied, {
+    port: result.port,
+    instanceName,
+    model: request.model,
+    requestNowMs: request.requestNowMs,
+  })
+
+  return proxied
+}
+
 export function createRouterHandler(options: RouterHandlerOptions) {
-  const fetchImpl = options.fetchImpl ?? fetch
-  const now = options.now ?? (() => new Date().toISOString())
+  const runtime: RouterRuntime = {
+    state: options.state,
+    logger: options.logger,
+    fetchImpl: options.fetchImpl ?? fetch,
+    now: options.now ?? (() => new Date().toISOString()),
+    nowMs: options.nowMs ?? Date.now,
+    defaultCooldownMs:
+      options.defaultCooldownMs ?? DEFAULT_INSTANCE_COOLDOWN_MS,
+  }
 
   return async function handleRouterRequest(req: Request): Promise<Response> {
     const url = new URL(req.url)
-
-    if (url.pathname === "/status" && req.method === "GET") {
-      return Response.json(getStatusPayload(options.state))
-    }
-
-    if (url.pathname === "/v1/models" && req.method === "GET") {
-      const allModels = new Set<string>()
-      for (const models of options.state.portToModels.values()) {
-        for (const model of models) {
-          allModels.add(model)
-        }
-      }
-
-      return Response.json({
-        object: "list",
-        data: [...allModels].map((id) => {
-          const details = options.state.modelDetails.get(id)
-          return details ?? { id, object: "model" }
-        }),
-      })
+    const builtinResponse = handleBuiltinRoutes(runtime, req, url)
+    if (builtinResponse) {
+      return builtinResponse
     }
 
     const bodyText = await req.text()
-    const sessionId = req.headers.get("x-session-id")
-    const agent = getHeaderValue(req, "x-oc-agent")
-    const provider = getHeaderValue(req, "x-oc-provider")
-    const headerModel = getHeaderValue(req, "x-oc-model")
-    const model =
-      parseModelFromBody(bodyText) || (headerModel === "_" ? "" : headerModel)
-
-    if (!model) {
-      const allPorts = options.state.instances.map((instance) => instance.port)
-      const port = pickLeastLoaded(options.state, allPorts)
-      const instanceName = getInstanceName(options.state, port)
-      const routeRecord: RouteRecord = {
-        ts: now(),
-        sid: sessionId || "-",
-        agent,
-        model: "_",
-        provider,
-        port,
-        reason: "nomodel",
-        instanceName,
-      }
-      recordRoute(options.state, routeRecord)
-      options.logger(
-        `sid=${routeRecord.sid} agent=${agent} provider=${provider} → ${instanceName}:${port} model=(none) reason=nomodel`,
-      )
-      return proxyTo({
-        port,
-        context: { body: bodyText, req, url },
-        logger: options.logger,
-        fetchImpl,
-      })
-    }
-
-    const result = pickPort(options.state, { sessionId, agent, model })
-    if (!result) {
-      options.logger(
-        `NO PORT sid=${sessionId || "-"} agent=${agent} model=${model} provider=${provider}`,
-      )
-      return Response.json(
-        { error: `no instance serves model: ${model}` },
-        { status: 502 },
-      )
-    }
-
-    const instanceName = getInstanceName(options.state, result.port)
-    const routeRecord: RouteRecord = {
-      ts: now(),
-      sid: sessionId || "-",
-      agent,
-      model,
-      provider,
-      port: result.port,
-      reason: result.reason,
-      instanceName,
-    }
-    recordRoute(options.state, routeRecord)
-    options.logger(
-      `sid=${routeRecord.sid} agent=${agent} provider=${provider} → ${instanceName}:${result.port} model=${model} reason=${result.reason}`,
-    )
-    return proxyTo({
-      port: result.port,
-      context: { body: bodyText, req, url },
-      logger: options.logger,
-      fetchImpl,
+    const requestContext = buildRequestContext({
+      req,
+      url,
+      bodyText,
+      requestNowMs: runtime.nowMs(),
     })
+
+    if (!requestContext.model) {
+      return handleNoModelRequest(runtime, requestContext)
+    }
+
+    return handleModelRequest(runtime, requestContext)
   }
 }
 
 export function createDashboardHandler(options: DashboardHandlerOptions) {
   const encoder = options.encoder ?? DEFAULT_ENCODER
   const sseRetryMs = options.sseRetryMs ?? DEFAULT_SSE_RETRY_MS
+  const nowMs = options.nowMs ?? Date.now
 
   return async function handleDashboardRequest(
     req: Request,
@@ -500,7 +811,7 @@ export function createDashboardHandler(options: DashboardHandlerOptions) {
     }
 
     if (url.pathname === "/api/status" && req.method === "GET") {
-      return Response.json(getStatusPayload(options.state))
+      return Response.json(getStatusPayload(options.state, nowMs()))
     }
 
     if (url.pathname === "/api/history" && req.method === "GET") {

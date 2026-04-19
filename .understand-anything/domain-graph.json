@@ -1,0 +1,841 @@
+{
+  "version": "1.0.0",
+  "project": {
+    "name": "@jeffreycao/copilot-api",
+    "languages": ["TypeScript"],
+    "frameworks": ["Bun", "Hono", "citty"],
+    "description": "A reverse-engineered GitHub Copilot proxy that exposes Copilot capabilities through OpenAI-compatible and Anthropic-compatible HTTP APIs, plus CLI flows for authentication, startup, usage inspection, and debugging.",
+    "analyzedAt": "2026-04-19T05:41:44Z",
+    "gitCommitHash": "1d557c5be5558acb921d8b991d491ce575acc7eb"
+  },
+  "nodes": [
+    {
+      "id": "domain:runtime-bootstrap-authentication",
+      "type": "domain",
+      "name": "Runtime Bootstrap & Authentication",
+      "summary": "This domain establishes local runtime state before the proxy can serve traffic. It covers GitHub device authentication, Copilot token acquisition, model caching, and startup-time environment preparation for the HTTP server.",
+      "tags": ["cli", "authentication", "bootstrap", "runtime"],
+      "complexity": "complex",
+      "domainMeta": {
+        "entities": ["GitHub token", "Copilot token", "device code", "runtime state", "model cache"],
+        "businessRules": ["Authentication can reuse a cached GitHub token unless forced", "Startup must ensure app paths and caches exist before serving traffic", "Copilot token metadata can override inferred account type"],
+        "crossDomainInteractions": ["Provides tokens, account metadata, and model inventory to request-routing domains", "Feeds usage and debug domains with persisted token/runtime state"]
+      }
+    },
+    {
+      "id": "domain:anthropic-messages-proxy",
+      "type": "domain",
+      "name": "Anthropic Messages Proxying",
+      "summary": "This domain handles the Anthropic-compatible /v1/messages path and decides how to translate or forward each request into Copilot backends. It contains the request preprocessing, model normalization, effort handling, and streaming/non-streaming dispatch rules that make Claude-facing traffic work against Copilot.",
+      "tags": ["anthropic", "messages", "routing", "streaming"],
+      "complexity": "complex",
+      "domainMeta": {
+        "entities": ["Anthropic payload", "subagent marker", "compact request", "selected model", "native messages response"],
+        "businessRules": ["Compact and tool-less probe traffic may be downgraded to a configured small model", "Claude-native routing depends on supported endpoints and feature flags", "Adaptive thinking effort must be clamped or retried when the backend rejects unsupported values"],
+        "crossDomainInteractions": ["Depends on request governance before any upstream dispatch", "Consumes runtime model cache and token state established during bootstrap", "Shares token-estimation logic with the token accounting domain"]
+      }
+    },
+    {
+      "id": "domain:openai-compatible-proxy",
+      "type": "domain",
+      "name": "OpenAI-Compatible Proxying",
+      "summary": "This domain serves OpenAI-compatible request shapes, especially /v1/chat/completions, on top of GitHub Copilot APIs. It fills default limits, creates request/session identifiers, and preserves both streaming and non-streaming semantics for OpenAI-style clients.",
+      "tags": ["openai", "chat-completions", "proxy", "streaming"],
+      "complexity": "moderate",
+      "domainMeta": {
+        "entities": ["chat completions payload", "request ID", "session ID", "stream chunks"],
+        "businessRules": ["gpt-5.4 is rejected on the chat-completions path and must use /v1/responses or /v1/messages", "Missing max_tokens is filled from model capability limits", "Streaming responses must preserve SSE framing and premium accounting"],
+        "crossDomainInteractions": ["Reuses runtime model cache from bootstrap", "Is gated by the request governance domain before calling Copilot"]
+      }
+    },
+    {
+      "id": "domain:token-accounting",
+      "type": "domain",
+      "name": "Token Accounting",
+      "summary": "This domain answers token-counting requests for Anthropic-compatible message payloads. It prefers Anthropic's exact count_tokens endpoint for Claude models when configured, then falls back to local translation and estimation with model-specific adjustments.",
+      "tags": ["tokens", "counting", "anthropic", "estimation"],
+      "complexity": "moderate",
+      "domainMeta": {
+        "entities": ["count_tokens payload", "Anthropic API key", "translated OpenAI payload", "token estimate"],
+        "businessRules": ["Claude models use the real Anthropic count_tokens endpoint only when an API key is configured", "Tool declarations may add synthetic system-prompt token overhead", "Unknown models and handler failures fall back to input_tokens = 1"],
+        "crossDomainInteractions": ["Uses model resolution rules from request-routing code", "Reads configuration set during runtime bootstrap"]
+      }
+    },
+    {
+      "id": "domain:request-governance",
+      "type": "domain",
+      "name": "Request Governance",
+      "summary": "This domain enforces local operational controls before traffic reaches Copilot. It includes API key authentication, request throttling, and optional human approval for each proxied request.",
+      "tags": ["security", "rate-limit", "approval", "middleware"],
+      "complexity": "moderate",
+      "domainMeta": {
+        "entities": ["API key", "Bearer token", "rate-limit window", "approval prompt"],
+        "businessRules": ["Unauthenticated access is allowed for only a small set of public paths such as / and /usage-viewer", "When configured, rate limiting either waits or returns HTTP 429", "Manual approval rejects requests with HTTP 403 when the operator declines"],
+        "crossDomainInteractions": ["Gates Anthropic and OpenAI request flows", "Relies on runtime config and mutable state initialized during bootstrap"]
+      }
+    },
+    {
+      "id": "domain:usage-and-diagnostics",
+      "type": "domain",
+      "name": "Usage & Diagnostics",
+      "summary": "This domain exposes operator-facing inspection tools for Copilot usage and local runtime health. It includes a CLI usage report, the browser-based usage viewer, and a debug command that reveals runtime, path, and token-presence information.",
+      "tags": ["usage", "diagnostics", "viewer", "debug"],
+      "complexity": "moderate",
+      "domainMeta": {
+        "entities": ["usage snapshot", "quota report", "debug payload", "usage viewer page"],
+        "businessRules": ["Usage reporting requires a valid GitHub-authenticated session", "The usage viewer page is intentionally public while the JSON usage API still reflects backend fetch success/failure", "Debug output can be emitted as either plain text or JSON"],
+        "crossDomainInteractions": ["Reads persisted token/runtime state from the bootstrap domain", "Surfaces operational effects of request and authentication domains to operators"]
+      }
+    },
+
+    {
+      "id": "flow:authenticate-github-device-flow",
+      "type": "flow",
+      "name": "Authenticate GitHub Device Flow",
+      "summary": "Acquire or refresh the local GitHub token through the CLI auth command and GitHub device flow, then persist the result for future proxy sessions.",
+      "tags": ["cli", "github", "device-flow", "authentication"],
+      "complexity": "moderate",
+      "domainMeta": {
+        "entryPoint": "copilot-api auth",
+        "entryType": "cli"
+      }
+    },
+    {
+      "id": "flow:bootstrap-proxy-runtime",
+      "type": "flow",
+      "name": "Bootstrap Proxy Runtime",
+      "summary": "Initialize configuration, tokens, caches, and HTTP server state before the proxy begins serving compatible API routes.",
+      "tags": ["cli", "startup", "server", "runtime"],
+      "complexity": "complex",
+      "domainMeta": {
+        "entryPoint": "copilot-api start",
+        "entryType": "cli"
+      }
+    },
+    {
+      "id": "flow:process-anthropic-messages-request",
+      "type": "flow",
+      "name": "Process Anthropic Messages Request",
+      "summary": "Normalize and classify an incoming /v1/messages request so the proxy can choose the correct Copilot backend strategy.",
+      "tags": ["http", "anthropic", "messages", "routing"],
+      "complexity": "complex",
+      "domainMeta": {
+        "entryPoint": "POST /v1/messages",
+        "entryType": "http"
+      }
+    },
+    {
+      "id": "flow:dispatch-native-messages-api",
+      "type": "flow",
+      "name": "Dispatch Native Messages API",
+      "summary": "Prepare and send a Claude-family request to Copilot's native Messages API, including adaptive-thinking effort handling and streaming passthrough.",
+      "tags": ["http", "messages-api", "adaptive-thinking", "streaming"],
+      "complexity": "complex",
+      "domainMeta": {
+        "entryPoint": "POST /v1/messages -> handleWithMessagesApi",
+        "entryType": "http"
+      }
+    },
+    {
+      "id": "flow:process-chat-completions-request",
+      "type": "flow",
+      "name": "Process Chat Completions Request",
+      "summary": "Handle OpenAI-compatible chat completion traffic, validate endpoint eligibility, and proxy the request to Copilot with matching streaming behavior.",
+      "tags": ["http", "openai", "chat-completions", "streaming"],
+      "complexity": "moderate",
+      "domainMeta": {
+        "entryPoint": "POST /v1/chat/completions",
+        "entryType": "http"
+      }
+    },
+    {
+      "id": "flow:count-anthropic-message-tokens",
+      "type": "flow",
+      "name": "Count Anthropic Message Tokens",
+      "summary": "Compute token usage for Anthropic-style payloads via exact Anthropic counting when possible, otherwise via local translation and estimation.",
+      "tags": ["http", "tokens", "anthropic", "counting"],
+      "complexity": "moderate",
+      "domainMeta": {
+        "entryPoint": "POST /v1/messages/count_tokens",
+        "entryType": "http"
+      }
+    },
+    {
+      "id": "flow:authenticate-http-requests",
+      "type": "flow",
+      "name": "Authenticate HTTP Requests",
+      "summary": "Apply API-key middleware so protected routes require either x-api-key or Bearer credentials when auth keys are configured.",
+      "tags": ["http", "auth", "middleware", "security"],
+      "complexity": "moderate",
+      "domainMeta": {
+        "entryPoint": "server middleware createAuthMiddleware",
+        "entryType": "http"
+      }
+    },
+    {
+      "id": "flow:gate-proxy-requests",
+      "type": "flow",
+      "name": "Gate Proxy Requests",
+      "summary": "Throttle requests according to local rate-limit settings and optionally require a human confirmation before forwarding traffic upstream.",
+      "tags": ["rate-limit", "approval", "middleware", "governance"],
+      "complexity": "moderate",
+      "domainMeta": {
+        "entryPoint": "rate-limit + manual approval checks inside handlers",
+        "entryType": "http"
+      }
+    },
+    {
+      "id": "flow:inspect-copilot-usage",
+      "type": "flow",
+      "name": "Inspect Copilot Usage",
+      "summary": "Fetch Copilot usage/quota data and present a summarized operational report for premium, chat, and completions consumption.",
+      "tags": ["cli", "usage", "quota", "reporting"],
+      "complexity": "simple",
+      "domainMeta": {
+        "entryPoint": "copilot-api check-usage",
+        "entryType": "cli"
+      }
+    },
+    {
+      "id": "flow:serve-usage-viewer",
+      "type": "flow",
+      "name": "Serve Usage Viewer",
+      "summary": "Expose a browser-based usage viewer page and the backing usage JSON endpoint for operators monitoring the proxy.",
+      "tags": ["http", "usage-viewer", "html", "json"],
+      "complexity": "simple",
+      "domainMeta": {
+        "entryPoint": "GET /usage-viewer",
+        "entryType": "http"
+      }
+    },
+    {
+      "id": "flow:inspect-runtime-debug",
+      "type": "flow",
+      "name": "Inspect Runtime Debug",
+      "summary": "Collect local version, runtime, path, and token-presence data and print the result in plain text or JSON for troubleshooting.",
+      "tags": ["cli", "debug", "runtime", "diagnostics"],
+      "complexity": "simple",
+      "domainMeta": {
+        "entryPoint": "copilot-api debug",
+        "entryType": "cli"
+      }
+    },
+
+    {
+      "id": "step:authenticate-github-device-flow:force-auth-bootstrap",
+      "type": "step",
+      "name": "Force Auth Bootstrap",
+      "summary": "The auth subcommand enables verbose/show-token flags, ensures local paths exist, and calls the GitHub token setup with force=true.",
+      "tags": ["cli", "bootstrap", "auth"],
+      "complexity": "simple",
+      "filePath": "src/auth.ts",
+      "lineRange": [15, 25]
+    },
+    {
+      "id": "step:authenticate-github-device-flow:request-device-code",
+      "type": "step",
+      "name": "Request Device Code",
+      "summary": "When no reusable GitHub token is available, the proxy asks GitHub for a device-flow code and receives the verification URI plus user code.",
+      "tags": ["device-flow", "github", "oauth"],
+      "complexity": "moderate",
+      "filePath": "src/lib/token.ts",
+      "lineRange": [190, 196]
+    },
+    {
+      "id": "step:authenticate-github-device-flow:poll-access-token",
+      "type": "step",
+      "name": "Poll Access Token",
+      "summary": "The proxy polls GitHub until the user finishes verification and an access token becomes available.",
+      "tags": ["oauth", "polling", "token"],
+      "complexity": "moderate",
+      "filePath": "src/lib/token.ts",
+      "lineRange": [198, 198]
+    },
+    {
+      "id": "step:authenticate-github-device-flow:persist-github-token",
+      "type": "step",
+      "name": "Persist GitHub Token",
+      "summary": "The newly acquired GitHub token is written to the configured token file so future sessions can reuse it.",
+      "tags": ["persistence", "token", "filesystem"],
+      "complexity": "simple",
+      "filePath": "src/lib/token.ts",
+      "lineRange": [69, 72]
+    },
+    {
+      "id": "step:authenticate-github-device-flow:log-authenticated-user",
+      "type": "step",
+      "name": "Log Authenticated User",
+      "summary": "After authentication, the proxy fetches the GitHub user and Copilot usage metadata to confirm who is logged in and which Copilot API endpoint applies.",
+      "tags": ["user", "usage", "session"],
+      "complexity": "moderate",
+      "filePath": "src/lib/token.ts",
+      "lineRange": [217, 223]
+    },
+
+    {
+      "id": "step:bootstrap-proxy-runtime:merge-default-config",
+      "type": "step",
+      "name": "Merge Default Config",
+      "summary": "Startup first merges persisted config with defaults so later runtime decisions see a complete configuration object.",
+      "tags": ["config", "startup", "defaults"],
+      "complexity": "simple",
+      "filePath": "src/start.ts",
+      "lineRange": [40, 43]
+    },
+    {
+      "id": "step:bootstrap-proxy-runtime:initialize-runtime-options",
+      "type": "step",
+      "name": "Initialize Runtime Options",
+      "summary": "The server command applies flags such as proxy env, verbosity, account type, manual approval, rate limiting, forced agent mode, and native messages mode to global state.",
+      "tags": ["runtime", "state", "flags"],
+      "complexity": "moderate",
+      "filePath": "src/start.ts",
+      "lineRange": [44, 70]
+    },
+    {
+      "id": "step:bootstrap-proxy-runtime:ensure-paths-and-cache-device-context",
+      "type": "step",
+      "name": "Ensure Paths And Cache Device Context",
+      "summary": "Before serving traffic, startup creates required paths and caches VS Code and machine identifiers used by downstream Copilot requests.",
+      "tags": ["paths", "device-id", "cache"],
+      "complexity": "moderate",
+      "filePath": "src/start.ts",
+      "lineRange": [72, 76]
+    },
+    {
+      "id": "step:bootstrap-proxy-runtime:acquire-github-token",
+      "type": "step",
+      "name": "Acquire GitHub Token",
+      "summary": "Startup either accepts a provided GitHub token or reuses/acquires one through the shared authentication path.",
+      "tags": ["github", "token", "startup"],
+      "complexity": "moderate",
+      "filePath": "src/start.ts",
+      "lineRange": [78, 85]
+    },
+    {
+      "id": "step:bootstrap-proxy-runtime:setup-copilot-session-and-model-cache",
+      "type": "step",
+      "name": "Setup Copilot Session And Model Cache",
+      "summary": "Once GitHub auth exists, startup fetches the Copilot token, initializes telemetry, caches models, and logs the available model inventory.",
+      "tags": ["copilot", "models", "telemetry", "cache"],
+      "complexity": "complex",
+      "filePath": "src/start.ts",
+      "lineRange": [86, 90]
+    },
+    {
+      "id": "step:bootstrap-proxy-runtime:expose-server-and-launch-info",
+      "type": "step",
+      "name": "Expose Server And Launch Info",
+      "summary": "Startup prints the usage viewer URL, optionally builds a Claude Code launch script, and finally serves the Hono application on the configured port.",
+      "tags": ["server", "usage-viewer", "launch", "http"],
+      "complexity": "moderate",
+      "filePath": "src/start.ts",
+      "lineRange": [92, 157]
+    },
+
+    {
+      "id": "step:process-anthropic-messages-request:check-rate-limit",
+      "type": "step",
+      "name": "Check Rate Limit",
+      "summary": "The Anthropic messages handler starts by enforcing the configured rate-limit gate before reading the incoming JSON payload.",
+      "tags": ["rate-limit", "messages", "guard"],
+      "complexity": "simple",
+      "filePath": "src/routes/messages/handler.ts",
+      "lineRange": [42, 45]
+    },
+    {
+      "id": "step:process-anthropic-messages-request:detect-compaction-and-probe-downgrade",
+      "type": "step",
+      "name": "Detect Compaction And Probe Downgrade",
+      "summary": "The handler inspects compact-request markers and tool-less beta probe patterns, then may swap the request to the configured small model.",
+      "tags": ["compact", "small-model", "classification"],
+      "complexity": "moderate",
+      "filePath": "src/routes/messages/handler.ts",
+      "lineRange": [49, 71]
+    },
+    {
+      "id": "step:process-anthropic-messages-request:sanitize-tools-and-detect-subagent",
+      "type": "step",
+      "name": "Sanitize Tools And Detect Subagent",
+      "summary": "The handler removes or rewrites unsupported IDE tool declarations and extracts any embedded subagent marker from the first user turn.",
+      "tags": ["tools", "subagent", "normalization"],
+      "complexity": "moderate",
+      "filePath": "src/routes/messages/handler.ts",
+      "lineRange": [56, 67]
+    },
+    {
+      "id": "step:process-anthropic-messages-request:strip-boundaries-and-merge-tool-results",
+      "type": "step",
+      "name": "Strip Boundaries And Merge Tool Results",
+      "summary": "For non-compact requests, preprocessing removes synthetic tool-boundary text and merges mixed tool_result plus text blocks into a backend-friendly shape.",
+      "tags": ["tool-result", "preprocess", "compatibility"],
+      "complexity": "moderate",
+      "filePath": "src/routes/messages/preprocess.ts",
+      "lineRange": [148, 198]
+    },
+    {
+      "id": "step:process-anthropic-messages-request:normalize-model-id",
+      "type": "step",
+      "name": "Normalize Model Id",
+      "summary": "The proxy maps SDK-style Claude model IDs into Copilot endpoint IDs by extracting family/version patterns and looking for a matching cached model.",
+      "tags": ["models", "normalization", "routing"],
+      "complexity": "moderate",
+      "filePath": "src/lib/models.ts",
+      "lineRange": [5, 24]
+    },
+    {
+      "id": "step:process-anthropic-messages-request:resolve-effort-and-dispatch",
+      "type": "step",
+      "name": "Resolve Effort And Dispatch",
+      "summary": "The handler logs the effective effort source, optionally requests manual approval, and dispatches to native messages, responses, or chat-completions based on model support.",
+      "tags": ["effort", "approval", "dispatch"],
+      "complexity": "complex",
+      "filePath": "src/routes/messages/handler.ts",
+      "lineRange": [78, 126]
+    },
+
+    {
+      "id": "step:dispatch-native-messages-api:prepare-native-messages-payload",
+      "type": "step",
+      "name": "Prepare Native Messages Payload",
+      "summary": "Before calling Copilot's native messages endpoint, preprocessing strips unsupported cache_control fields, filters invalid thinking blocks, and enables adaptive thinking when the selected model supports it.",
+      "tags": ["messages-api", "payload", "adaptive-thinking"],
+      "complexity": "complex",
+      "filePath": "src/routes/messages/preprocess.ts",
+      "lineRange": [270, 304]
+    },
+    {
+      "id": "step:dispatch-native-messages-api:build-enhanced-native-payload",
+      "type": "step",
+      "name": "Build Enhanced Native Payload",
+      "summary": "The native request builder removes top_p, forces temperature=1, and supplies adaptive-thinking output_config effort defaults when the model supports them.",
+      "tags": ["payload", "thinking", "effort"],
+      "complexity": "moderate",
+      "filePath": "src/services/copilot/create-messages.ts",
+      "lineRange": [250, 270]
+    },
+    {
+      "id": "step:dispatch-native-messages-api:resolve-beta-and-request-headers",
+      "type": "step",
+      "name": "Resolve Beta And Request Headers",
+      "summary": "The native messages path filters incoming anthropic-beta values through a safe allowlist and adds Copilot-aligned beta headers when model capabilities require them.",
+      "tags": ["headers", "beta", "compatibility"],
+      "complexity": "moderate",
+      "filePath": "src/services/copilot/create-messages.ts",
+      "lineRange": [141, 205]
+    },
+    {
+      "id": "step:dispatch-native-messages-api:retry-on-invalid-effort",
+      "type": "step",
+      "name": "Retry On Invalid Effort",
+      "summary": "If Copilot rejects the configured reasoning effort, the proxy parses supported values from the backend error and retries with a downgraded effort.",
+      "tags": ["effort", "retry", "fallback"],
+      "complexity": "complex",
+      "filePath": "src/services/copilot/create-messages.ts",
+      "lineRange": [301, 337]
+    },
+    {
+      "id": "step:dispatch-native-messages-api:retry-on-thinking-block-errors",
+      "type": "step",
+      "name": "Retry On Thinking Block Errors",
+      "summary": "If native messages reject modified thinking signatures, the proxy strips assistant thinking blocks and retries once with a safer payload.",
+      "tags": ["thinking", "retry", "error-handling"],
+      "complexity": "complex",
+      "filePath": "src/services/copilot/create-messages.ts",
+      "lineRange": [339, 357]
+    },
+    {
+      "id": "step:dispatch-native-messages-api:stream-or-return-native-response",
+      "type": "step",
+      "name": "Stream Or Return Native Response",
+      "summary": "After createMessages returns, the proxy either passes through SSE with response headers adjusted for streaming or returns the native JSON body for non-streaming requests.",
+      "tags": ["streaming", "sse", "response"],
+      "complexity": "moderate",
+      "filePath": "src/routes/messages/api-flows.ts",
+      "lineRange": [242, 289]
+    },
+
+    {
+      "id": "step:process-chat-completions-request:check-rate-limit",
+      "type": "step",
+      "name": "Check Rate Limit",
+      "summary": "The chat-completions handler applies the shared request-throttling check before any payload processing begins.",
+      "tags": ["rate-limit", "chat-completions", "guard"],
+      "complexity": "simple",
+      "filePath": "src/routes/chat-completions/handler.ts",
+      "lineRange": [24, 27]
+    },
+    {
+      "id": "step:process-chat-completions-request:validate-model-endpoint",
+      "type": "step",
+      "name": "Validate Model Endpoint",
+      "summary": "The handler looks up the selected model and rejects gpt-5.4 on this endpoint, directing callers to /v1/responses or /v1/messages instead.",
+      "tags": ["validation", "routing", "model"],
+      "complexity": "simple",
+      "filePath": "src/routes/chat-completions/handler.ts",
+      "lineRange": [30, 45]
+    },
+    {
+      "id": "step:process-chat-completions-request:approve-and-default-max-tokens",
+      "type": "step",
+      "name": "Approve And Default Max Tokens",
+      "summary": "If manual approval is enabled the request must be confirmed, and missing max_tokens is filled from the selected model's max_output_tokens limit.",
+      "tags": ["approval", "limits", "defaults"],
+      "complexity": "moderate",
+      "filePath": "src/routes/chat-completions/handler.ts",
+      "lineRange": [47, 55]
+    },
+    {
+      "id": "step:process-chat-completions-request:create-copilot-chat-request",
+      "type": "step",
+      "name": "Create Copilot Chat Request",
+      "summary": "The proxy generates request/session IDs and forwards the normalized payload to Copilot's chat completions backend.",
+      "tags": ["copilot", "request-id", "session-id"],
+      "complexity": "moderate",
+      "filePath": "src/routes/chat-completions/handler.ts",
+      "lineRange": [57, 67]
+    },
+    {
+      "id": "step:process-chat-completions-request:stream-or-return-chat-response",
+      "type": "step",
+      "name": "Stream Or Return Chat Response",
+      "summary": "The handler either returns a JSON completion or relays SSE chunks while logging premium metadata for the completed request.",
+      "tags": ["streaming", "json", "premium"],
+      "complexity": "moderate",
+      "filePath": "src/routes/chat-completions/handler.ts",
+      "lineRange": [69, 109]
+    },
+
+    {
+      "id": "step:count-anthropic-message-tokens:parse-token-count-request",
+      "type": "step",
+      "name": "Parse Token Count Request",
+      "summary": "The count-tokens handler reads the Anthropic payload and first tries the exact Anthropic counting path for eligible Claude models.",
+      "tags": ["tokens", "handler", "anthropic"],
+      "complexity": "simple",
+      "filePath": "src/routes/messages/count-tokens-handler.ts",
+      "lineRange": [64, 70]
+    },
+    {
+      "id": "step:count-anthropic-message-tokens:forward-claude-count-to-anthropic",
+      "type": "step",
+      "name": "Forward Claude Count To Anthropic",
+      "summary": "When an Anthropic API key exists, Claude-family token counting is forwarded to the real /v1/messages/count_tokens endpoint with dotted model names converted to dash form.",
+      "tags": ["anthropic", "exact-count", "claude"],
+      "complexity": "moderate",
+      "filePath": "src/routes/messages/count-tokens-handler.ts",
+      "lineRange": [16, 55]
+    },
+    {
+      "id": "step:count-anthropic-message-tokens:translate-and-resolve-fallback-model",
+      "type": "step",
+      "name": "Translate And Resolve Fallback Model",
+      "summary": "If exact counting is unavailable, the handler translates the payload to an OpenAI-like shape and resolves the endpoint model used for local estimation.",
+      "tags": ["translation", "models", "fallback"],
+      "complexity": "moderate",
+      "filePath": "src/routes/messages/count-tokens-handler.ts",
+      "lineRange": [72, 85]
+    },
+    {
+      "id": "step:count-anthropic-message-tokens:apply-tool-overhead-and-claude-multiplier",
+      "type": "step",
+      "name": "Apply Tool Overhead And Claude Multiplier",
+      "summary": "Local estimation adds tool-system overhead for eligible requests and multiplies Claude totals by the configured token multiplier before returning the final count.",
+      "tags": ["estimation", "tools", "multiplier"],
+      "complexity": "moderate",
+      "filePath": "src/routes/messages/count-tokens-handler.ts",
+      "lineRange": [87, 112]
+    },
+    {
+      "id": "step:count-anthropic-message-tokens:return-estimate-or-safe-fallback",
+      "type": "step",
+      "name": "Return Estimate Or Safe Fallback",
+      "summary": "The handler returns the final token count when possible, but falls back to input_tokens=1 for unknown models or unexpected errors.",
+      "tags": ["fallback", "response", "resilience"],
+      "complexity": "simple",
+      "filePath": "src/routes/messages/count-tokens-handler.ts",
+      "lineRange": [114, 123]
+    },
+
+    {
+      "id": "step:authenticate-http-requests:install-auth-middleware",
+      "type": "step",
+      "name": "Install Auth Middleware",
+      "summary": "The Hono server installs auth middleware globally while explicitly exempting / and /usage-viewer paths from authentication.",
+      "tags": ["server", "middleware", "auth"],
+      "complexity": "simple",
+      "filePath": "src/server.ts",
+      "lineRange": [34, 40]
+    },
+    {
+      "id": "step:authenticate-http-requests:bypass-public-paths-and-options",
+      "type": "step",
+      "name": "Bypass Public Paths And Options",
+      "summary": "The middleware lets OPTIONS requests and configured public paths pass through without credential checks.",
+      "tags": ["options", "public-routes", "bypass"],
+      "complexity": "simple",
+      "filePath": "src/lib/request-auth.ts",
+      "lineRange": [80, 87]
+    },
+    {
+      "id": "step:authenticate-http-requests:extract-api-key-or-bearer",
+      "type": "step",
+      "name": "Extract Api Key Or Bearer",
+      "summary": "Protected requests may authenticate with x-api-key or Authorization: Bearer, and the middleware normalizes both forms into one comparable key.",
+      "tags": ["headers", "x-api-key", "bearer"],
+      "complexity": "moderate",
+      "filePath": "src/lib/request-auth.ts",
+      "lineRange": [40, 58]
+    },
+    {
+      "id": "step:authenticate-http-requests:accept-or-reject-request",
+      "type": "step",
+      "name": "Accept Or Reject Request",
+      "summary": "When configured API keys exist, the middleware either continues the request or returns a 401 authentication_error response.",
+      "tags": ["authorization", "401", "policy"],
+      "complexity": "moderate",
+      "filePath": "src/lib/request-auth.ts",
+      "lineRange": [89, 99]
+    },
+
+    {
+      "id": "step:gate-proxy-requests:compute-throttle-window",
+      "type": "step",
+      "name": "Compute Throttle Window",
+      "summary": "The shared rate-limit helper compares the current request timestamp against the last forwarded request and the configured interval.",
+      "tags": ["rate-limit", "timing", "state"],
+      "complexity": "simple",
+      "filePath": "src/lib/rate-limit.ts",
+      "lineRange": [8, 25]
+    },
+    {
+      "id": "step:gate-proxy-requests:reject-on-rate-limit-exceed",
+      "type": "step",
+      "name": "Reject On Rate Limit Exceed",
+      "summary": "If the throttle window is still active and waiting is disabled, the helper returns an HTTP 429 error immediately.",
+      "tags": ["429", "rate-limit", "rejection"],
+      "complexity": "simple",
+      "filePath": "src/lib/rate-limit.ts",
+      "lineRange": [27, 35]
+    },
+    {
+      "id": "step:gate-proxy-requests:wait-when-throttle-is-configured-to-block",
+      "type": "step",
+      "name": "Wait When Throttle Is Configured To Block",
+      "summary": "When wait mode is enabled, the proxy sleeps for the remaining window and only then updates the request timestamp and proceeds.",
+      "tags": ["wait", "sleep", "rate-limit"],
+      "complexity": "simple",
+      "filePath": "src/lib/rate-limit.ts",
+      "lineRange": [37, 45]
+    },
+    {
+      "id": "step:gate-proxy-requests:prompt-manual-approval",
+      "type": "step",
+      "name": "Prompt Manual Approval",
+      "summary": "If manual approval mode is enabled, the operator must confirm the request or the proxy returns HTTP 403.",
+      "tags": ["approval", "prompt", "403"],
+      "complexity": "simple",
+      "filePath": "src/lib/approval.ts",
+      "lineRange": [5, 15]
+    },
+
+    {
+      "id": "step:inspect-copilot-usage:ensure-token-availability",
+      "type": "step",
+      "name": "Ensure Token Availability",
+      "summary": "The usage CLI first ensures local paths exist and a GitHub token is available before querying usage data.",
+      "tags": ["cli", "auth", "usage"],
+      "complexity": "simple",
+      "filePath": "src/check-usage.ts",
+      "lineRange": [16, 19]
+    },
+    {
+      "id": "step:inspect-copilot-usage:fetch-usage-snapshot",
+      "type": "step",
+      "name": "Fetch Usage Snapshot",
+      "summary": "The command fetches the current Copilot usage payload, including quota snapshots and plan metadata.",
+      "tags": ["usage", "quota", "fetch"],
+      "complexity": "simple",
+      "filePath": "src/check-usage.ts",
+      "lineRange": [20, 27]
+    },
+    {
+      "id": "step:inspect-copilot-usage:summarize-quotas",
+      "type": "step",
+      "name": "Summarize Quotas",
+      "summary": "Premium, chat, and completions entitlements are converted into used/remaining percentages for operator-readable reporting.",
+      "tags": ["quota", "summary", "premium"],
+      "complexity": "simple",
+      "filePath": "src/check-usage.ts",
+      "lineRange": [28, 43]
+    },
+    {
+      "id": "step:inspect-copilot-usage:render-usage-report",
+      "type": "step",
+      "name": "Render Usage Report",
+      "summary": "The CLI prints the quota summary in a terminal box and exits with an error status if usage retrieval fails.",
+      "tags": ["output", "report", "error-handling"],
+      "complexity": "simple",
+      "filePath": "src/check-usage.ts",
+      "lineRange": [45, 56]
+    },
+
+    {
+      "id": "step:serve-usage-viewer:serve-usage-viewer-html",
+      "type": "step",
+      "name": "Serve Usage Viewer Html",
+      "summary": "The HTTP server exposes /usage-viewer as a static HTML page read from pages/index.html so operators can inspect usage in a browser.",
+      "tags": ["html", "viewer", "server"],
+      "complexity": "simple",
+      "filePath": "src/server.ts",
+      "lineRange": [42, 45]
+    },
+    {
+      "id": "step:serve-usage-viewer:redirect-trailing-slash",
+      "type": "step",
+      "name": "Redirect Trailing Slash",
+      "summary": "The server normalizes /usage-viewer/ to /usage-viewer to keep the viewer entry URL consistent.",
+      "tags": ["redirect", "viewer", "http"],
+      "complexity": "simple",
+      "filePath": "src/server.ts",
+      "lineRange": [47, 47]
+    },
+    {
+      "id": "step:serve-usage-viewer:serve-usage-json",
+      "type": "step",
+      "name": "Serve Usage Json",
+      "summary": "The backing /usage endpoint fetches the latest Copilot usage snapshot and returns JSON or a 500 error payload.",
+      "tags": ["json", "usage", "api"],
+      "complexity": "simple",
+      "filePath": "src/routes/usage/route.ts",
+      "lineRange": [7, 15]
+    },
+
+    {
+      "id": "step:inspect-runtime-debug:collect-package-version",
+      "type": "step",
+      "name": "Collect Package Version",
+      "summary": "The debug command reads package.json to determine the installed copilot-api version, falling back to unknown when unavailable.",
+      "tags": ["debug", "version", "package"],
+      "complexity": "simple",
+      "filePath": "src/debug.ts",
+      "lineRange": [29, 41]
+    },
+    {
+      "id": "step:inspect-runtime-debug:capture-runtime-and-path-info",
+      "type": "step",
+      "name": "Capture Runtime And Path Info",
+      "summary": "Runtime name, runtime version, platform, architecture, and application paths are collected into the debug payload.",
+      "tags": ["runtime", "paths", "platform"],
+      "complexity": "simple",
+      "filePath": "src/debug.ts",
+      "lineRange": [43, 80]
+    },
+    {
+      "id": "step:inspect-runtime-debug:detect-token-file-presence",
+      "type": "step",
+      "name": "Detect Token File Presence",
+      "summary": "The debug flow checks whether the GitHub token file exists and contains non-empty content.",
+      "tags": ["token", "filesystem", "diagnostics"],
+      "complexity": "simple",
+      "filePath": "src/debug.ts",
+      "lineRange": [54, 63]
+    },
+    {
+      "id": "step:inspect-runtime-debug:emit-debug-output",
+      "type": "step",
+      "name": "Emit Debug Output",
+      "summary": "Finally, the command aggregates the debug payload and prints it either as pretty plain text or as structured JSON.",
+      "tags": ["output", "json", "plain-text"],
+      "complexity": "simple",
+      "filePath": "src/debug.ts",
+      "lineRange": [83, 127]
+    }
+  ],
+  "edges": [
+    { "source": "domain:runtime-bootstrap-authentication", "target": "flow:authenticate-github-device-flow", "type": "contains_flow", "direction": "forward", "weight": 1.0 },
+    { "source": "domain:runtime-bootstrap-authentication", "target": "flow:bootstrap-proxy-runtime", "type": "contains_flow", "direction": "forward", "weight": 1.0 },
+    { "source": "domain:anthropic-messages-proxy", "target": "flow:process-anthropic-messages-request", "type": "contains_flow", "direction": "forward", "weight": 1.0 },
+    { "source": "domain:anthropic-messages-proxy", "target": "flow:dispatch-native-messages-api", "type": "contains_flow", "direction": "forward", "weight": 1.0 },
+    { "source": "domain:openai-compatible-proxy", "target": "flow:process-chat-completions-request", "type": "contains_flow", "direction": "forward", "weight": 1.0 },
+    { "source": "domain:token-accounting", "target": "flow:count-anthropic-message-tokens", "type": "contains_flow", "direction": "forward", "weight": 1.0 },
+    { "source": "domain:request-governance", "target": "flow:authenticate-http-requests", "type": "contains_flow", "direction": "forward", "weight": 1.0 },
+    { "source": "domain:request-governance", "target": "flow:gate-proxy-requests", "type": "contains_flow", "direction": "forward", "weight": 1.0 },
+    { "source": "domain:usage-and-diagnostics", "target": "flow:inspect-copilot-usage", "type": "contains_flow", "direction": "forward", "weight": 1.0 },
+    { "source": "domain:usage-and-diagnostics", "target": "flow:serve-usage-viewer", "type": "contains_flow", "direction": "forward", "weight": 1.0 },
+    { "source": "domain:usage-and-diagnostics", "target": "flow:inspect-runtime-debug", "type": "contains_flow", "direction": "forward", "weight": 1.0 },
+
+    { "source": "flow:authenticate-github-device-flow", "target": "step:authenticate-github-device-flow:force-auth-bootstrap", "type": "flow_step", "direction": "forward", "weight": 0.2 },
+    { "source": "flow:authenticate-github-device-flow", "target": "step:authenticate-github-device-flow:request-device-code", "type": "flow_step", "direction": "forward", "weight": 0.4 },
+    { "source": "flow:authenticate-github-device-flow", "target": "step:authenticate-github-device-flow:poll-access-token", "type": "flow_step", "direction": "forward", "weight": 0.6 },
+    { "source": "flow:authenticate-github-device-flow", "target": "step:authenticate-github-device-flow:persist-github-token", "type": "flow_step", "direction": "forward", "weight": 0.8 },
+    { "source": "flow:authenticate-github-device-flow", "target": "step:authenticate-github-device-flow:log-authenticated-user", "type": "flow_step", "direction": "forward", "weight": 1.0 },
+
+    { "source": "flow:bootstrap-proxy-runtime", "target": "step:bootstrap-proxy-runtime:merge-default-config", "type": "flow_step", "direction": "forward", "weight": 0.2 },
+    { "source": "flow:bootstrap-proxy-runtime", "target": "step:bootstrap-proxy-runtime:initialize-runtime-options", "type": "flow_step", "direction": "forward", "weight": 0.3 },
+    { "source": "flow:bootstrap-proxy-runtime", "target": "step:bootstrap-proxy-runtime:ensure-paths-and-cache-device-context", "type": "flow_step", "direction": "forward", "weight": 0.5 },
+    { "source": "flow:bootstrap-proxy-runtime", "target": "step:bootstrap-proxy-runtime:acquire-github-token", "type": "flow_step", "direction": "forward", "weight": 0.7 },
+    { "source": "flow:bootstrap-proxy-runtime", "target": "step:bootstrap-proxy-runtime:setup-copilot-session-and-model-cache", "type": "flow_step", "direction": "forward", "weight": 0.8 },
+    { "source": "flow:bootstrap-proxy-runtime", "target": "step:bootstrap-proxy-runtime:expose-server-and-launch-info", "type": "flow_step", "direction": "forward", "weight": 1.0 },
+
+    { "source": "flow:process-anthropic-messages-request", "target": "step:process-anthropic-messages-request:check-rate-limit", "type": "flow_step", "direction": "forward", "weight": 0.2 },
+    { "source": "flow:process-anthropic-messages-request", "target": "step:process-anthropic-messages-request:detect-compaction-and-probe-downgrade", "type": "flow_step", "direction": "forward", "weight": 0.3 },
+    { "source": "flow:process-anthropic-messages-request", "target": "step:process-anthropic-messages-request:sanitize-tools-and-detect-subagent", "type": "flow_step", "direction": "forward", "weight": 0.5 },
+    { "source": "flow:process-anthropic-messages-request", "target": "step:process-anthropic-messages-request:strip-boundaries-and-merge-tool-results", "type": "flow_step", "direction": "forward", "weight": 0.7 },
+    { "source": "flow:process-anthropic-messages-request", "target": "step:process-anthropic-messages-request:normalize-model-id", "type": "flow_step", "direction": "forward", "weight": 0.8 },
+    { "source": "flow:process-anthropic-messages-request", "target": "step:process-anthropic-messages-request:resolve-effort-and-dispatch", "type": "flow_step", "direction": "forward", "weight": 1.0 },
+
+    { "source": "flow:dispatch-native-messages-api", "target": "step:dispatch-native-messages-api:prepare-native-messages-payload", "type": "flow_step", "direction": "forward", "weight": 0.2 },
+    { "source": "flow:dispatch-native-messages-api", "target": "step:dispatch-native-messages-api:build-enhanced-native-payload", "type": "flow_step", "direction": "forward", "weight": 0.3 },
+    { "source": "flow:dispatch-native-messages-api", "target": "step:dispatch-native-messages-api:resolve-beta-and-request-headers", "type": "flow_step", "direction": "forward", "weight": 0.5 },
+    { "source": "flow:dispatch-native-messages-api", "target": "step:dispatch-native-messages-api:retry-on-invalid-effort", "type": "flow_step", "direction": "forward", "weight": 0.7 },
+    { "source": "flow:dispatch-native-messages-api", "target": "step:dispatch-native-messages-api:retry-on-thinking-block-errors", "type": "flow_step", "direction": "forward", "weight": 0.8 },
+    { "source": "flow:dispatch-native-messages-api", "target": "step:dispatch-native-messages-api:stream-or-return-native-response", "type": "flow_step", "direction": "forward", "weight": 1.0 },
+
+    { "source": "flow:process-chat-completions-request", "target": "step:process-chat-completions-request:check-rate-limit", "type": "flow_step", "direction": "forward", "weight": 0.2 },
+    { "source": "flow:process-chat-completions-request", "target": "step:process-chat-completions-request:validate-model-endpoint", "type": "flow_step", "direction": "forward", "weight": 0.4 },
+    { "source": "flow:process-chat-completions-request", "target": "step:process-chat-completions-request:approve-and-default-max-tokens", "type": "flow_step", "direction": "forward", "weight": 0.6 },
+    { "source": "flow:process-chat-completions-request", "target": "step:process-chat-completions-request:create-copilot-chat-request", "type": "flow_step", "direction": "forward", "weight": 0.8 },
+    { "source": "flow:process-chat-completions-request", "target": "step:process-chat-completions-request:stream-or-return-chat-response", "type": "flow_step", "direction": "forward", "weight": 1.0 },
+
+    { "source": "flow:count-anthropic-message-tokens", "target": "step:count-anthropic-message-tokens:parse-token-count-request", "type": "flow_step", "direction": "forward", "weight": 0.2 },
+    { "source": "flow:count-anthropic-message-tokens", "target": "step:count-anthropic-message-tokens:forward-claude-count-to-anthropic", "type": "flow_step", "direction": "forward", "weight": 0.4 },
+    { "source": "flow:count-anthropic-message-tokens", "target": "step:count-anthropic-message-tokens:translate-and-resolve-fallback-model", "type": "flow_step", "direction": "forward", "weight": 0.6 },
+    { "source": "flow:count-anthropic-message-tokens", "target": "step:count-anthropic-message-tokens:apply-tool-overhead-and-claude-multiplier", "type": "flow_step", "direction": "forward", "weight": 0.8 },
+    { "source": "flow:count-anthropic-message-tokens", "target": "step:count-anthropic-message-tokens:return-estimate-or-safe-fallback", "type": "flow_step", "direction": "forward", "weight": 1.0 },
+
+    { "source": "flow:authenticate-http-requests", "target": "step:authenticate-http-requests:install-auth-middleware", "type": "flow_step", "direction": "forward", "weight": 0.3 },
+    { "source": "flow:authenticate-http-requests", "target": "step:authenticate-http-requests:bypass-public-paths-and-options", "type": "flow_step", "direction": "forward", "weight": 0.5 },
+    { "source": "flow:authenticate-http-requests", "target": "step:authenticate-http-requests:extract-api-key-or-bearer", "type": "flow_step", "direction": "forward", "weight": 0.8 },
+    { "source": "flow:authenticate-http-requests", "target": "step:authenticate-http-requests:accept-or-reject-request", "type": "flow_step", "direction": "forward", "weight": 1.0 },
+
+    { "source": "flow:gate-proxy-requests", "target": "step:gate-proxy-requests:compute-throttle-window", "type": "flow_step", "direction": "forward", "weight": 0.3 },
+    { "source": "flow:gate-proxy-requests", "target": "step:gate-proxy-requests:reject-on-rate-limit-exceed", "type": "flow_step", "direction": "forward", "weight": 0.5 },
+    { "source": "flow:gate-proxy-requests", "target": "step:gate-proxy-requests:wait-when-throttle-is-configured-to-block", "type": "flow_step", "direction": "forward", "weight": 0.8 },
+    { "source": "flow:gate-proxy-requests", "target": "step:gate-proxy-requests:prompt-manual-approval", "type": "flow_step", "direction": "forward", "weight": 1.0 },
+
+    { "source": "flow:inspect-copilot-usage", "target": "step:inspect-copilot-usage:ensure-token-availability", "type": "flow_step", "direction": "forward", "weight": 0.3 },
+    { "source": "flow:inspect-copilot-usage", "target": "step:inspect-copilot-usage:fetch-usage-snapshot", "type": "flow_step", "direction": "forward", "weight": 0.5 },
+    { "source": "flow:inspect-copilot-usage", "target": "step:inspect-copilot-usage:summarize-quotas", "type": "flow_step", "direction": "forward", "weight": 0.8 },
+    { "source": "flow:inspect-copilot-usage", "target": "step:inspect-copilot-usage:render-usage-report", "type": "flow_step", "direction": "forward", "weight": 1.0 },
+
+    { "source": "flow:serve-usage-viewer", "target": "step:serve-usage-viewer:serve-usage-viewer-html", "type": "flow_step", "direction": "forward", "weight": 0.3 },
+    { "source": "flow:serve-usage-viewer", "target": "step:serve-usage-viewer:redirect-trailing-slash", "type": "flow_step", "direction": "forward", "weight": 0.7 },
+    { "source": "flow:serve-usage-viewer", "target": "step:serve-usage-viewer:serve-usage-json", "type": "flow_step", "direction": "forward", "weight": 1.0 },
+
+    { "source": "flow:inspect-runtime-debug", "target": "step:inspect-runtime-debug:collect-package-version", "type": "flow_step", "direction": "forward", "weight": 0.3 },
+    { "source": "flow:inspect-runtime-debug", "target": "step:inspect-runtime-debug:capture-runtime-and-path-info", "type": "flow_step", "direction": "forward", "weight": 0.5 },
+    { "source": "flow:inspect-runtime-debug", "target": "step:inspect-runtime-debug:detect-token-file-presence", "type": "flow_step", "direction": "forward", "weight": 0.8 },
+    { "source": "flow:inspect-runtime-debug", "target": "step:inspect-runtime-debug:emit-debug-output", "type": "flow_step", "direction": "forward", "weight": 1.0 },
+
+    { "source": "domain:runtime-bootstrap-authentication", "target": "domain:anthropic-messages-proxy", "type": "cross_domain", "direction": "forward", "description": "Startup and auth populate githubToken, copilotToken, account type, and model cache consumed by the /v1/messages routing path.", "weight": 0.8 },
+    { "source": "domain:runtime-bootstrap-authentication", "target": "domain:openai-compatible-proxy", "type": "cross_domain", "direction": "forward", "description": "Chat-completions routing depends on the same runtime token state and cached model inventory loaded during startup.", "weight": 0.8 },
+    { "source": "domain:runtime-bootstrap-authentication", "target": "domain:token-accounting", "type": "cross_domain", "direction": "forward", "description": "Token counting reuses configured Anthropic credentials and model metadata initialized from runtime configuration and bootstrap.", "weight": 0.6 },
+    { "source": "domain:request-governance", "target": "domain:anthropic-messages-proxy", "type": "cross_domain", "direction": "forward", "description": "Rate limiting and manual approval run before Anthropic-compatible requests are forwarded upstream.", "weight": 0.8 },
+    { "source": "domain:request-governance", "target": "domain:openai-compatible-proxy", "type": "cross_domain", "direction": "forward", "description": "The same governance controls guard OpenAI-compatible chat-completions requests.", "weight": 0.8 },
+    { "source": "domain:anthropic-messages-proxy", "target": "domain:token-accounting", "type": "cross_domain", "direction": "forward", "description": "Both domains share Anthropic payload semantics, model resolution rules, and Claude-specific token/effort behaviors.", "weight": 0.6 },
+    { "source": "domain:usage-and-diagnostics", "target": "domain:runtime-bootstrap-authentication", "type": "cross_domain", "direction": "forward", "description": "Usage and debug tooling inspect persisted token files, runtime paths, and authenticated Copilot session state created by bootstrap/auth flows.", "weight": 0.6 }
+  ],
+  "layers": [],
+  "tour": []
+}

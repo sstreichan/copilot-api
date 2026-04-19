@@ -111,6 +111,52 @@ describe("router state helpers", () => {
     expect(state.sessionBindings.get("session-1:atlas:gpt-4.1")).toBe(4142)
   })
 
+  test("pickPort excludes cooled ports and rebalances sticky binding", () => {
+    const state = createState()
+    state.modelToPorts.set("gpt-4.1", [4141, 4142])
+    state.sessionBindings.set("session-1:atlas:gpt-4.1", 4141)
+    state.portCooldownUntil.set(
+      4141,
+      new Date("2026-03-13T00:01:00.000Z").getTime(),
+    )
+
+    const result = pickPort(state, {
+      sessionId: "session-1",
+      agent: "atlas",
+      model: "gpt-4.1",
+      nowMs: new Date("2026-03-13T00:00:00.000Z").getTime(),
+    })
+
+    expect(result).toEqual({
+      port: 4142,
+      reason: "rebalance",
+      bindingKey: "session-1:atlas:gpt-4.1",
+    })
+    expect(state.sessionBindings.get("session-1:atlas:gpt-4.1")).toBe(4142)
+  })
+
+  test("pickPort returns null when every model candidate is cooling", () => {
+    const state = createState()
+    state.modelToPorts.set("gpt-4.1", [4141, 4142])
+    state.portCooldownUntil.set(
+      4141,
+      new Date("2026-03-13T00:01:00.000Z").getTime(),
+    )
+    state.portCooldownUntil.set(
+      4142,
+      new Date("2026-03-13T00:01:30.000Z").getTime(),
+    )
+
+    expect(
+      pickPort(state, {
+        sessionId: "session-1",
+        agent: "atlas",
+        model: "gpt-4.1",
+        nowMs: new Date("2026-03-13T00:00:00.000Z").getTime(),
+      }),
+    ).toBeNull()
+  })
+
   test("recordRoute trims history, counts models, and feeds status payload", () => {
     const state = createState()
     state.portToModels.set(4141, ["gpt-4.1"])
@@ -141,7 +187,27 @@ describe("router state helpers", () => {
       healthy: true,
       requestCounts: { "gpt-4.1": 201 },
       lastActive: "t-200",
+      cooldownUntil: null,
+      remainingCooldownMs: 0,
+      upstreamRetryAfter: null,
     })
+  })
+
+  test("getStatusPayload exposes cooldownUntil, remainingCooldownMs, and upstreamRetryAfter", () => {
+    const state = createState()
+    const cooldownUntilMs = Date.now() + 5000
+    state.portCooldownUntil.set(4141, cooldownUntilMs)
+    state.portCooldownRetryAfter.set(4141, "30187")
+
+    const payload = getStatusPayload(state)
+    const alpha = payload.instances.find((instance) => instance.port === 4141)
+
+    expect(alpha).toBeDefined()
+    if (!alpha) throw new Error("unreachable")
+    expect(alpha.cooldownUntil).toBe(new Date(cooldownUntilMs).toISOString())
+    expect(alpha.remainingCooldownMs).toBeGreaterThan(0)
+    expect(alpha.remainingCooldownMs).toBeLessThanOrEqual(5000)
+    expect(alpha.upstreamRetryAfter).toBe("30187")
   })
 
   test("clearRouteHistory and clearSessionBindings reset mutable state", () => {
