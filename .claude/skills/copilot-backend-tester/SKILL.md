@@ -34,14 +34,27 @@ COPILOT_TOKEN=$(curl -s http://localhost:4141/token | jq -r '.token')
 Authorization: Bearer $COPILOT_TOKEN
 content-type: application/json
 copilot-integration-id: vscode-chat
-editor-version: vscode/1.99.0
-editor-plugin-version: copilot-chat/0.25.2025012301
-user-agent: GitHubCopilotChat/0.25.2025012301
+editor-version: vscode/<VS_CODE_VERSION>
+editor-plugin-version: copilot-chat/<COPILOT_VERSION>
+user-agent: GitHubCopilotChat/<COPILOT_VERSION>
 openai-intent: conversation-agent
-x-github-api-version: 2025-04-01
+x-github-api-version: <API_VERSION>
 X-Initiator: agent|user
 x-request-id: <uuid>
 ```
+
+在本仓库当前代码（`src/lib/api-config.ts`）里，默认组合如下：
+
+- `COPILOT_VERSION = 0.44.1`
+- `editor-version = vscode/${state.vsCodeVersion}`，而 `state.vsCodeVersion` 默认来自 `src/services/get-vscode-version.ts` 的 fallback `1.116.0`
+- `x-github-api-version` 对聊天主链路使用 `2025-10-01`
+
+脚本已内置同样默认值，并支持环境变量覆盖：
+
+- `COPILOT_VERSION`
+- `VSCODE_VERSION`
+- `COPILOT_API_VERSION`（messages/chat）
+- `AUTO_API_VERSION`（auto session/intent）
 
 `X-Initiator` 对 premium 模型（Opus 等）必须设为 `agent`，否则可能被拒绝。
 
@@ -76,11 +89,141 @@ bash scripts/test-chat-completions.sh gpt-5
 bash scripts/test-chat-completions.sh gpt-5-mini --stream
 ```
 
+### test-auto-route.sh
+
+测试 Auto 两段式路由（`/models/session` → `/models/session/intent`）并可选发送最终请求：
+
+```bash
+# individual：查看 Auto 最终会选哪个模型，并验证是否真的回文本
+bash scripts/test-auto-route.sh --prompt "Reply with exactly: hi"
+
+# business：走 business 域名测试同一流程
+bash scripts/test-auto-route.sh --business --proxy-url http://localhost:4142 --prompt "Reply with exactly: hi"
+
+# 只看 session/intent，不发最终请求
+bash scripts/test-auto-route.sh --skip-final --prompt "Explain distributed transactions"
+```
+
 ## 查看可用模型
 
 ```bash
 curl -s http://localhost:4141/v1/models | jq '.data[].id'
 ```
+
+## Auto 模型探针
+
+当用户问「Auto 最后会解析到哪个模型」「Auto 还能不能说话」「某实例 Auto 是否仍可用」时，不要直接把 `model` 设成 `auto` 去打 `/v1/messages` 或 `/chat/completions`。后端通常会把字面 `model: "auto"` 视为 `model_not_supported`。正确方法是走 Auto 自己的两段式后端链路，再按同一次解析结果发最终请求。
+
+### 适用场景
+
+- 验证 Auto 当前会解析到哪个真实模型
+- 验证某实例在部分显式模型 rate limit 后，Auto 是否仍可工作
+- 对比 individual / business 账户下 Auto 的候选模型与最终路由结果
+- 调试代理是否把 Auto 当成字面模型错误下发
+
+### Auto 路线概览
+
+1. 先获取 Copilot token（仍然通过本地代理 `/token`）
+2. 调 `POST /models/session`，body 使用 `{"auto_mode":{"model_hints":["auto"]}}`
+3. 从响应中读取：
+   - `available_models`
+   - `selected_model`
+   - `session_token`
+4. 调 `POST /models/session/intent`，必须带 `Copilot-Session-Token: <session_token>`
+5. 从 intent 响应中读取：
+   - `chosen_model`
+   - `candidate_models`
+   - `predicted_label`
+6. 再按 `chosen_model` 实际支持的 endpoint 发最终请求，验证是否真的能回文本
+
+### 端点与版本要求
+
+| 用途 | individual | business | 备注 |
+|------|------------|----------|------|
+| Auto session | `https://api.individual.githubcopilot.com/models/session` | `https://api.business.githubcopilot.com/models/session` | `POST` |
+| Auto intent | `https://api.individual.githubcopilot.com/models/session/intent` | `https://api.business.githubcopilot.com/models/session/intent` | `POST` |
+
+**额外要求：**
+
+- `x-github-api-version` 对 Auto 端点应使用 `2025-07-16` 或更高（脚本默认 `AUTO_API_VERSION=2025-07-16`）
+- `/models/session/intent` 必须带有效 `Copilot-Session-Token`
+- individual token 打 business 域名、或 business token 打 individual 域名，可能出现 `421 Misdirected Request`
+
+### 手动探针模板
+
+#### 第一步：session
+
+```bash
+COPILOT_TOKEN=$(curl -s http://localhost:4141/token | jq -r '.token')
+
+curl -s https://api.individual.githubcopilot.com/models/session \
+  -H "Authorization: Bearer $COPILOT_TOKEN" \
+  -H "content-type: application/json" \
+  -H "copilot-integration-id: vscode-chat" \
+  -H "editor-version: vscode/${VSCODE_VERSION:-1.116.0}" \
+  -H "editor-plugin-version: copilot-chat/${COPILOT_VERSION:-0.44.1}" \
+  -H "user-agent: GitHubCopilotChat/${COPILOT_VERSION:-0.44.1}" \
+  -H "openai-intent: conversation-agent" \
+  -H "x-github-api-version: ${AUTO_API_VERSION:-2025-07-16}" \
+  -H "X-Initiator: agent" \
+  -H "x-request-id: test-auto-session" \
+  -d '{"auto_mode":{"model_hints":["auto"]}}' | jq .
+```
+
+#### 第二步：intent
+
+```bash
+SESSION_TOKEN='<from /models/session response>'
+AVAILABLE_MODELS='["gpt-5.3-codex","gpt-4.1"]'
+PROMPT='Reply with exactly: hi'
+
+curl -s https://api.individual.githubcopilot.com/models/session/intent \
+  -H "Authorization: Bearer $COPILOT_TOKEN" \
+  -H "content-type: application/json" \
+  -H "copilot-integration-id: vscode-chat" \
+  -H "editor-version: vscode/${VSCODE_VERSION:-1.116.0}" \
+  -H "editor-plugin-version: copilot-chat/${COPILOT_VERSION:-0.44.1}" \
+  -H "user-agent: GitHubCopilotChat/${COPILOT_VERSION:-0.44.1}" \
+  -H "openai-intent: conversation-agent" \
+  -H "x-github-api-version: ${AUTO_API_VERSION:-2025-07-16}" \
+  -H "X-Initiator: agent" \
+  -H "Copilot-Session-Token: $SESSION_TOKEN" \
+  -H "x-request-id: test-auto-intent" \
+  -d "{\"prompt\":\"$PROMPT\",\"available_models\":$AVAILABLE_MODELS,\"turn_number\":1,\"prompt_char_count\":${#PROMPT}}" | jq .
+```
+
+### 如何发最终请求
+
+不要把最终请求写成 `model: "auto"`。应当读取 `chosen_model`，然后按模型支持的 API 发请求：
+
+- `claude-*` → 优先 `/v1/messages`
+- `gpt-4.1`, `gpt-4o` → 常见是 `/chat/completions`
+- `gpt-5.*`, `gpt-5.*-codex` → 常见是 `/v1/responses`
+
+仍建议先用 `/v1/models` 或现有兼容层元数据确认 `supported_endpoints`，不要只凭命名猜测。
+
+最终请求最好继续带同一个 `Copilot-Session-Token`，这样更接近 Auto 在客户端里的真实链路。
+
+### 结果解读
+
+- `selected_model`：session 阶段初始选择，不一定等于最终模型
+- `chosen_model`：intent/router 阶段最终选中的模型，更接近真正会被发送的模型
+- `candidate_models`：router 给出的候选集，可用来判断 prompt 是否触发了 reasoning 路由
+
+如果目标是判断「Auto 最后会发哪个模型」，优先看 `chosen_model`；如果目标是判断「Auto 当前默认会先考虑谁」，可以同时看 `selected_model`。
+
+### 文本输出验证
+
+如果目标不是只看路由，而是确认 Auto 是否仍能“说话”，需要在上面两步之后继续发最终聊天请求，并抽取文本：
+
+- `/v1/messages`：通常从 `content[].text` 抽正文
+- `/chat/completions`：通常从 `choices[0].message.content` 抽正文
+- `/v1/responses`：不要只看顶层字段；应遍历 `output[]`，在 `type == "message"` 的项里继续遍历 `content[]`，提取 `type == "output_text"` 的文本
+
+若 `/v1/responses` 返回 `200` 但文本为空，先检查是否命中了：
+
+- `max_output_tokens` 太小，响应里出现 `incomplete_details`
+- 解析逻辑只看了顶层，没有向下遍历 `output[].content[]`
 
 ## 验证新功能流程
 
@@ -93,6 +236,9 @@ curl -s http://localhost:4141/v1/models | jq '.data[].id'
 - `model_not_supported` — 模型名错了，用 `/v1/models` 确认正确 ID
 - `invalid_request_error` — 参数被拒，看 error message 里的具体说明
 - `budget_tokens: Input should be >= 1024` — 手动 thinking 的最低限制
+- `Missing Copilot-Session-Token header` — `/models/session/intent` 少了 session token
+- `Invalid Copilot-Session-Token` — session token 伪造、过期或与当前账户不匹配
+- `421 Misdirected Request` — 账户类型与后端域名不匹配，检查 individual / business 分流
 
 ---
 

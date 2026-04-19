@@ -13,6 +13,12 @@ PROXY_URL="${COPILOT_PROXY_URL:-http://localhost:4141}"
 MODEL="${1:-claude-opus-4.6}"
 shift || true
 
+COPILOT_VERSION="${COPILOT_VERSION:-0.44.1}"
+VSCODE_VERSION="${VSCODE_VERSION:-1.116.0}"
+COPILOT_API_VERSION="${COPILOT_API_VERSION:-2025-10-01}"
+EDITOR_PLUGIN_VERSION="copilot-chat/${COPILOT_VERSION}"
+USER_AGENT="GitHubCopilotChat/${COPILOT_VERSION}"
+
 ADAPTIVE=false
 EFFORT=""
 STREAM=false
@@ -79,11 +85,11 @@ HEADERS=(
   -H "Authorization: Bearer $COPILOT_TOKEN"
   -H "content-type: application/json"
   -H "copilot-integration-id: vscode-chat"
-  -H "editor-version: vscode/1.99.0"
-  -H "editor-plugin-version: copilot-chat/0.25.2025012301"
-  -H "user-agent: GitHubCopilotChat/0.25.2025012301"
+  -H "editor-version: vscode/${VSCODE_VERSION}"
+  -H "editor-plugin-version: ${EDITOR_PLUGIN_VERSION}"
+  -H "user-agent: ${USER_AGENT}"
   -H "openai-intent: conversation-agent"
-  -H "x-github-api-version: 2025-04-01"
+  -H "x-github-api-version: ${COPILOT_API_VERSION}"
   -H "X-Initiator: $INITIATOR"
   -H "x-request-id: test-$(cat /proc/sys/kernel/random/uuid)"
 )
