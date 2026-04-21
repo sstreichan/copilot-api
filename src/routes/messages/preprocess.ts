@@ -13,10 +13,13 @@ import {
 import { getAnthropicEffortForModel } from "~/services/copilot/create-messages"
 
 import type {
+  AnthropicDocumentBlock,
+  AnthropicImageBlock,
   AnthropicMessage,
   AnthropicMessagesPayload,
   AnthropicTextBlock,
   AnthropicToolResultBlock,
+  AnthropicUserContentBlock,
 } from "./anthropic-types"
 
 export const TOOL_REFERENCE_TURN_BOUNDARY = "Tool loaded."
@@ -25,6 +28,13 @@ const IDE_EXECUTE_CODE_TOOL = "mcp__ide__executeCode"
 const IDE_GET_DIAGNOSTICS_TOOL = "mcp__ide__getDiagnostics"
 const IDE_GET_DIAGNOSTICS_DESCRIPTION =
   "Get language diagnostics from VS Code. Returns errors, warnings, information, and hints for files in the workspace."
+const PDF_FILE_READ_PREFIX = "PDF file read:"
+
+type AnthropicAttachmentBlock = AnthropicImageBlock | AnthropicDocumentBlock
+type IndexedAttachment = {
+  attachment: AnthropicAttachmentBlock
+  order: number
+}
 
 const getCompactCandidateText = (message: AnthropicMessage): string => {
   if (message.role !== "user") {
@@ -131,6 +141,259 @@ const mergeContentWithTexts = (
   return { ...tr, content: [...tr.content, ...textBlocks] }
 }
 
+const mergeContentWithAttachments = (
+  tr: AnthropicToolResultBlock,
+  attachments: Array<AnthropicAttachmentBlock>,
+): AnthropicToolResultBlock => {
+  if (typeof tr.content === "string") {
+    return {
+      ...tr,
+      content: [{ type: "text", text: tr.content }, ...attachments],
+    }
+  }
+
+  return {
+    ...tr,
+    content: [...tr.content, ...attachments],
+  }
+}
+
+const isAttachmentBlock = (
+  block: AnthropicUserContentBlock,
+): block is AnthropicAttachmentBlock => {
+  return block.type === "image" || block.type === "document"
+}
+
+const getMergeableToolResultIndices = (
+  toolResults: Array<AnthropicToolResultBlock>,
+): Array<number> => {
+  return toolResults.flatMap((block, index) =>
+    block.is_error || hasToolRef(block) ? [] : [index],
+  )
+}
+
+const mergeAttachmentsIntoToolResults = (
+  toolResults: Array<AnthropicToolResultBlock>,
+  attachmentsByToolResultIndex: Map<number, Array<IndexedAttachment>>,
+): Array<AnthropicToolResultBlock> => {
+  if (attachmentsByToolResultIndex.size === 0) {
+    return toolResults
+  }
+
+  return toolResults.map((block, index) => {
+    const matchedAttachments = attachmentsByToolResultIndex.get(index)
+    if (!matchedAttachments) {
+      return block
+    }
+
+    const orderedAttachments = [...matchedAttachments]
+      .sort((left, right) => left.order - right.order)
+      .map(({ attachment }) => attachment)
+
+    return mergeContentWithAttachments(block, orderedAttachments)
+  })
+}
+
+const assignAttachmentsToToolResults = (
+  target: Map<number, Array<IndexedAttachment>>,
+  attachments: Array<IndexedAttachment>,
+  options: {
+    toolResultIndices: Array<number>
+    fallbackToolResultIndices?: Array<number>
+  },
+): void => {
+  const { toolResultIndices } = options
+  const fallbackToolResultIndices =
+    options.fallbackToolResultIndices ?? toolResultIndices
+
+  if (attachments.length === 0) {
+    return
+  }
+
+  if (
+    toolResultIndices.length > 0
+    && toolResultIndices.length === attachments.length
+  ) {
+    for (const [index, toolResultIndex] of toolResultIndices.entries()) {
+      const currentAttachments = target.get(toolResultIndex)
+      if (currentAttachments) {
+        currentAttachments.push(attachments[index])
+        continue
+      }
+
+      target.set(toolResultIndex, [attachments[index]])
+    }
+    return
+  }
+
+  const lastToolResultIndex = fallbackToolResultIndices.at(-1)
+  if (lastToolResultIndex === undefined) {
+    return
+  }
+
+  const currentAttachments = target.get(lastToolResultIndex)
+  if (currentAttachments) {
+    currentAttachments.push(...attachments)
+    return
+  }
+
+  target.set(lastToolResultIndex, [...attachments])
+}
+
+const startsWithPdfFileRead = (
+  toolResult: AnthropicToolResultBlock,
+): boolean => {
+  if (typeof toolResult.content === "string") {
+    return toolResult.content.startsWith(PDF_FILE_READ_PREFIX)
+  }
+
+  if (toolResult.content.some((block) => block.type === "document")) {
+    return false
+  }
+
+  if (toolResult.content.length === 0) {
+    return false
+  }
+
+  const firstBlock = toolResult.content[0]
+  if (firstBlock.type !== "text") {
+    return false
+  }
+
+  return firstBlock.text.startsWith(PDF_FILE_READ_PREFIX)
+}
+
+const collectMergeableUserContent = (
+  content: Array<AnthropicUserContentBlock>,
+): {
+  toolResults: Array<AnthropicToolResultBlock>
+  textBlocks: Array<AnthropicTextBlock>
+  attachments: Array<IndexedAttachment>
+} | null => {
+  const toolResults: Array<AnthropicToolResultBlock> = []
+  const textBlocks: Array<AnthropicTextBlock> = []
+  const attachments: Array<IndexedAttachment> = []
+
+  for (const [order, block] of content.entries()) {
+    if (block.type === "tool_result") {
+      toolResults.push(block)
+      continue
+    }
+    if (block.type === "text") {
+      textBlocks.push(block)
+      continue
+    }
+    if (isAttachmentBlock(block)) {
+      attachments.push({ attachment: block, order })
+      continue
+    }
+
+    return null
+  }
+
+  return {
+    toolResults,
+    textBlocks,
+    attachments,
+  }
+}
+
+const mergeAttachmentsForToolResults = (
+  toolResults: Array<AnthropicToolResultBlock>,
+  attachments: Array<IndexedAttachment>,
+): Array<AnthropicToolResultBlock> => {
+  if (attachments.length === 0) {
+    return toolResults
+  }
+
+  const documentBlocks = attachments.filter(
+    ({ attachment }) => attachment.type === "document",
+  )
+  const mergeableToolResultIndices = getMergeableToolResultIndices(toolResults)
+  const pdfReadToolResultIndices = mergeableToolResultIndices.filter((index) =>
+    startsWithPdfFileRead(toolResults[index]),
+  )
+
+  const attachmentsByToolResultIndex = new Map<
+    number,
+    Array<IndexedAttachment>
+  >()
+  let remainingAttachments = attachments
+  let countMatchToolResultIndices = mergeableToolResultIndices
+
+  // Match PDF read tool results and documents in order first, then leave any
+  // unmatched documents to the generic fallback path below.
+  if (documentBlocks.length > 0 && pdfReadToolResultIndices.length > 0) {
+    const matchedDocumentCount = Math.min(
+      pdfReadToolResultIndices.length,
+      documentBlocks.length,
+    )
+    const matchedDocuments = documentBlocks.slice(0, matchedDocumentCount)
+    const matchedDocumentOrders = new Set(
+      matchedDocuments.map(({ order }) => order),
+    )
+    const matchedPdfToolResultIndices = pdfReadToolResultIndices.slice(
+      0,
+      matchedDocumentCount,
+    )
+    const matchedPdfToolResultIndexSet = new Set(matchedPdfToolResultIndices)
+
+    assignAttachmentsToToolResults(
+      attachmentsByToolResultIndex,
+      matchedDocuments,
+      {
+        toolResultIndices: matchedPdfToolResultIndices,
+      },
+    )
+    countMatchToolResultIndices = mergeableToolResultIndices.filter(
+      (index) => !matchedPdfToolResultIndexSet.has(index),
+    )
+    remainingAttachments = attachments.filter(
+      ({ attachment, order }) =>
+        attachment.type !== "document" || !matchedDocumentOrders.has(order),
+    )
+  }
+
+  // Everything else keeps the existing count-match / last-tool-result fallback.
+  assignAttachmentsToToolResults(
+    attachmentsByToolResultIndex,
+    remainingAttachments,
+    {
+      toolResultIndices: countMatchToolResultIndices,
+      fallbackToolResultIndices: mergeableToolResultIndices,
+    },
+  )
+
+  return mergeAttachmentsIntoToolResults(
+    toolResults,
+    attachmentsByToolResultIndex,
+  )
+}
+
+const mergeUserMessageContent = (
+  content: Array<AnthropicUserContentBlock>,
+): Array<AnthropicUserContentBlock> | null => {
+  const mergeableContent = collectMergeableUserContent(content)
+  if (!mergeableContent) {
+    return null
+  }
+
+  const { toolResults, textBlocks, attachments } = mergeableContent
+  if (
+    toolResults.length === 0
+    || (textBlocks.length === 0 && attachments.length === 0)
+  ) {
+    return null
+  }
+
+  const mergedToolResults =
+    textBlocks.length === 0 ?
+      toolResults
+    : mergeToolResult(toolResults, textBlocks)
+
+  return mergeAttachmentsForToolResults(mergedToolResults, attachments)
+}
+
 const mergeToolResult = (
   toolResults: Array<AnthropicToolResultBlock>,
   textBlocks: Array<AnthropicTextBlock>,
@@ -177,24 +440,10 @@ export const mergeToolResultForClaude = (
 
     if (msg.role !== "user" || !Array.isArray(msg.content)) continue
 
-    const toolResults: Array<AnthropicToolResultBlock> = []
-    const textBlocks: Array<AnthropicTextBlock> = []
-    let valid = true
-
-    for (const block of msg.content) {
-      if (block.type === "tool_result") {
-        toolResults.push(block)
-      } else if (block.type === "text") {
-        textBlocks.push(block)
-      } else {
-        valid = false
-        break
-      }
+    const mergedContent = mergeUserMessageContent(msg.content)
+    if (mergedContent) {
+      msg.content = mergedContent
     }
-
-    if (!valid || toolResults.length === 0 || textBlocks.length === 0) continue
-
-    msg.content = mergeToolResult(toolResults, textBlocks)
   }
 }
 
@@ -205,7 +454,7 @@ export const sanitizeIdeTools = (payload: AnthropicMessagesPayload): void => {
   }
 
   payload.tools = payload.tools.flatMap((tool) => {
-    if (tool.name === IDE_EXECUTE_CODE_TOOL) {
+    if (tool.name === IDE_EXECUTE_CODE_TOOL && !tool.defer_loading) {
       return []
     }
 
