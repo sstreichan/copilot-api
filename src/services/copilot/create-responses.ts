@@ -135,6 +135,7 @@ export type ResponseInputItem =
 export type ResponseInputContent =
   | ResponseInputText
   | ResponseInputImage
+  | ResponseInputFile
   | Record<string, unknown>
 
 export interface ResponseInputText {
@@ -147,6 +148,13 @@ export interface ResponseInputImage {
   image_url?: string | null
   file_id?: string | null
   detail: "low" | "high" | "auto"
+}
+
+export interface ResponseInputFile {
+  type: "input_file"
+  file_data?: string | null
+  file_id?: string | null
+  filename?: string | null
 }
 
 export interface ResponsesResult {
@@ -415,7 +423,9 @@ export const createResponses = async (
   )
 
   // service_tier is not supported by github copilot
-  payload.service_tier = null
+  payload.service_tier = undefined
+
+  consola.log(`<-- model: ${payload.model}`)
 
   const response = await fetch(`${copilotBaseUrl(state)}/responses`, {
     method: "POST",
