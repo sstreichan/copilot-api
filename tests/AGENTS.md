@@ -27,6 +27,8 @@
 - 不要硬编码 token 计数；用 `expect.any(Number)` 或对行为做区间/结构断言
 - `state` 是共享单例，测试要在 `beforeEach` 里重置相关字段与缓存（例如暗渡之门 cache）
 - telemetry 30% 采样相关断言必须 mock `Math.random()` 或改为结构断言；不要把随机门限当成稳定输出
+- 任何改动若改变了 upstream response 包装方式，测试应同时覆盖 body 与 headers；quota/rate-limit snapshot 这类元数据不能只靠 body 断言间接证明
+- parser/normalizer 遇非法 header 值时，应补回落为 `null` 的测试，而不是只测 happy path
 
 ## Commands
 
@@ -42,3 +44,4 @@ bun test tests/create-messages.test.ts
 - 复制大型 fixture 内容进测试文件；优先放 `tests/fixtures/`
 - 忘记恢复全局状态、fetch mock 或暗渡之门 cache
 - 在 router 测试里断言随机 tie-break 的具体端口号；对 least-loaded 平局必须用集合/相等性断言 sticky 语义
+- 只验证 JSON/SSE body，不验证上游 quota/rate-limit 头是否被继续带出

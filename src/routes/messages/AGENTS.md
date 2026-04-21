@@ -26,6 +26,7 @@
 - `shouldApplyPhase` 从 `extraPrompts` 动态检测 `"## Intermediary updates"` 字符串，不再硬编码模型名
 - `requestId = generateRequestIdFromPayload(...)` 与 `sessionId = getRootSessionId(...)` 必须在三条分支（native / responses / chat）向下透传；不要只在某一路径生成
 - `parseSubagentMarkerFromFirstUser()` 必须在 compact 检测后尽早执行；marker 需传到 native / responses / chat 三条路径
+- 若 service 返回值附着了 upstream response headers，messages 路由必须把它们继续转发给客户端；native/raw SSE 允许保留原 body 语义，但外层响应头仍要经过统一 helper 过滤与改写
 
 ## Project-Specific Rules
 
@@ -55,3 +56,4 @@
 - 调整 native branch 顺序，让 payload 先被 OpenAI/mergeToolResult 逻辑污染
 - 在这里实现上游后端 block 顺序修复；那属于 `create-messages.ts`
 - 把 raw native stream 改成翻译后再输出，破坏上游 SSE 兼容性
+- 用 JSON response helper 生成 native SSE 响应头，导致 `content-type` 漂成 `application/json`

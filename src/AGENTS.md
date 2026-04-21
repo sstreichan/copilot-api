@@ -46,6 +46,7 @@
 - 导入 `src/` 下模块时使用 `~` 别名，不要退回长相对路径
 - 新增 OpenAI-compatible 路由时，通常要同时注册 `/foo` 和 `/v1/foo`
 - `handler.ts` 做分支与格式编排；Copilot 后端 workaround 放在 `services/copilot/*`
+- 上游 response headers 的生命周期现分三层：`services/copilot/*` 附着原始 headers，`lib/response-headers.ts` 做可转发过滤与 JSON/SSE 回包 helper，`routes/*` 消费 attached headers 并决定最终响应头
 - provider-scoped 路由只暴露 `/:provider/v1/messages`、`/:provider/v1/models`；messages count_tokens 在 provider messages 子路由内部处理，不额外挂 `/v1` 兼容别名
 - 全局可变状态只放 `lib/state.ts`
 - 日志统一用 `consola` 或项目 logger helper，不用 `console.log`

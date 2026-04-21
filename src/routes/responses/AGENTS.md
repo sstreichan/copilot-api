@@ -21,6 +21,7 @@
 - 流式 Responses 事件在写回 SSE 前，必须经过 `createStreamIdTracker()` + `fixStreamIds()`；这是 `@ai-sdk/openai` 兼容补丁，不可跳过
 - `hasAgentInitiator()` 只检查最后一个 input item；历史里出现过 assistant 不能把当前用户请求误记为 agent
 - `handleResponses()` 同时承担 stream / non-stream 两条路径；不要拆成第二套 handler 逻辑
+- Responses 路由若拿到 attached upstream headers，则 non-stream 用 `jsonWithForwardedHeaders()`，stream 在开始写事件前先过滤并应用可转发 headers；不能只修 body 不修外层响应头
 
 ## Project-Specific Rules
 
@@ -30,6 +31,7 @@
 - `stream-id-sync.ts` 会在 `response.output_item.added` 缺少 `item.id` 时补造 `oi_*` ID；后续事件必须复用该映射
 - `prompt_cache_key` 缺失时由 `stableSessionKey` 注入；`normalizeResponsesInputForReplay()` 与 `compactInputByLatestCompaction()` 必须在 stream id sync 之前完成
 - `compactInputByLatestCompaction()` 在 messages → responses 路径（`api-flows.ts`）也复用；改语义时两处一并验
+- stream/non-stream 两条路径都要保留上游 quota/rate-limit headers；缺口通常先查 route helper 调用，再查 service 是否附着了 headers
 
 ## Anti-Patterns
 
@@ -37,3 +39,4 @@
 - 在别的路由里复制 `apply_patch` / `web_search` 预处理，造成规则分叉
 - 通过扫描整段历史推断 agent/user，而不是看最后一个 input item
 - 把 Responses 路由的流式收尾逻辑外包给调用者，丢掉本地 `finally`
+- 只在 non-stream 分支转发 upstream headers，遗漏 stream 分支的 quota/rate-limit 可观测性

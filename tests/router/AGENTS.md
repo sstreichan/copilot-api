@@ -19,6 +19,7 @@
 - `createFetchStub()` / `fetchImpl` 注入是 router 测试的标准模式；不要把全局 `fetch` mock 成共享状态
 - dashboard 测试要使用临时 html 文件，并在 `afterEach` 清理；避免污染 `/tmp`
 - `x-oc-provider` 只进入日志/route record，不进入 binding key；测试 sticky key 时只断言 `session:agent:model`
+- 若改动涉及 router 的 quota/rate-limit 可观测性，至少覆盖三件事：`lib.test.ts` 测 parser 容错，`state.test.ts` 测 `headerSnapshot` 出现在 status payload，`proxy.test.ts` 测代理路径会更新 snapshot
 
 ## Project-Specific Rules
 
@@ -31,3 +32,4 @@
 - 用真实网络端口起 router 再测试；当前约定是直接调用 handler / state helpers
 - 在 sticky 测试里把随机平局端口写死
 - 忘记清空 `routeHistory`、`sessionBindings` 或 dashboard 临时文件
+- 只测 requestCounts / binding，不测 `headerSnapshot`，导致 router 新增的 quota 观测能力无回归保护

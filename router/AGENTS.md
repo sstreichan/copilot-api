@@ -87,6 +87,16 @@ bun run typecheck                         # 类型检查
 - `GET /v1/models` —— 将各实例已发现模型去重后并表返回，作 router 视角之模型清册。
   若同名模型在多实例存在，保留 `context_window` 更大的详情对象。
 
+### Upstream Header Snapshots
+
+`router` 今番不但记路由与 binding，也记每个端口最近一次上游 quota/rate-limit 头之快照。
+
+- `lib.ts` 纯解析：`parseUpstreamHeaderSnapshot()` 统一拆解 `x-quota-snapshot-premium_interactions`、`x-usage-ratelimit-session`、`x-usage-ratelimit-weekly`
+- `state.ts` 持状态：`portHeaderSnapshots` 为唯一存放处；代理成功或 429 回包后都要更新该端口 snapshot
+- `discoverModels()` 清模型映射时，也清旧 snapshot，免得 dashboard 留存陈迹
+- `GET /status` 现已包含每个实例的 `headerSnapshot`；dashboard 只负责展示，不负责推断或修复坏值
+- 非法、缺失、越界 header 一律降为 `null`，不要在 `state.ts` 或 `dashboard.html` 里自行脑补默认值
+
 ### Proxy 转发
 
 `proxyTo` 转发时保留原 method 与多数 header，但会删去 `host`；
@@ -128,6 +138,7 @@ Router 只取 `name` 与 `port`；`token` 与可选 `flags`/`accountType` 由 `s
 
 页面本身会展示每实例的 per-model requestCounts、SSE 连通状态，
 又以两枚按钮直击清 history / clear bindings 两道 POST 端点。
+近一版还额外展示 premium/session/weekly snapshot；若此处数值不对，先查 `router/lib.ts` 之解析与 `state.ts` 之更新点，不要先改前端文案。
 
 ### `start.sh`
 
@@ -180,6 +191,7 @@ import type { Instance } from "./lib"      // 类型单独 import type
 | 在 `lib.ts` 中引入状态或 I/O | 纯函数层之洁癖，不可沾染 |
 | 膨胀 `sticky-router.ts` | 装配壳当薄如蝉翼，业务逻辑归 `state.ts` |
 | 把 `x-oc-provider` 纳入 binding key | provider 只记来路，不该打碎 sticky 复用 |
+| 在 `state.ts` / `dashboard.html` 手写 header 解析 | quota/rate-limit 快照之解析须收于 `lib.ts` 纯函数层 |
 | 测试中断言 `pickLeastLoaded` 返回具体端口 | 平局随机，断言会闪烁 |
 | 硬编码 token 或账户信息 | 敏感之物，概不入代码 |
 | `as any` / `@ts-ignore` | 类型当严，不可苟且 |

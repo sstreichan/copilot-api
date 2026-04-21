@@ -24,6 +24,8 @@
 - `isThinkingBlockError` 宽匹配（JSON.stringify + toLowerCase + "signature" 或 "cannot be modified"）触发 strip-thinking retry；项目里没有通用 retry/backoff 框架
 - `api-config.ts` 组装 `X-Interaction-Id` / `X-Agent-Task-Id` / `X-Interaction-Type` 请求头，三个 `create-*` service 共享调用
 - 三个 `create-*` service 各自生成 `modelCallId`（UUID）传入 telemetry，用于单次调用追踪
+- `create-chat-completions.ts`、`create-messages.ts`、`create-responses.ts` 现在都必须附着 upstream response headers，供 route 层最终转发；不要只返回 body / stream 而丢掉原始 headers
+- premium info 与 upstream response headers 是两条并行元数据链：前者走 `attachPremiumInfo()`，后者走 `attachResponseHeaders()`；不要用一个字段偷带另一个概念
 
 ## Native Messages Gotchas
 
@@ -37,3 +39,4 @@
 - 重新引入通用重试掩盖真实上游错误
 - 修改 thinking block 顺序或内容再发给上游后端
 - 直接 hardcode model → effort / capability 映射而不走现有 metadata/config 逻辑
+- 在 service 里把 upstream headers 丢掉，再让 route 层猜测 quota/rate-limit 信息
