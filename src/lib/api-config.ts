@@ -213,7 +213,7 @@ export const copilotHostHeader = (state: State): string | undefined => {
     return undefined
   }
 
-  return originalHost
+  return "api.githubcopilot.com"
 }
 
 export const copilotBaseUrl = (state: State) => {

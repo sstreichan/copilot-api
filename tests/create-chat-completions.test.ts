@@ -10,6 +10,7 @@ import {
 
 import type { ChatCompletionsPayload } from "../src/services/copilot/create-chat-completions"
 
+import { getAttachedResponseHeaders } from "../src/lib/response-headers"
 import { state } from "../src/lib/state"
 import { createChatCompletions } from "../src/services/copilot/create-chat-completions"
 import * as telemetryModule from "../src/services/telemetry/telemetry"
@@ -218,6 +219,11 @@ describe("Interaction headers", () => {
       fetchCalls.every((call) => !call.url.includes("copilot_internal/user")),
     ).toBe(true)
     expect((result as { id: string }).id).toBe("123")
+    expect(
+      getAttachedResponseHeaders(result)?.get(
+        "x-quota-snapshot-premium_interactions",
+      ),
+    ).toBe("ent=300&ov=0.0&ovPerm=false&rem=35.5&rst=2026-04-01T00%3A00%3A00Z")
   })
 })
 

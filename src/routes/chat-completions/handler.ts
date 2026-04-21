@@ -11,6 +11,11 @@ import {
   writeStreamLog,
 } from "~/lib/logger"
 import { checkRateLimit } from "~/lib/rate-limit"
+import {
+  applyForwardableResponseHeaders,
+  getAttachedResponseHeaders,
+  jsonWithForwardedHeaders,
+} from "~/lib/response-headers"
 import { state } from "~/lib/state"
 import { generateRequestIdFromPayload, getUUID, isNullish } from "~/lib/utils"
 import {
@@ -76,10 +81,18 @@ export async function handleCompletion(c: Context) {
       { model: payload.model, chunks: 0, done: true, premium },
       true,
     )
-    return c.json(response)
+    return jsonWithForwardedHeaders(
+      response,
+      getAttachedResponseHeaders(response),
+    )
   }
 
   logger.debug("Streaming response")
+  applyForwardableResponseHeaders(c, getAttachedResponseHeaders(response), {
+    "content-type": null,
+    "cache-control": null,
+    connection: null,
+  })
   return streamSSE(c, async (stream) => {
     let chunkCount = 0
     try {

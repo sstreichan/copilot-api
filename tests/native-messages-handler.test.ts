@@ -9,6 +9,7 @@ import * as configModule from "~/lib/config"
 import * as loggerModule from "~/lib/logger"
 import * as modelsModule from "~/lib/models"
 import * as rateLimitModule from "~/lib/rate-limit"
+import { attachResponseHeaders } from "~/lib/response-headers"
 import { state } from "~/lib/state"
 import {
   getInitiatorFromPayload,
@@ -210,6 +211,7 @@ describe("getInitiatorFromPayload", () => {
   })
 })
 
+// eslint-disable-next-line max-lines-per-function
 describe("native handler", () => {
   const originalNative = state.nativeMessages
   let infoSpy: ReturnType<typeof spyOn<typeof consola, "info">>
@@ -380,5 +382,71 @@ describe("native handler", () => {
     expect(getPremiumInfoSpy).toHaveBeenCalledTimes(1)
 
     writeSpy.mockRestore()
+  })
+
+  test("forwards attached upstream headers on native non-stream response", async () => {
+    createMessagesSpy.mockResolvedValueOnce(
+      attachResponseHeaders(
+        new Response(JSON.stringify({ id: "msg-1" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+        new Headers({
+          "x-usage-ratelimit-session": "rem=5.7&rst=2026-04-21T06%3A35%3A37Z",
+        }),
+      ),
+    )
+
+    const app = new Hono()
+    app.post("/v1/messages", (c) => handleCompletion(c))
+
+    const res = await app.request("/v1/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "claude-opus-4",
+        max_tokens: 1024,
+        messages: [{ role: "user", content: "hi" }],
+      } satisfies AnthropicMessagesPayload),
+    })
+
+    expect(res.status).toBe(200)
+    expect(res.headers.get("x-usage-ratelimit-session")).toBe(
+      "rem=5.7&rst=2026-04-21T06%3A35%3A37Z",
+    )
+  })
+
+  test("forwards attached upstream headers on native stream response", async () => {
+    createMessagesSpy.mockResolvedValueOnce(
+      attachResponseHeaders(
+        createSseResponse([
+          'event: message_start\ndata: {"type":"message_start"}\n\n',
+          'event: message_stop\ndata: {"type":"message_stop"}\n\n',
+        ]),
+        new Headers({
+          "x-usage-ratelimit-weekly": "rem=74.9&rst=2026-04-27T00%3A00%3A00Z",
+        }),
+      ),
+    )
+
+    const app = new Hono()
+    app.post("/v1/messages", (c) => handleCompletion(c))
+
+    const res = await app.request("/v1/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "claude-opus-4",
+        stream: true,
+        max_tokens: 1024,
+        messages: [{ role: "user", content: "hi" }],
+      } satisfies AnthropicMessagesPayload),
+    })
+
+    expect(res.status).toBe(200)
+    expect(res.headers.get("content-type")).toContain("text/event-stream")
+    expect(res.headers.get("x-usage-ratelimit-weekly")).toBe(
+      "rem=74.9&rst=2026-04-27T00%3A00%3A00Z",
+    )
   })
 })

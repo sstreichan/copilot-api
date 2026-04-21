@@ -10,6 +10,7 @@ import {
 } from "bun:test"
 
 import { getAttachedPremiumInfo } from "../src/lib/logger"
+import { getAttachedResponseHeaders } from "../src/lib/response-headers"
 import { state } from "../src/lib/state"
 import { createResponses } from "../src/services/copilot/create-responses"
 import * as telemetryModule from "../src/services/telemetry/telemetry"
@@ -299,6 +300,46 @@ describe("Stream path", () => {
       remaining: 106.5,
       total: 300,
     })
+  })
+
+  test("attaches upstream response headers on non-stream path", async () => {
+    const payload = {
+      model: "gpt-test",
+      input: [{ role: "user" as const, content: "hi" }],
+    }
+
+    const result = await createResponses(payload, {
+      vision: false,
+      initiator: "user",
+    })
+
+    expect(
+      getAttachedResponseHeaders(result)?.get(
+        "x-quota-snapshot-premium_interactions",
+      ),
+    ).toBe("ent=300&ov=0.0&ovPerm=false&rem=35.5&rst=2026-04-01T00%3A00%3A00Z")
+  })
+
+  test("attaches upstream response headers on stream path", async () => {
+    // @ts-expect-error - Mock fetch doesn't implement all fetch properties
+    ;(globalThis as unknown as { fetch: typeof fetch }).fetch =
+      createStreamFetchMock()
+    const payload = {
+      model: "gpt-test",
+      stream: true,
+      input: [{ role: "user" as const, content: "hi" }],
+    }
+
+    const result = await createResponses(payload, {
+      vision: false,
+      initiator: "user",
+    })
+
+    expect(
+      getAttachedResponseHeaders(result)?.get(
+        "x-quota-snapshot-premium_interactions",
+      ),
+    ).toBe("ent=300&ov=0.0&ovPerm=false&rem=35.5&rst=2026-04-01T00%3A00%3A00Z")
   })
 })
 

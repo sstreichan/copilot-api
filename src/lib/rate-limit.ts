@@ -6,7 +6,13 @@ import { HTTPError } from "./error"
 import { sleep } from "./utils"
 
 export async function checkRateLimit(state: State) {
-  if (state.rateLimitSeconds === undefined) return
+  const rateLimitSeconds = state.rateLimitSeconds
+  if (
+    typeof rateLimitSeconds !== "number"
+    || !Number.isFinite(rateLimitSeconds)
+  ) {
+    return
+  }
 
   const now = Date.now()
 
@@ -17,12 +23,12 @@ export async function checkRateLimit(state: State) {
 
   const elapsedSeconds = (now - state.lastRequestTimestamp) / 1000
 
-  if (elapsedSeconds > state.rateLimitSeconds) {
+  if (elapsedSeconds > rateLimitSeconds) {
     state.lastRequestTimestamp = now
     return
   }
 
-  const waitTimeSeconds = Math.ceil(state.rateLimitSeconds - elapsedSeconds)
+  const waitTimeSeconds = Math.ceil(rateLimitSeconds - elapsedSeconds)
 
   if (!state.rateLimitWait) {
     consola.warn(

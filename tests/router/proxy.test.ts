@@ -187,6 +187,7 @@ describe("router discovery and proxy helpers", () => {
   })
 })
 
+// eslint-disable-next-line max-lines-per-function
 describe("router handler cooldown semantics", () => {
   test("router handler sets cooldown on upstream 429 using Retry-After seconds", async () => {
     const state = createState()
@@ -231,6 +232,11 @@ describe("router handler cooldown semantics", () => {
     expect(res.status).toBe(429)
     expect(state.portCooldownUntil.get(4141)).toBe(fixedNowMs + 7000)
     expect(state.portCooldownRetryAfter.get(4141)).toBe("7")
+    expect(state.portHeaderSnapshots.get(4141)).toEqual({
+      premiumUsage: null,
+      sessionRateLimit: null,
+      weeklyRateLimit: null,
+    })
     expect(logs.some((line) => line.includes("cooldown"))).toBe(true)
   })
 
@@ -255,6 +261,11 @@ describe("router handler cooldown semantics", () => {
 
     expect(res.status).toBe(200)
     expect(proxiedPort).toBe("4142")
+    expect(state.portHeaderSnapshots.get(4142)).toEqual({
+      premiumUsage: null,
+      sessionRateLimit: null,
+      weeklyRateLimit: null,
+    })
   })
 
   test("router handler records cooldown on nomodel upstream 429", async () => {
@@ -281,6 +292,47 @@ describe("router handler cooldown semantics", () => {
 
     expect(res.status).toBe(429)
     expect(state.portCooldownUntil.get(4141)).toBe(fixedNowMs + 5000)
+  })
+
+  test("router handler captures upstream quota headers into header snapshot", async () => {
+    const state = createState()
+    state.modelToPorts.set("gpt-4.1", [4141])
+
+    const fetchImpl = createFetchStub(() =>
+      Promise.resolve(
+        new Response("ok", {
+          status: 200,
+          headers: {
+            "x-quota-snapshot-premium_interactions":
+              "ent=300&ov=0.0&ovPerm=false&rem=29.7&rst=2026-05-01T00%3A00%3A00Z",
+            "x-usage-ratelimit-session":
+              "ent=0&ov=0.0&ovPerm=false&rem=5.7&rst=2026-04-21T06%3A35%3A37Z",
+            "x-usage-ratelimit-weekly":
+              "ent=0&ov=0.0&ovPerm=false&rem=74.9&rst=2026-04-27T00%3A00%3A00Z",
+          },
+        }),
+      ),
+    )
+
+    const handler = createRouterHandlerForTest({
+      state,
+      fetchImpl,
+    })
+
+    const res = await handler(createRouterRequest('{"model":"gpt-4.1"}'))
+
+    expect(res.status).toBe(200)
+    expect(state.portHeaderSnapshots.get(4141)).toEqual({
+      premiumUsage: { used: 210.9, total: 300 },
+      sessionRateLimit: {
+        remaining: 5.7,
+        resetAt: "2026-04-21T06:35:37Z",
+      },
+      weeklyRateLimit: {
+        remaining: 74.9,
+        resetAt: "2026-04-27T00:00:00Z",
+      },
+    })
   })
 
   test("router handler returns 503 on nomodel when all instances are cooling", async () => {

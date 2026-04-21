@@ -19,6 +19,11 @@ import {
   writeStreamLog,
 } from "~/lib/logger"
 import { checkRateLimit } from "~/lib/rate-limit"
+import {
+  applyForwardableResponseHeaders,
+  getAttachedResponseHeaders,
+  jsonWithForwardedHeaders,
+} from "~/lib/response-headers"
 import { state } from "~/lib/state"
 import {
   generateRequestIdFromPayload,
@@ -126,35 +131,7 @@ export const handleResponses = async (c: Context) => {
   })
 
   if (isStreamingRequested(payload) && isAsyncIterable(response)) {
-    logger.debug("Forwarding native Responses stream")
-    return streamSSE(c, async (stream) => {
-      let chunkCount = 0
-      const idTracker = createStreamIdTracker()
-
-      try {
-        for await (const chunk of response) {
-          debugJson(logger, "Responses stream chunk:", chunk)
-          chunkCount++
-          const processedData = fixStreamIds(
-            (chunk as { data?: string }).data ?? "",
-            (chunk as { event?: string }).event,
-            idTracker,
-          )
-
-          await stream.writeSSE({
-            id: (chunk as { id?: string }).id,
-            event: (chunk as { event?: string }).event,
-            data: processedData,
-          })
-        }
-      } finally {
-        const premium = await resolvePremiumInfo(response, "responses/stream")
-        writeStreamLog(
-          { model: payload.model, chunks: chunkCount, done: true, premium },
-          true,
-        )
-      }
-    })
+    return handleStreamingResponse(c, response, payload.model)
   }
 
   debugJsonTail(logger, "Forwarding native Responses result:", {
@@ -163,12 +140,54 @@ export const handleResponses = async (c: Context) => {
   })
   const premium = await resolvePremiumInfo(response, "responses/non-stream")
   writeStreamLog({ model: payload.model, chunks: 0, done: true, premium }, true)
-  return c.json(response as ResponsesResult)
+  return jsonWithForwardedHeaders(
+    response as ResponsesResult,
+    getAttachedResponseHeaders(response),
+  )
 }
 
 const isAsyncIterable = <T>(value: unknown): value is AsyncIterable<T> =>
   Boolean(value)
   && typeof (value as AsyncIterable<T>)[Symbol.asyncIterator] === "function"
+
+const handleStreamingResponse = (
+  c: Context,
+  response: AsyncIterable<unknown>,
+  model: string,
+) => {
+  logger.debug("Forwarding native Responses stream")
+  applyForwardableResponseHeaders(c, getAttachedResponseHeaders(response), {
+    "content-type": null,
+    "cache-control": null,
+    connection: null,
+  })
+
+  return streamSSE(c, async (stream) => {
+    let chunkCount = 0
+    const idTracker = createStreamIdTracker()
+
+    try {
+      for await (const chunk of response) {
+        debugJson(logger, "Responses stream chunk:", chunk)
+        chunkCount++
+        const processedData = fixStreamIds(
+          (chunk as { data?: string }).data ?? "",
+          (chunk as { event?: string }).event,
+          idTracker,
+        )
+
+        await stream.writeSSE({
+          id: (chunk as { id?: string }).id,
+          event: (chunk as { event?: string }).event,
+          data: processedData,
+        })
+      }
+    } finally {
+      const premium = await resolvePremiumInfo(response, "responses/stream")
+      writeStreamLog({ model, chunks: chunkCount, done: true, premium }, true)
+    }
+  })
+}
 
 const ensureReasoningEffort = (
   payload: ResponsesPayload,

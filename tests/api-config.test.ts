@@ -42,7 +42,7 @@ describe("copilotBaseUrl", () => {
     }
 
     expect(copilotBaseUrl(state)).toBe("https://api.business.githubcopilot.com")
-    expect(copilotHostHeader(state)).toBe("api.individual.githubcopilot.com")
+    expect(copilotHostHeader(state)).toBe("api.githubcopilot.com")
   })
 
   test("falls back to account type routing when token endpoint is unavailable", () => {
@@ -62,7 +62,7 @@ describe("copilotBaseUrl", () => {
     }
 
     expect(copilotBaseUrl(state)).toBe("https://api.business.githubcopilot.com")
-    expect(copilotHostHeader(state)).toBe("api.enterprise.githubcopilot.com")
+    expect(copilotHostHeader(state)).toBe("api.githubcopilot.com")
   })
 
   test("falls back to enterprise domain override when token endpoint is unavailable", () => {

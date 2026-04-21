@@ -15,6 +15,12 @@ import {
   resolvePremiumInfo,
   writeStreamLog,
 } from "~/lib/logger"
+import {
+  cloneForwardableResponseHeaders,
+  applyForwardableResponseHeaders,
+  getAttachedResponseHeaders,
+  jsonWithForwardedHeaders,
+} from "~/lib/response-headers"
 import { setupPingInterval } from "~/lib/utils"
 import {
   buildErrorEvent,
@@ -98,10 +104,18 @@ export const handleWithChatCompletions = async (
       { model: openAIPayload.model, chunks: 0, done: true, premium },
       true,
     )
-    return c.json(anthropicResponse)
+    return jsonWithForwardedHeaders(
+      anthropicResponse,
+      getAttachedResponseHeaders(response),
+    )
   }
 
   logger.debug("Streaming response from Copilot")
+  applyForwardableResponseHeaders(c, getAttachedResponseHeaders(response), {
+    "content-type": null,
+    "cache-control": null,
+    connection: null,
+  })
   return streamSSE(c, async (stream) => {
     const pingInterval = setupPingInterval(stream)
 
@@ -195,6 +209,11 @@ export const handleWithResponsesApi = async (
 
   if (responsesPayload.stream && isAsyncIterable(response)) {
     logger.debug("Streaming response from Copilot (Responses API)")
+    applyForwardableResponseHeaders(c, getAttachedResponseHeaders(response), {
+      "content-type": null,
+      "cache-control": null,
+      connection: null,
+    })
     return streamSSE(c, (stream) =>
       handleResponsesStream({
         stream,
@@ -221,7 +240,10 @@ export const handleWithResponsesApi = async (
     { model: responsesPayload.model, chunks: 0, done: true, premium },
     true,
   )
-  return c.json(anthropicResponse)
+  return jsonWithForwardedHeaders(
+    anthropicResponse,
+    getAttachedResponseHeaders(response),
+  )
 }
 
 export const handleWithMessagesApi = async (
@@ -254,6 +276,8 @@ export const handleWithMessagesApi = async (
 
   if (anthropicPayload.stream && response.body) {
     logger.debug("Streaming response from Copilot (Messages API)")
+    const responseHeaders =
+      getAttachedResponseHeaders(response) ?? response.headers
 
     const premium = await resolvePremiumInfo(response, "messages/native-stream")
     const countedBody = createNativeStreamBody({
@@ -263,12 +287,9 @@ export const handleWithMessagesApi = async (
       logger,
     })
 
-    const headers: Record<string, string> = Object.fromEntries(
-      response.headers.entries(),
+    const headers = Object.fromEntries(
+      applyNativeStreamResponseHeaders(responseHeaders).entries(),
     )
-    headers["Content-Type"] = "text/event-stream"
-    headers["Cache-Control"] = "no-cache"
-    headers.Connection = "keep-alive"
 
     return c.body(countedBody, response.status as ContentfulStatusCode, headers)
   }
@@ -286,7 +307,10 @@ export const handleWithMessagesApi = async (
     { model: anthropicPayload.model, chunks: 0, done: true, premium },
     true,
   )
-  return c.json(jsonResponse)
+  return jsonWithForwardedHeaders(
+    jsonResponse,
+    getAttachedResponseHeaders(response) ?? response.headers,
+  )
 }
 
 const handleResponsesStream = async (options: {
@@ -356,6 +380,14 @@ const handleResponsesStream = async (options: {
     )
     writeStreamLog({ model, chunks: chunkCount, done: true, premium }, true)
   }
+}
+
+const applyNativeStreamResponseHeaders = (headers: Headers): Headers => {
+  return cloneForwardableResponseHeaders(headers, {
+    "content-type": "text/event-stream",
+    "cache-control": "no-cache",
+    connection: "keep-alive",
+  })
 }
 
 const createNativeStreamBody = (options: {

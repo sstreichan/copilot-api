@@ -88,6 +88,116 @@ export function getHeaderValue(req: Request, name: string): string {
   return value || "_"
 }
 
+export interface UpstreamPremiumUsageSnapshot {
+  used: number
+  total: number
+}
+
+export interface UpstreamRateLimitSnapshot {
+  remaining: number
+  resetAt: string
+}
+
+export interface UpstreamHeaderSnapshot {
+  premiumUsage: UpstreamPremiumUsageSnapshot | null
+  sessionRateLimit: UpstreamRateLimitSnapshot | null
+  weeklyRateLimit: UpstreamRateLimitSnapshot | null
+}
+
+const PREMIUM_QUOTA_SNAPSHOT_HEADER = "x-quota-snapshot-premium_interactions"
+const SESSION_RATELIMIT_HEADER = "x-usage-ratelimit-session"
+const WEEKLY_RATELIMIT_HEADER = "x-usage-ratelimit-weekly"
+
+const parseFiniteNumber = (value: string | null): number | null => {
+  if (value === null) {
+    return null
+  }
+
+  const trimmed = value.trim()
+  if (!trimmed) {
+    return null
+  }
+
+  const parsed = Number(trimmed)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+const parsePremiumUsageSnapshot = (
+  raw: string | null,
+): UpstreamPremiumUsageSnapshot | null => {
+  if (!raw) {
+    return null
+  }
+
+  const params = new URLSearchParams(raw)
+  const total = parseFiniteNumber(params.get("ent"))
+  const remainingPercent = parseFiniteNumber(params.get("rem"))
+  const overage = parseFiniteNumber(params.get("ov"))
+
+  if (
+    total === null
+    || remainingPercent === null
+    || total < 0
+    || remainingPercent < 0
+    || remainingPercent > 100
+    || (overage !== null && overage < 0)
+  ) {
+    return null
+  }
+
+  const used =
+    overage !== null && overage > 0 ?
+      total + overage
+    : total - (total * remainingPercent) / 100
+
+  if (!Number.isFinite(used) || used < 0) {
+    return null
+  }
+
+  return { used, total }
+}
+
+const parseRateLimitSnapshot = (
+  raw: string | null,
+): UpstreamRateLimitSnapshot | null => {
+  if (!raw) {
+    return null
+  }
+
+  const params = new URLSearchParams(raw)
+  const remaining =
+    parseFiniteNumber(params.get("remaining"))
+    ?? parseFiniteNumber(params.get("rem"))
+  const resetAt = params.get("resetAt") ?? params.get("rst")
+
+  if (
+    remaining === null
+    || remaining < 0
+    || !resetAt
+    || Number.isNaN(Date.parse(resetAt))
+  ) {
+    return null
+  }
+
+  return { remaining, resetAt }
+}
+
+export function parseUpstreamHeaderSnapshot(
+  headers: Headers,
+): UpstreamHeaderSnapshot {
+  return {
+    premiumUsage: parsePremiumUsageSnapshot(
+      headers.get(PREMIUM_QUOTA_SNAPSHOT_HEADER),
+    ),
+    sessionRateLimit: parseRateLimitSnapshot(
+      headers.get(SESSION_RATELIMIT_HEADER),
+    ),
+    weeklyRateLimit: parseRateLimitSnapshot(
+      headers.get(WEEKLY_RATELIMIT_HEADER),
+    ),
+  }
+}
+
 export function getBindingKey(
   sessionId: string | null,
   agent: string,

@@ -5,6 +5,7 @@ import {
   getBindingKey,
   getHeaderValue,
   isRecord,
+  parseUpstreamHeaderSnapshot,
   parseInstances,
   parseModelFromBody,
   parseModelIds,
@@ -122,5 +123,76 @@ describe("router/lib pure helpers", () => {
       "session-1:atlas:gpt-4.1",
     )
     expect(getBindingKey(null, "atlas", "gpt-4.1")).toBeNull()
+  })
+
+  test("parseUpstreamHeaderSnapshot reads premium, session, and weekly headers", () => {
+    const result = parseUpstreamHeaderSnapshot(
+      new Headers({
+        "x-quota-snapshot-premium_interactions":
+          "ent=300&ov=0.0&ovPerm=false&rem=29.7&rst=2026-05-01T00%3A00%3A00Z",
+        "x-usage-ratelimit-session":
+          "ent=0&ov=0.0&ovPerm=false&rem=5.7&rst=2026-04-21T06%3A35%3A37Z",
+        "x-usage-ratelimit-weekly":
+          "ent=0&ov=0.0&ovPerm=false&rem=74.9&rst=2026-04-27T00%3A00%3A00Z",
+      }),
+    )
+
+    expect(result).toEqual({
+      premiumUsage: {
+        used: 210.9,
+        total: 300,
+      },
+      sessionRateLimit: {
+        remaining: 5.7,
+        resetAt: "2026-04-21T06:35:37Z",
+      },
+      weeklyRateLimit: {
+        remaining: 74.9,
+        resetAt: "2026-04-27T00:00:00Z",
+      },
+    })
+  })
+
+  test("parseUpstreamHeaderSnapshot tolerates missing or invalid values", () => {
+    expect(
+      parseUpstreamHeaderSnapshot(
+        new Headers({
+          "x-usage-ratelimit-session": "rem=nope&rst=invalid",
+        }),
+      ),
+    ).toEqual({
+      premiumUsage: null,
+      sessionRateLimit: null,
+      weeklyRateLimit: null,
+    })
+  })
+
+  test("parseUpstreamHeaderSnapshot rejects out-of-range premium percentages", () => {
+    expect(
+      parseUpstreamHeaderSnapshot(
+        new Headers({
+          "x-quota-snapshot-premium_interactions":
+            "ent=300&ov=0.0&ovPerm=false&rem=120&rst=2026-05-01T00%3A00%3A00Z",
+        }),
+      ),
+    ).toEqual({
+      premiumUsage: null,
+      sessionRateLimit: null,
+      weeklyRateLimit: null,
+    })
+  })
+
+  test("parseUpstreamHeaderSnapshot rejects negative rate-limit remaining values", () => {
+    expect(
+      parseUpstreamHeaderSnapshot(
+        new Headers({
+          "x-usage-ratelimit-weekly": "rem=-1&rst=2026-04-27T00%3A00%3A00Z",
+        }),
+      ),
+    ).toEqual({
+      premiumUsage: null,
+      sessionRateLimit: null,
+      weeklyRateLimit: null,
+    })
   })
 })

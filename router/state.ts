@@ -1,10 +1,11 @@
-import type { Instance } from "./lib"
+import type { Instance, UpstreamHeaderSnapshot } from "./lib"
 
 import {
   formatError,
   getBindingKey,
   getHeaderValue,
   isRecord,
+  parseUpstreamHeaderSnapshot,
   parseModelFromBody,
   parseModelIds,
   parseModelObjects,
@@ -44,6 +45,7 @@ export interface StatusPayload {
     cooldownUntil: string | null
     remainingCooldownMs: number
     upstreamRetryAfter: string | null
+    headerSnapshot: UpstreamHeaderSnapshot
   }>
   sessionBindings: Record<string, number>
   modelToPorts: Record<string, Array<number>>
@@ -63,6 +65,7 @@ export interface StickyRouterState {
   modelDetails: Map<string, Record<string, unknown>>
   portCooldownUntil: Map<number, number>
   portCooldownRetryAfter: Map<number, string | null>
+  portHeaderSnapshots: Map<number, UpstreamHeaderSnapshot>
 }
 
 export interface RouterHandlerOptions {
@@ -115,7 +118,22 @@ export function createStickyRouterState(
     modelDetails: new Map<string, Record<string, unknown>>(),
     portCooldownUntil: new Map<number, number>(),
     portCooldownRetryAfter: new Map<number, string | null>(),
+    portHeaderSnapshots: new Map<number, UpstreamHeaderSnapshot>(),
   }
+}
+
+const EMPTY_UPSTREAM_HEADER_SNAPSHOT: UpstreamHeaderSnapshot = {
+  premiumUsage: null,
+  sessionRateLimit: null,
+  weeklyRateLimit: null,
+}
+
+export function updateUpstreamHeaderSnapshot(
+  state: StickyRouterState,
+  port: number,
+  headers: Headers,
+) {
+  state.portHeaderSnapshots.set(port, parseUpstreamHeaderSnapshot(headers))
 }
 
 export function getRemainingCooldownMs(
@@ -221,6 +239,9 @@ export function getStatusPayload(
         remainingCooldownMs,
         upstreamRetryAfter:
           remainingCooldownMs > 0 ? (upstreamRetryAfter ?? null) : null,
+        headerSnapshot:
+          state.portHeaderSnapshots.get(instance.port)
+          ?? EMPTY_UPSTREAM_HEADER_SNAPSHOT,
       }
     }),
     sessionBindings: Object.fromEntries(state.sessionBindings),
@@ -351,6 +372,7 @@ export async function discoverModels(
   state.portToModels.clear()
   state.modelToPorts.clear()
   state.modelDetails.clear()
+  state.portHeaderSnapshots.clear()
 
   for (const inst of state.instances) {
     try {
@@ -683,6 +705,7 @@ async function handleNoModelRequest(
     model: "_",
     requestNowMs: request.requestNowMs,
   })
+  updateUpstreamHeaderSnapshot(runtime.state, port, proxied.headers)
 
   return proxied
 }
@@ -750,6 +773,7 @@ async function handleModelRequest(
     model: request.model,
     requestNowMs: request.requestNowMs,
   })
+  updateUpstreamHeaderSnapshot(runtime.state, result.port, proxied.headers)
 
   return proxied
 }

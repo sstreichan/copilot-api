@@ -208,6 +208,11 @@ describe("router handlers", () => {
           cooldownUntil: null,
           remainingCooldownMs: 0,
           upstreamRetryAfter: null,
+          headerSnapshot: {
+            premiumUsage: null,
+            sessionRateLimit: null,
+            weeklyRateLimit: null,
+          },
         },
         {
           name: "beta",
@@ -219,6 +224,11 @@ describe("router handlers", () => {
           cooldownUntil: null,
           remainingCooldownMs: 0,
           upstreamRetryAfter: null,
+          headerSnapshot: {
+            premiumUsage: null,
+            sessionRateLimit: null,
+            weeklyRateLimit: null,
+          },
         },
       ],
       sessionBindings: {},
@@ -547,5 +557,52 @@ describe("dashboard handler", () => {
     expect(rowsHtml).toContain(
       `upstreamRetryAfter: <strong>${alpha.upstreamRetryAfter}</strong>`,
     )
+  })
+
+  test("dashboard html renders upstream header snapshots for premium/session/weekly", async () => {
+    const state = createState()
+    state.portHeaderSnapshots.set(4141, {
+      premiumUsage: { used: 210.9, total: 300 },
+      sessionRateLimit: {
+        remaining: 5.7,
+        resetAt: "2026-04-21T06:35:37Z",
+      },
+      weeklyRateLimit: {
+        remaining: 74.9,
+        resetAt: "2026-04-27T00:00:00Z",
+      },
+    })
+
+    const handler = createDashboardHandler({
+      state,
+      logger: () => {},
+      dashboardFile: Bun.file(dashboardPath),
+    })
+
+    const statusResponse = await handler(
+      new Request("http://localhost/api/status"),
+    )
+    const statusPayloadRaw = await statusResponse.json()
+    expect(isDashboardStatusPayload(statusPayloadRaw)).toBe(true)
+    if (!isDashboardStatusPayload(statusPayloadRaw)) {
+      throw new TypeError("unexpected dashboard status payload")
+    }
+
+    const alpha = statusPayloadRaw.instances.find(
+      (item) => item.name === "alpha",
+    )
+    expect(alpha).toBeDefined()
+    if (!alpha) {
+      throw new TypeError("alpha instance status missing")
+    }
+
+    const dashboardResponse = await handler(new Request("http://localhost/"))
+    const html = await dashboardResponse.text()
+    const scriptContent = extractInlineScript(html)
+    const rowsHtml = renderInstancesFromDashboard([alpha], scriptContent)
+
+    expect(rowsHtml).toContain("alpha(u:210.9/t:300)")
+    expect(rowsHtml).toContain("session: <strong>5.7 rem @")
+    expect(rowsHtml).toContain("weekly: <strong>74.9 rem @")
   })
 })

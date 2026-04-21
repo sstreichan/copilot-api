@@ -246,6 +246,12 @@
       })
     }
 
+    const formatCompactNumber = (value) => {
+      const number = Number(value)
+      if (!Number.isFinite(number)) return '-'
+      return number.toFixed(2).replace(/\.0+$/, '').replace(/(\.\d*[1-9])0+$/, '$1')
+    }
+
     const formatCooldownRemaining = (value) => {
       const totalMs = Number(value || 0)
       if (!Number.isFinite(totalMs) || totalMs <= 0) return '-'
@@ -317,6 +323,13 @@
         const counts = item.requestCounts || {}
         const entries = Object.entries(counts).sort(([, a], [, b]) => b - a)
         const total = entries.reduce((sum, [, count]) => sum + count, 0)
+        const headerSnapshot = item.headerSnapshot || {}
+        const premiumUsage = headerSnapshot.premiumUsage
+        const sessionRateLimit = headerSnapshot.sessionRateLimit
+        const weeklyRateLimit = headerSnapshot.weeklyRateLimit
+        const nameLabel = premiumUsage
+          ? `${item.name}(u:${formatCompactNumber(premiumUsage.used)}/t:${formatCompactNumber(premiumUsage.total)})`
+          : `${item.name}(u:-/t:-)`
         const countsHtml = `
           <div class="total-badge">Total: ${total}</div>
           ${entries.length
@@ -331,11 +344,13 @@
           <div class="model-detail">cooldownLocal: <strong>${fmtLocalDateTime(cooldownUntil)}</strong></div>
           <div class="model-detail">remaining: <strong>${formatCooldownRemaining(remainingCooldownMs)}</strong></div>
           <div class="model-detail">upstreamRetryAfter: <strong>${upstreamRetryAfter}</strong></div>
+          <div class="model-detail">session: <strong>${sessionRateLimit ? formatCompactNumber(sessionRateLimit.remaining) : '-'} rem @ ${sessionRateLimit ? fmtLocalDateTime(sessionRateLimit.resetAt) : '-'}</strong></div>
+          <div class="model-detail">weekly: <strong>${weeklyRateLimit ? formatCompactNumber(weeklyRateLimit.remaining) : '-'} rem @ ${weeklyRateLimit ? fmtLocalDateTime(weeklyRateLimit.resetAt) : '-'}</strong></div>
         `.trim()
         const last = formatRelativeTime(item.lastActive)
         return `
           <tr>
-            <td><strong>${item.name}</strong></td>
+            <td><strong>${nameLabel}</strong></td>
             <td><code>${item.port}</code></td>
             <td><span class="tag ${item.healthy ? 'up' : 'down'}">${item.healthy ? 'up' : 'down'}</span></td>
             <td>${countsHtml}</td>

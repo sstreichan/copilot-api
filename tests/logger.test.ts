@@ -8,6 +8,11 @@ import {
   getAttachedPremiumInfo,
   getPremiumInfoFromHeaders,
 } from "../src/lib/logger"
+import {
+  attachResponseHeaders,
+  cloneForwardableResponseHeaders,
+  getAttachedResponseHeaders,
+} from "../src/lib/response-headers"
 import { state } from "../src/lib/state"
 
 afterEach(() => {
@@ -57,6 +62,47 @@ describe("premium info attachment", () => {
       remaining: 106.5,
       total: 300,
     })
+  })
+})
+
+describe("response header attachment", () => {
+  test("attaches and clones response headers on arbitrary objects", () => {
+    const value = attachResponseHeaders(
+      { ok: true },
+      new Headers({
+        "x-usage-ratelimit-session": "rem=5.7&rst=2026-04-21T06%3A35%3A37Z",
+      }),
+    )
+
+    const attachedHeaders = getAttachedResponseHeaders(value)
+    expect(attachedHeaders?.get("x-usage-ratelimit-session")).toBe(
+      "rem=5.7&rst=2026-04-21T06%3A35%3A37Z",
+    )
+
+    attachedHeaders?.set("x-usage-ratelimit-session", "mutated")
+    expect(
+      getAttachedResponseHeaders(value)?.get("x-usage-ratelimit-session"),
+    ).toBe("rem=5.7&rst=2026-04-21T06%3A35%3A37Z")
+  })
+
+  test("strips hop-by-hop headers while preserving forwardable quota headers", () => {
+    const headers = cloneForwardableResponseHeaders(
+      new Headers({
+        connection: "keep-alive",
+        "content-length": "123",
+        "x-usage-ratelimit-session": "rem=5.7&rst=2026-04-21T06%3A35%3A37Z",
+        "x-usage-ratelimit-weekly": "rem=74.9&rst=2026-04-27T00%3A00%3A00Z",
+      }),
+    )
+
+    expect(headers.get("connection")).toBeNull()
+    expect(headers.get("content-length")).toBeNull()
+    expect(headers.get("x-usage-ratelimit-session")).toBe(
+      "rem=5.7&rst=2026-04-21T06%3A35%3A37Z",
+    )
+    expect(headers.get("x-usage-ratelimit-weekly")).toBe(
+      "rem=74.9&rst=2026-04-27T00%3A00%3A00Z",
+    )
   })
 })
 

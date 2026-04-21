@@ -18,6 +18,7 @@ function createState() {
   ])
 }
 
+// eslint-disable-next-line max-lines-per-function
 describe("router state helpers", () => {
   test("pickPort selects least-loaded port for new bindings", () => {
     const state = createState()
@@ -190,6 +191,11 @@ describe("router state helpers", () => {
       cooldownUntil: null,
       remainingCooldownMs: 0,
       upstreamRetryAfter: null,
+      headerSnapshot: {
+        premiumUsage: null,
+        sessionRateLimit: null,
+        weeklyRateLimit: null,
+      },
     })
   })
 
@@ -208,6 +214,44 @@ describe("router state helpers", () => {
     expect(alpha.remainingCooldownMs).toBeGreaterThan(0)
     expect(alpha.remainingCooldownMs).toBeLessThanOrEqual(5000)
     expect(alpha.upstreamRetryAfter).toBe("30187")
+  })
+
+  test("getStatusPayload exposes upstream header snapshots per instance", () => {
+    const state = createState()
+    state.portHeaderSnapshots.set(4141, {
+      premiumUsage: { used: 210.9, total: 300 },
+      sessionRateLimit: {
+        remaining: 5.7,
+        resetAt: "2026-04-21T06:35:37Z",
+      },
+      weeklyRateLimit: {
+        remaining: 74.9,
+        resetAt: "2026-04-27T00:00:00Z",
+      },
+    })
+
+    const payload = getStatusPayload(state)
+    const alpha = payload.instances.find((instance) => instance.port === 4141)
+
+    expect(alpha?.headerSnapshot).toEqual({
+      premiumUsage: { used: 210.9, total: 300 },
+      sessionRateLimit: {
+        remaining: 5.7,
+        resetAt: "2026-04-21T06:35:37Z",
+      },
+      weeklyRateLimit: {
+        remaining: 74.9,
+        resetAt: "2026-04-27T00:00:00Z",
+      },
+    })
+    expect(
+      payload.instances.find((instance) => instance.port === 4142)
+        ?.headerSnapshot,
+    ).toEqual({
+      premiumUsage: null,
+      sessionRateLimit: null,
+      weeklyRateLimit: null,
+    })
   })
 
   test("clearRouteHistory and clearSessionBindings reset mutable state", () => {

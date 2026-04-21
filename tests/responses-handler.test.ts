@@ -12,6 +12,7 @@ import type {
 import * as configModule from "~/lib/config"
 import * as loggerModule from "~/lib/logger"
 import * as rateLimitModule from "~/lib/rate-limit"
+import { attachResponseHeaders } from "~/lib/response-headers"
 import { state } from "~/lib/state"
 import { generateRequestIdFromPayload, getUUID } from "~/lib/utils"
 import { handleResponses } from "~/routes/responses/handler"
@@ -46,6 +47,11 @@ const createStreamResponse = (
       yield chunk
     }
   })() as ResponsesStream
+
+const attachHeaders = <T extends object>(
+  value: T,
+  headers: Record<string, string>,
+): T => attachResponseHeaders(value, new Headers(headers))
 
 const createApp = () => {
   const app = new Hono()
@@ -421,6 +427,29 @@ describe("handleResponses reasoning effort", () => {
 
     writeSpy.mockRestore()
   })
+
+  test("forwards attached upstream headers on non-stream response", async () => {
+    createResponsesSpy.mockResolvedValueOnce(
+      attachHeaders(structuredClone(responseResult), {
+        "x-usage-ratelimit-session": "rem=5.7&rst=2026-04-21T06%3A35%3A37Z",
+      }),
+    )
+
+    const app = createApp()
+    const res = await app.request("/v1/responses", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "gpt-test",
+        input: [{ role: "user", content: "hi" }],
+      }),
+    })
+
+    expect(res.status).toBe(200)
+    expect(res.headers.get("x-usage-ratelimit-session")).toBe(
+      "rem=5.7&rst=2026-04-21T06%3A35%3A37Z",
+    )
+  })
 })
 
 describe("handleResponses streaming logs", () => {
@@ -569,5 +598,46 @@ describe("handleResponses streaming logs", () => {
     expect(getPremiumInfoSpy).toHaveBeenCalledTimes(1)
 
     writeSpy.mockRestore()
+  })
+
+  test("forwards attached upstream headers on stream response", async () => {
+    createResponsesSpy.mockResolvedValueOnce(
+      attachHeaders(
+        createStreamResponse([
+          {
+            event: "response.completed",
+            data: JSON.stringify({
+              type: "response.completed",
+              response: {
+                id: "resp-1",
+                model: "gpt-test",
+                output: [],
+                output_text: "Hello",
+                status: "completed",
+              },
+            }),
+          },
+        ]),
+        {
+          "x-usage-ratelimit-weekly": "rem=74.9&rst=2026-04-27T00%3A00%3A00Z",
+        },
+      ),
+    )
+
+    const app = createApp()
+    const res = await app.request("/v1/responses", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "gpt-test",
+        stream: true,
+        input: [{ role: "user", content: "hi" }],
+      }),
+    })
+
+    expect(res.status).toBe(200)
+    expect(res.headers.get("x-usage-ratelimit-weekly")).toBe(
+      "rem=74.9&rst=2026-04-27T00%3A00%3A00Z",
+    )
   })
 })

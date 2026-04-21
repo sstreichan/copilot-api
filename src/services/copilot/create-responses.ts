@@ -13,6 +13,7 @@ import {
 } from "~/lib/api-config"
 import { HTTPError } from "~/lib/error"
 import { attachPremiumInfo, getPremiumInfoFromHeaders } from "~/lib/logger"
+import { attachResponseHeaders } from "~/lib/response-headers"
 import { resolveInitiatorWithSmartAgent } from "~/lib/smart-agent"
 import { state } from "~/lib/state"
 import {
@@ -460,9 +461,12 @@ export const createResponses = async (
       finishReason: "stream",
       modelCallId,
     })
-    return attachPremiumInfo(
-      events(response),
-      getPremiumInfoFromHeaders(response.headers),
+    return attachResponseHeaders(
+      attachPremiumInfo(
+        events(response),
+        getPremiumInfoFromHeaders(response.headers),
+      ),
+      response.headers,
     )
   }
 
@@ -479,5 +483,8 @@ export const createResponses = async (
     bytesReceived: serialized.length,
     modelCallId,
   })
-  return attachPremiumInfo(result, getPremiumInfoFromHeaders(response.headers))
+  return attachResponseHeaders(
+    attachPremiumInfo(result, getPremiumInfoFromHeaders(response.headers)),
+    response.headers,
+  )
 }

@@ -13,6 +13,7 @@ import {
 } from "~/lib/api-config"
 import { HTTPError } from "~/lib/error"
 import { attachPremiumInfo, getPremiumInfoFromHeaders } from "~/lib/logger"
+import { attachResponseHeaders } from "~/lib/response-headers"
 import { resolveInitiatorWithSmartAgent } from "~/lib/smart-agent"
 import { state } from "~/lib/state"
 import {
@@ -98,7 +99,10 @@ async function handleOkResponse(
       modelCallId: opts.modelCallId,
       finishReason: "stream",
     })
-    return attachPremiumInfo(events(response), premium)
+    return attachResponseHeaders(
+      attachPremiumInfo(events(response), premium),
+      response.headers,
+    )
   }
   const result = (await response.json()) as ChatCompletionResponse
   trackNonStreamSuccess({
@@ -108,7 +112,10 @@ async function handleOkResponse(
     requestId: opts.requestId,
     modelCallId: opts.modelCallId,
   })
-  return attachPremiumInfo(result, premium)
+  return attachResponseHeaders(
+    attachPremiumInfo(result, premium),
+    response.headers,
+  )
 }
 
 function trackSuccessUiTelemetry(opts: {

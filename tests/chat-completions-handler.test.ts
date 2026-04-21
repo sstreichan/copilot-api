@@ -31,11 +31,34 @@ const fetchMock = mock(() =>
         status: 200,
         headers: {
           "content-type": "application/json",
+          "x-quota-snapshot-premium_interactions":
+            "ent=300&ov=0.0&ovPerm=false&rem=35.5&rst=2026-04-01T00%3A00%3A00Z",
         },
       },
     ),
   ),
 )
+
+const createStreamingFetchMock = () =>
+  mock(() =>
+    Promise.resolve(
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode("data: [DONE]\n\n"))
+            controller.close()
+          },
+        }),
+        {
+          status: 200,
+          headers: {
+            "content-type": "text/event-stream",
+            "x-usage-ratelimit-session": "rem=5.7&rst=2026-04-21T06%3A35%3A37Z",
+          },
+        },
+      ),
+    ),
+  )
 
 const createModels = () => ({
   object: "list" as const,
@@ -117,5 +140,48 @@ describe("chat completions handler", () => {
       },
     })
     expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  test("forwards upstream quota headers on non-stream success", async () => {
+    const app = createApp()
+    const response = await app.request("/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "gpt-test",
+        messages: [{ role: "user", content: "hello" }],
+      }),
+    })
+
+    expect(response.status).toBe(200)
+    expect(response.headers.get("x-quota-snapshot-premium_interactions")).toBe(
+      "ent=300&ov=0.0&ovPerm=false&rem=35.5&rst=2026-04-01T00%3A00%3A00Z",
+    )
+  })
+
+  test("forwards upstream rate-limit headers on stream success", async () => {
+    const streamingFetchMock = createStreamingFetchMock()
+    ;(globalThis as unknown as { fetch: typeof fetch }).fetch =
+      streamingFetchMock as unknown as typeof fetch
+
+    const app = createApp()
+    const response = await app.request("/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "gpt-test",
+        stream: true,
+        messages: [{ role: "user", content: "hello" }],
+      }),
+    })
+
+    expect(response.status).toBe(200)
+    expect(response.headers.get("x-usage-ratelimit-session")).toBe(
+      "rem=5.7&rst=2026-04-21T06%3A35%3A37Z",
+    )
   })
 })
