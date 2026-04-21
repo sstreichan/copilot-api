@@ -1,11 +1,6 @@
 ---
 name: copilot-backend-tester
-description: >
-  直接测试 GitHub Copilot 后端 API，绕过本地代理，验证后端是否支持新参数或功能。
-  触发场景：(1) 验证 Copilot 后端是否支持新 API 参数（如 adaptive thinking、effort），
-  (2) 直接对 Copilot 后端发 /v1/messages 或 /chat/completions 请求，
-  (3) 调试代理和后端之间的请求/响应格式差异，
-  (4) 用户说"测试 copilot 后端"、"curl copilot"、"验证后端支持"、"test copilot backend"。
+description: "直接测试 GitHub Copilot 后端与 usage API。触发场景：验证后端是否支持新参数；直接对 /v1/messages、/chat/completions、/copilot_internal/user 发请求；调试代理与后端的请求/响应差异；用户说‘测试 copilot 后端’、‘curl copilot’、‘验证 usage api’、‘test copilot backend’。"
 ---
 
 # Copilot 后端测试
@@ -19,6 +14,15 @@ description: >
 ```bash
 COPILOT_TOKEN=$(curl -s http://localhost:4141/token | jq -r '.token')
 ```
+
+**注意：上面这个 `COPILOT_TOKEN` 只适用于 Copilot 后端（`/v1/messages`、`/chat/completions`、`/v1/responses`、`/models/session` 等）。**
+
+如果目标是 **usage API**，不要用 `/token` 返回的 Copilot token。`https://api.github.com/copilot_internal/user` 需要的是 **GitHub token**，而且在本项目的本地实例里，最可靠的来源是**运行进程参数里的 `-g <github-token>`**。
+
+实测结论：
+
+- 用 `/token` 返回的 Copilot token 直打 `https://api.github.com/copilot_internal/user` → `401 Bad credentials`
+- 用运行进程参数里的 `-g ghu_...` GitHub token 直打同一端点 → `200 OK`
 
 ## 端点
 
@@ -109,6 +113,58 @@ bash scripts/test-auto-route.sh --skip-final --prompt "Explain distributed trans
 ```bash
 curl -s http://localhost:4141/v1/models | jq '.data[].id'
 ```
+
+## Usage API 探针
+
+当用户要验证 **business vs individual** 在 usage API 上的真实差异，或明确要求“call their real backend usage api”时，目标不是 Copilot 模型后端，而是 GitHub usage 端点：
+
+`https://api.github.com/copilot_internal/user`
+
+### 关键区别
+
+- Copilot 后端（`/v1/messages`、`/chat/completions`、`/v1/responses`）→ 用 `/token` 返回的 `COPILOT_TOKEN`
+- Usage API（`/copilot_internal/user`）→ 用运行进程参数里的 `-g <GitHub token>`
+
+### 如何从运行进程拿 GitHub token
+
+先找到实例 PID 和启动命令：
+
+```bash
+ss -tlnp | grep -E ':4142|:4146'
+ps -eo pid,cmd | grep -E "src/main.ts start .* -p (4142|4146)( |$)" | grep -v grep
+```
+
+输出里会看到类似：
+
+```bash
+44977 bun src/main.ts start -g ghu_xxx -p 4142 -a business -M
+44808 bun src/main.ts start -g ghu_yyy -p 4146 -M -F
+```
+
+这里的 `ghu_xxx` / `ghu_yyy` 才是应该拿去打 usage API 的 token。
+
+### 手动探针模板
+
+```bash
+curl -i -sS https://api.github.com/copilot_internal/user \
+  -H "Authorization: token $GITHUB_TOKEN" \
+  -H "Accept: application/vnd.github+json" \
+  -H "X-GitHub-Api-Version: 2022-11-28"
+```
+
+### 应当观察什么
+
+同时记录 **完整响应头** 与 **完整 body**。重点字段通常包括：
+
+- headers: `content-type`, `cache-control`, `etag`, `x-ratelimit-*`, `x-github-request-id`
+- body: `login`, `access_type_sku`, `copilot_plan`, `organization_login_list`, `organization_list`, `is_mcp_enabled`, `copilotignore_enabled`, `endpoints.*`, `quota_snapshots.*`
+
+### 已验证经验
+
+- business 样本常见 `access_type_sku = copilot_for_business_seat_quota`
+- individual 样本常见 `access_type_sku = monthly_subscriber_quota`
+- business/individual 的 body 差异通常比 headers 大；headers 多为 GitHub REST 通用头
+- 本地 `/usage` 路由只是薄包装，可能不会把上游 GitHub REST headers 原样透给客户端；若用户要求“real backend usage api”，优先直打 `api.github.com`
 
 ## Auto 模型探针
 
@@ -239,6 +295,8 @@ curl -s https://api.individual.githubcopilot.com/models/session/intent \
 - `Missing Copilot-Session-Token header` — `/models/session/intent` 少了 session token
 - `Invalid Copilot-Session-Token` — session token 伪造、过期或与当前账户不匹配
 - `421 Misdirected Request` — 账户类型与后端域名不匹配，检查 individual / business 分流
+- `401 Bad credentials` on `/copilot_internal/user` — 大概率是误用了 `/token` 返回的 Copilot token；改用运行进程参数里的 `-g` GitHub token
+- 只看本地 `/usage`，没看上游 `api.github.com` headers — 若用户明确要“real backend usage api”，不要停在本地包装层
 
 ---
 
