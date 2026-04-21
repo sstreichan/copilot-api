@@ -185,7 +185,7 @@ const resolveAnthropicBetaHeader = (
     // in vscode copilot extension, advanced-tool-use is enabled by default
     // align header with vscode copilot extension
 
-    // will remove append ADVANCED_TOOL_USE_BETA in next github copilot extension version (>0.44.1)
+    // will remove append ADVANCED_TOOL_USE_BETA in next github copilot extension version (>0.44.2)
     const copilotHeaderSet =
       modelSupportsToolSearch(payload.model) ? [ADVANCED_TOOL_USE_BETA] : []
     const headerSet = new Set([...copilotHeaderSet, ...finalFilteredBetas])
@@ -437,6 +437,7 @@ export const createMessages = async (
     )
   }
 
+  consola.log(`<-- model: ${payload.model}`)
   consola.debug("Native Messages API request:", {
     model: payload.model,
     stream: payload.stream,
