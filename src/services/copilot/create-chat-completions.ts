@@ -11,6 +11,7 @@ import {
   prepareForCompact,
   prepareInteractionHeaders,
 } from "~/lib/api-config"
+import { getAutoSessionTokenForModel } from "~/lib/auto-session"
 import { HTTPError } from "~/lib/error"
 import { attachPremiumInfo, getPremiumInfoFromHeaders } from "~/lib/logger"
 import { attachResponseHeaders } from "~/lib/response-headers"
@@ -222,6 +223,11 @@ export const createChatCompletions = async (
   const requestId = headers["x-request-id"]
 
   prepareForCompact(headers, options?.compactType)
+  // 模型命中 Auto 覆盖集合时附加 Copilot-Session-Token
+  const autoToken = await getAutoSessionTokenForModel(payload.model)
+  if (autoToken) {
+    headers["Copilot-Session-Token"] = autoToken
+  }
 
   const start = Date.now()
   trackRequestSent(payload.model, state.accountType, requestId, modelCallId)

@@ -6,6 +6,7 @@ import consola from "consola"
 import { serve, type ServerHandler } from "srvx"
 import invariant from "tiny-invariant"
 
+import { prewarmAutoSession } from "./lib/auto-session"
 import { mergeConfigWithDefaults } from "./lib/config"
 import { formatModelsLog } from "./lib/models-log"
 import { initOpencodeVersion } from "./lib/opencode"
@@ -35,6 +36,11 @@ interface RunServerOptions {
   proxyEnv: boolean
   forceAgent: boolean
   nativeMessages: boolean
+}
+
+const logAvailableModels = () => {
+  const availableModels = state.models?.data ?? []
+  consola.info(formatModelsLog(availableModels))
 }
 
 export async function runServer(options: RunServerOptions): Promise<void> {
@@ -88,9 +94,8 @@ export async function runServer(options: RunServerOptions): Promise<void> {
 
   await setupCopilotToken()
   await cacheModels()
-
-  const availableModels = state.models?.data ?? []
-  consola.info(formatModelsLog(availableModels))
+  await prewarmAutoSession()
+  logAvailableModels()
 
   const serverUrl = `http://localhost:${options.port}`
 
@@ -106,7 +111,7 @@ export async function runServer(options: RunServerOptions): Promise<void> {
       "Select a model to use with Claude Code",
       {
         type: "select",
-        options: availableModels.map((model) => model.id),
+        options: state.models.data.map((model) => model.id),
       },
     )
 
@@ -114,7 +119,7 @@ export async function runServer(options: RunServerOptions): Promise<void> {
       "Select a small model to use with Claude Code",
       {
         type: "select",
-        options: availableModels.map((model) => model.id),
+        options: state.models.data.map((model) => model.id),
       },
     )
 

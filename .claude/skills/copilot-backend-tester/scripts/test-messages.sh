@@ -1,6 +1,6 @@
 #!/bin/bash
 # Test GitHub Copilot /v1/messages endpoint directly
-# Usage: ./test-messages.sh [model] [--adaptive] [--effort LEVEL] [--stream] [--thinking N]
+# Usage: ./test-messages.sh [model] [--adaptive] [--effort LEVEL] [--stream] [--thinking N] [--business] [--proxy-url URL] [--show-headers]
 #
 # Examples:
 #   ./test-messages.sh claude-opus-4.6 --adaptive --effort max
@@ -25,15 +25,20 @@ STREAM=false
 THINKING_BUDGET=""
 PROMPT="What is 2+2? Answer in one word."
 INITIATOR="agent"
+SHOW_HEADERS=false
+COPILOT_BASE="https://api.individual.githubcopilot.com"
 
 while [[ $# -gt 0 ]]; do
   case $1 in
+    --business) COPILOT_BASE="https://api.business.githubcopilot.com"; shift ;;
+    --proxy-url) PROXY_URL="$2"; shift 2 ;;
     --adaptive) ADAPTIVE=true; shift ;;
     --effort) EFFORT="$2"; shift 2 ;;
     --stream) STREAM=true; shift ;;
     --thinking) THINKING_BUDGET="$2"; shift 2 ;;
     --prompt) PROMPT="$2"; shift 2 ;;
     --initiator) INITIATOR="$2"; shift 2 ;;
+    --show-headers) SHOW_HEADERS=true; shift ;;
     *) echo "Unknown option: $1"; exit 1 ;;
   esac
 done
@@ -73,8 +78,6 @@ BODY=$(cat <<ENDJSON
 ENDJSON
 )
 
-COPILOT_BASE="https://api.individual.githubcopilot.com"
-
 echo ""
 echo "=== Request ==="
 echo "$BODY" | jq .
@@ -95,7 +98,23 @@ HEADERS=(
 )
 
 if [ "$STREAM" = true ]; then
-  curl -sN "$COPILOT_BASE/v1/messages" "${HEADERS[@]}" -d "$BODY"
+  HEADER_FILE=$(mktemp)
+  curl -sN -D "$HEADER_FILE" "$COPILOT_BASE/v1/messages" "${HEADERS[@]}" -d "$BODY"
+  if [ "$SHOW_HEADERS" = true ]; then
+    echo ""
+    echo "=== Response Headers ==="
+    cat "$HEADER_FILE"
+  fi
+  rm -f "$HEADER_FILE"
 else
-  curl -s "$COPILOT_BASE/v1/messages" "${HEADERS[@]}" -d "$BODY" | jq .
+  HEADER_FILE=$(mktemp)
+  BODY_FILE=$(mktemp)
+  curl -sS -D "$HEADER_FILE" -o "$BODY_FILE" "$COPILOT_BASE/v1/messages" "${HEADERS[@]}" -d "$BODY"
+  if [ "$SHOW_HEADERS" = true ]; then
+    echo "=== Response Headers ==="
+    cat "$HEADER_FILE"
+    echo ""
+  fi
+  cat "$BODY_FILE" | jq .
+  rm -f "$HEADER_FILE" "$BODY_FILE"
 fi

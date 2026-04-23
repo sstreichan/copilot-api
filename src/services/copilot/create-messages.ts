@@ -15,6 +15,7 @@ import {
   prepareInteractionHeaders,
   prepareMessageProxyHeaders,
 } from "~/lib/api-config"
+import { getAutoSessionTokenForModel } from "~/lib/auto-session"
 import { getReasoningEffortForModel } from "~/lib/config"
 import { HTTPError } from "~/lib/error"
 import { attachPremiumInfo, getPremiumInfoFromHeaders } from "~/lib/logger"
@@ -271,6 +272,34 @@ const buildEnhancedPayload = (
   }
 }
 
+const buildMessagesHeaders = async (
+  payload: AnthropicMessagesPayload,
+  options: CreateMessagesOptions,
+  enableVision: boolean,
+): Promise<Record<string, string>> => {
+  const defaultInitiator = options.initiator ?? "user"
+  const { initiator } = await resolveInitiatorWithSmartAgent(defaultInitiator)
+  const headers: Record<string, string> = {
+    ...copilotHeaders(state, options.requestId, enableVision),
+    "x-initiator": initiator,
+  }
+
+  prepareInteractionHeaders(
+    options.sessionId,
+    Boolean(options.subagentMarker),
+    headers,
+  )
+  prepareForCompact(headers, options.compactType)
+
+  // 模型命中 Auto 覆盖集合时附加 Copilot-Session-Token
+  const autoToken = await getAutoSessionTokenForModel(payload.model)
+  if (autoToken) {
+    headers["Copilot-Session-Token"] = autoToken
+  }
+
+  return headers
+}
+
 const shouldDisableThinkingForToolChoice = (
   payload: AnthropicMessagesPayload,
 ): boolean => {
@@ -376,25 +405,8 @@ export const createMessages = async (
   if (!state.copilotToken) throw new Error("Copilot token not found")
 
   const modelCallId = randomUUID()
-
   const enableVision = hasImageContent(payload)
-
-  // Determine x-initiator value
-  const defaultInitiator = options.initiator ?? "user"
-  const { initiator } = await resolveInitiatorWithSmartAgent(defaultInitiator)
-
-  const headers: Record<string, string> = {
-    ...copilotHeaders(state, options.requestId, enableVision),
-    "x-initiator": initiator,
-  }
-
-  prepareInteractionHeaders(
-    options.sessionId,
-    Boolean(options.subagentMarker),
-    headers,
-  )
-
-  prepareForCompact(headers, options.compactType)
+  const headers = await buildMessagesHeaders(payload, options, enableVision)
 
   const { safetyIdentifier, sessionId } = parseUserIdMetadata(
     payload.metadata?.user_id,

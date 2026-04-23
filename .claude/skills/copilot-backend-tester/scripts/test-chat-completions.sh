@@ -1,6 +1,6 @@
 #!/bin/bash
 # Test GitHub Copilot /chat/completions endpoint directly
-# Usage: ./test-chat-completions.sh [model] [--stream] [--prompt TEXT]
+# Usage: ./test-chat-completions.sh [model] [--stream] [--prompt TEXT] [--business] [--proxy-url URL] [--show-headers]
 #
 # Examples:
 #   ./test-chat-completions.sh gpt-5
@@ -21,12 +21,17 @@ USER_AGENT="GitHubCopilotChat/${COPILOT_VERSION}"
 STREAM=false
 PROMPT="What is 2+2? Answer in one word."
 INITIATOR="agent"
+SHOW_HEADERS=false
+COPILOT_BASE="https://api.individual.githubcopilot.com"
 
 while [[ $# -gt 0 ]]; do
   case $1 in
+    --business) COPILOT_BASE="https://api.business.githubcopilot.com"; shift ;;
+    --proxy-url) PROXY_URL="$2"; shift 2 ;;
     --stream) STREAM=true; shift ;;
     --prompt) PROMPT="$2"; shift 2 ;;
     --initiator) INITIATOR="$2"; shift 2 ;;
+    --show-headers) SHOW_HEADERS=true; shift ;;
     *) echo "Unknown option: $1"; exit 1 ;;
   esac
 done
@@ -51,8 +56,6 @@ BODY=$(cat <<ENDJSON
 ENDJSON
 )
 
-COPILOT_BASE="https://api.individual.githubcopilot.com"
-
 echo ""
 echo "=== Request ==="
 echo "$BODY" | jq .
@@ -73,7 +76,23 @@ HEADERS=(
 )
 
 if [ "$STREAM" = true ]; then
-  curl -sN "$COPILOT_BASE/chat/completions" "${HEADERS[@]}" -d "$BODY"
+  HEADER_FILE=$(mktemp)
+  curl -sN -D "$HEADER_FILE" "$COPILOT_BASE/chat/completions" "${HEADERS[@]}" -d "$BODY"
+  if [ "$SHOW_HEADERS" = true ]; then
+    echo ""
+    echo "=== Response Headers ==="
+    cat "$HEADER_FILE"
+  fi
+  rm -f "$HEADER_FILE"
 else
-  curl -s "$COPILOT_BASE/chat/completions" "${HEADERS[@]}" -d "$BODY" | jq .
+  HEADER_FILE=$(mktemp)
+  BODY_FILE=$(mktemp)
+  curl -sS -D "$HEADER_FILE" -o "$BODY_FILE" "$COPILOT_BASE/chat/completions" "${HEADERS[@]}" -d "$BODY"
+  if [ "$SHOW_HEADERS" = true ]; then
+    echo "=== Response Headers ==="
+    cat "$HEADER_FILE"
+    echo ""
+  fi
+  cat "$BODY_FILE" | jq .
+  rm -f "$HEADER_FILE" "$BODY_FILE"
 fi

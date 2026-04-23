@@ -3,7 +3,7 @@
 # then optionally send the final request using the resolved model.
 #
 # Usage:
-#   ./test-auto-route.sh [--business] [--proxy-url URL] [--prompt TEXT] [--max-output N] [--skip-final]
+#   ./test-auto-route.sh [--business] [--proxy-url URL] [--prompt TEXT] [--max-output N] [--skip-final] [--show-headers]
 #
 # Examples:
 #   ./test-auto-route.sh --prompt "Reply with exactly: hi"
@@ -16,6 +16,7 @@ COPILOT_BASE="https://api.individual.githubcopilot.com"
 PROMPT="Reply with exactly: hi"
 MAX_OUTPUT=256
 SKIP_FINAL=false
+SHOW_HEADERS=false
 
 COPILOT_VERSION="${COPILOT_VERSION:-0.44.1}"
 VSCODE_VERSION="${VSCODE_VERSION:-1.116.0}"
@@ -43,6 +44,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --skip-final)
       SKIP_FINAL=true
+      shift
+      ;;
+    --show-headers)
+      SHOW_HEADERS=true
       shift
       ;;
     *)
@@ -73,12 +78,18 @@ common_headers=(
 )
 
 session_body='{"auto_mode":{"model_hints":["auto"]}}'
-session_json=$(curl -s "$COPILOT_BASE/models/session" \
+SESSION_HEADERS=$(mktemp)
+session_json=$(curl -sS -D "$SESSION_HEADERS" "$COPILOT_BASE/models/session" \
   "${common_headers[@]}" \
   -H "x-request-id: ${REQUEST_ID_BASE}-session" \
   -d "$session_body")
 
 echo "=== Session Response ==="
+if [[ "$SHOW_HEADERS" == "true" ]]; then
+  echo "--- Session Headers ---"
+  cat "$SESSION_HEADERS"
+  echo
+fi
 echo "$session_json" | jq .
 
 session_token=$(echo "$session_json" | jq -r '.session_token')
@@ -97,7 +108,8 @@ intent_body=$(jq -nc \
   --argjson prompt_char_count "$prompt_len" \
   '{prompt: $prompt, available_models: $available_models, turn_number: 1, prompt_char_count: $prompt_char_count}')
 
-intent_json=$(curl -s "$COPILOT_BASE/models/session/intent" \
+INTENT_HEADERS=$(mktemp)
+intent_json=$(curl -sS -D "$INTENT_HEADERS" "$COPILOT_BASE/models/session/intent" \
   "${common_headers[@]}" \
   -H "Copilot-Session-Token: $session_token" \
   -H "x-request-id: ${REQUEST_ID_BASE}-intent" \
@@ -105,6 +117,11 @@ intent_json=$(curl -s "$COPILOT_BASE/models/session/intent" \
 
 echo
 echo "=== Intent Response ==="
+if [[ "$SHOW_HEADERS" == "true" ]]; then
+  echo "--- Intent Headers ---"
+  cat "$INTENT_HEADERS"
+  echo
+fi
 echo "$intent_json" | jq .
 
 chosen_model=$(echo "$intent_json" | jq -r '.chosen_model')
@@ -144,7 +161,8 @@ fi
 
 echo "$final_body" | jq .
 
-final_json=$(curl -s "$final_url" \
+FINAL_HEADERS=$(mktemp)
+final_json=$(curl -sS -D "$FINAL_HEADERS" "$final_url" \
   "${common_headers[@]}" \
   -H "Copilot-Session-Token: $session_token" \
   -H "x-request-id: ${REQUEST_ID_BASE}-final" \
@@ -152,6 +170,11 @@ final_json=$(curl -s "$final_url" \
 
 echo
 echo "=== Final Response ==="
+if [[ "$SHOW_HEADERS" == "true" ]]; then
+  echo "--- Final Headers ---"
+  cat "$FINAL_HEADERS"
+  echo
+fi
 echo "$final_json" | jq .
 
 echo
@@ -176,3 +199,5 @@ echo "$final_json" | jq -r '
       incomplete_reason: .incomplete_details.reason?
     }
   end'
+
+rm -f "$SESSION_HEADERS" "$INTENT_HEADERS" "$FINAL_HEADERS"

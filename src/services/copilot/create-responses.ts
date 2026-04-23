@@ -11,6 +11,7 @@ import {
   prepareForCompact,
   prepareInteractionHeaders,
 } from "~/lib/api-config"
+import { getAutoSessionTokenForModel } from "~/lib/auto-session"
 import { HTTPError } from "~/lib/error"
 import { attachPremiumInfo, getPremiumInfoFromHeaders } from "~/lib/logger"
 import { attachResponseHeaders } from "~/lib/response-headers"
@@ -383,6 +384,17 @@ interface ResponsesRequestOptions {
   compactType?: CompactType
 }
 
+const attachAutoSessionToken = async (
+  headers: Record<string, string>,
+  model: string,
+): Promise<void> => {
+  // 模型命中 Auto 覆盖集合时附加 Copilot-Session-Token
+  const autoToken = await getAutoSessionTokenForModel(model)
+  if (autoToken) {
+    headers["Copilot-Session-Token"] = autoToken
+  }
+}
+
 export const createResponses = async (
   payload: ResponsesPayload,
   {
@@ -413,6 +425,7 @@ export const createResponses = async (
   const actualRequestId = headers["x-request-id"]
 
   prepareForCompact(headers, compactType)
+  await attachAutoSessionToken(headers, payload.model)
 
   const start = Date.now()
   trackRequestSent(

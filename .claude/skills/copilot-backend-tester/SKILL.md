@@ -70,6 +70,12 @@ x-request-id: <uuid>
 
 测试 `/v1/messages`（Anthropic 格式）：
 
+支持：
+- `--business`：切到 `api.business.githubcopilot.com`
+- `--proxy-url URL`：指定本地代理实例（如 `http://localhost:4142`）
+- `--initiator agent|user`：显式设置 `X-Initiator`
+- `--show-headers`：打印完整响应头，便于观察 premium / session / weekly snapshots
+
 ```bash
 # Opus 4.6 adaptive thinking + max effort
 bash scripts/test-messages.sh claude-opus-4.6 --adaptive --effort max
@@ -88,6 +94,12 @@ bash scripts/test-messages.sh claude-opus-4.6 --adaptive --prompt "Explain recur
 
 测试 `/chat/completions`（OpenAI 格式）：
 
+支持：
+- `--business`：切到 `api.business.githubcopilot.com`
+- `--proxy-url URL`：指定本地代理实例
+- `--initiator agent|user`：显式设置 `X-Initiator`
+- `--show-headers`：打印完整响应头，便于观察 quota snapshots
+
 ```bash
 bash scripts/test-chat-completions.sh gpt-5
 bash scripts/test-chat-completions.sh gpt-5-mini --stream
@@ -97,12 +109,21 @@ bash scripts/test-chat-completions.sh gpt-5-mini --stream
 
 测试 Auto 两段式路由（`/models/session` → `/models/session/intent`）并可选发送最终请求：
 
+支持：
+- `--business`：切到 business 后端
+- `--proxy-url URL`：指定本地代理实例
+- `--show-headers`：同时打印 session / intent / final 三段响应头
+- `--skip-final`：只看 session / intent，不发最终请求
+
 ```bash
 # individual：查看 Auto 最终会选哪个模型，并验证是否真的回文本
 bash scripts/test-auto-route.sh --prompt "Reply with exactly: hi"
 
 # business：走 business 域名测试同一流程
 bash scripts/test-auto-route.sh --business --proxy-url http://localhost:4142 --prompt "Reply with exactly: hi"
+
+# 打印三段响应头，观察 session token 与最终 quota snapshots
+bash scripts/test-auto-route.sh --business --proxy-url http://localhost:4142 --prompt "Reply with exactly: hi" --show-headers
 
 # 只看 session/intent，不发最终请求
 bash scripts/test-auto-route.sh --skip-final --prompt "Explain distributed transactions"
@@ -159,7 +180,7 @@ curl -i -sS https://api.github.com/copilot_internal/user \
 - headers: `content-type`, `cache-control`, `etag`, `x-ratelimit-*`, `x-github-request-id`
 - body: `login`, `access_type_sku`, `copilot_plan`, `organization_login_list`, `organization_list`, `is_mcp_enabled`, `copilotignore_enabled`, `endpoints.*`, `quota_snapshots.*`
 
-### 已验证经验
+### 通用判读经验
 
 - business 样本常见 `access_type_sku = copilot_for_business_seat_quota`
 - individual 样本常见 `access_type_sku = monthly_subscriber_quota`
@@ -191,6 +212,66 @@ curl -i -sS https://api.github.com/copilot_internal/user \
    - `candidate_models`
    - `predicted_label`
 6. 再按 `chosen_model` 实际支持的 endpoint 发最终请求，验证是否真的能回文本
+
+### `/models/session` 已验证 schema
+
+以下 schema 只包含当前已验证字段；不要补未见字段。
+
+#### 请求体
+
+```json
+{
+  "auto_mode": {
+    "model_hints": ["auto"]
+  }
+}
+```
+
+#### 已验证请求头
+
+- `Authorization: Bearer <Copilot token>`
+- `content-type: application/json`
+- `copilot-integration-id: vscode-chat`
+- `editor-version: vscode/<VS_CODE_VERSION>`
+- `editor-plugin-version: copilot-chat/<COPILOT_VERSION>`
+- `user-agent: GitHubCopilotChat/<COPILOT_VERSION>`
+- `openai-intent: conversation-agent`
+- `x-github-api-version: 2025-07-16`
+- `X-Initiator: agent`
+- `x-request-id: <uuid>`
+
+#### 已验证响应体字段
+
+```ts
+type ModelsSessionResponse = {
+  available_models: string[]
+  selected_model: string
+  session_token: string
+  discounted_costs?: unknown
+  expires_at?: number
+}
+```
+
+字段说明：
+- `available_models`：已验证存在；不同实例、不同轮次内容或顺序都可能变化
+- `selected_model`：已验证存在；它是 session 阶段的初始选择，不等于最终 `chosen_model`
+- `session_token`：已验证存在；是后续 intent step / final request 可能使用的关键上下文字段
+- `discounted_costs`：已验证在部分样本中存在，但不要假设内部 key 恒定或完整
+- `expires_at`：已验证在部分样本中出现；不要当作 `/models/session` 必返字段
+
+#### 已验证关键响应头
+
+- `content-type: application/json`
+- `copilot-session-token: <JWT>`
+- `x-github-request-id: ...`
+
+#### `/models/session` 字段变体与边界
+
+- `available_models` 是实例相关的；business / individual 样本可不同
+- `available_models` 的顺序不稳定，不要把顺序当作规则
+- `selected_model` 会变，不要把它当作稳定默认模型
+- `session_token` 每轮都会变化
+- `session_token` 不能跨实例复用；跨实例混用应视为无效样本
 
 ### 端点与版本要求
 
@@ -267,6 +348,68 @@ curl -s https://api.individual.githubcopilot.com/models/session/intent \
 - `candidate_models`：router 给出的候选集，可用来判断 prompt 是否触发了 reasoning 路由
 
 如果目标是判断「Auto 最后会发哪个模型」，优先看 `chosen_model`；如果目标是判断「Auto 当前默认会先考虑谁」，可以同时看 `selected_model`。
+
+### session token 约束判读
+
+把 `Copilot-Session-Token` 当作 **Auto 上下文绑定键**，不要把它当作万能通行证。当前通用测试结论应按下面方式理解：
+
+- intent step（`/models/session/intent`）应视为**硬依赖有效 session token**
+  - 不带 → 常见 `Missing Copilot-Session-Token header`
+  - 带无效值 → 常见 `Invalid Copilot-Session-Token`
+- final request step 对 session token 更像**条件依赖**
+  - 不带 token 仍可能成功
+  - 带有效 token 仍可能成功
+  - 带无效 token 常见直接失败
+- token 带来的约束是**实例绑定 / 上下文绑定**的
+  - 不要跨实例复用
+  - 不要假设带了 token 就能随意切到任何模型
+
+测试 final request step 时，至少要覆盖三类对照：
+1. 不带 `Copilot-Session-Token`
+2. 带有效 `Copilot-Session-Token`
+3. 带无效 `Copilot-Session-Token`
+
+如果 final request step 带 token 且换模型失败，更像是“当前 Auto 上下文约束更强”，不要立刻下结论说 endpoint 本身坏了。
+
+### premium / session / weekly snapshot 的通用观察法
+
+对任何 final request，统一记录：
+- `x-quota-snapshot-premium_interactions`
+- `x-usage-ratelimit-session`
+- `x-usage-ratelimit-weekly`
+
+重点不是只记原值，而是比较：
+- 同模型前后是否变化
+- 同 prompt 大小前后是否变化
+- 同 initiator 前后是否变化
+- 同实例与跨实例是否变化
+
+**重要：不要从单次 final request 的 snapshot 直接推断计费公式。**
+
+尤其是 business 样本里的 premium `ov`，应按“延迟刷新、分批更新的累计观测值”来对待，而不是“本次请求的即时精确成本”。
+
+做 premium `ov` 探针时，建议：
+1. 固定 model、prompt、initiator，只改变一个变量
+2. 连续做多次 final request，不要只看单次结果
+3. 需要时在相邻 final request 间加入固定 sleep（如 5 秒）
+4. 对比“无 sleep”与“有 sleep”两组结果
+
+如果 `ov` 只在部分请求后跳变，或 sleep 后更稳定更新，这更像 accounting / snapshot refresh 延迟，而不是字段本身失效。
+
+### `discounted_costs` 的保守判读
+
+当 `/models/session` 返回 `discounted_costs` 时，只能把它当作“与 discount / multiplier 相关的上游信号”。
+
+不要直接把：
+- `discounted_costs = 0.1`
+
+解释成：
+- “单次 final request 的 premium `ov` 一定即时增加 0.1”
+
+更稳的做法是：
+- 先记录 `discounted_costs` 的存在与 key
+- 再通过多轮 final request 的 `ov` 观察，看它是否只构成上游内部 multiplier / discount 提示
+- 若 `ov` 的可见增量受 sleep / 刷新时机影响，就不要把 `discounted_costs` 和单次 `ov` 跳变量做线性绑定
 
 ### 文本输出验证
 
