@@ -77,7 +77,10 @@ export const getCopilotRateLimitUsage = (
   }
 }
 
-export const logCopilotRateLimits = (headers: HeadersLike): void => {
+export const logCopilotRateLimits = (
+  headers: HeadersLike | null | undefined,
+): void => {
+  if (!headers) return
   for (const type of copilotRateLimitTypes) {
     const usage = getCopilotRateLimitUsage(headers, type)
 

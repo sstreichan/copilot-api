@@ -10,6 +10,7 @@ import {
 
 import type { ChatCompletionsPayload } from "../src/services/copilot/create-chat-completions"
 
+import * as autoSession from "../src/lib/auto-session"
 import { getAttachedResponseHeaders } from "../src/lib/response-headers"
 import { state } from "../src/lib/state"
 import { createChatCompletions } from "../src/services/copilot/create-chat-completions"
@@ -69,6 +70,9 @@ describe("Interaction headers", () => {
     trackPanelRequestCalls = 0
     trackGhostTextShownCalls = 0
 
+    spyOn(autoSession, "getAutoSessionTokenForModel").mockResolvedValue(
+      "test-session-token",
+    )
     spyOn(telemetryModule, "trackRequestSent").mockImplementation(() => {})
     spyOn(telemetryModule, "trackResponseSuccess").mockImplementation(() => {})
     spyOn(telemetryModule, "trackResponseError").mockImplementation(() => {})
@@ -246,6 +250,9 @@ describe("modelCallId telemetry alignment", () => {
     state.interactionId = "test-interaction-id"
     state.forceAgent = false
 
+    spyOn(autoSession, "getAutoSessionTokenForModel").mockResolvedValue(
+      "test-session-token",
+    )
     spyOn(telemetryModule, "trackRequestSent").mockImplementation(
       (...args: Parameters<typeof telemetryModule.trackRequestSent>) => {
         capturedModelCallIdFromRequestSent = args[3]
@@ -439,6 +446,9 @@ describe("Initiator detection (last-message role)", () => {
     state.interactionId = "test-interaction-id"
     state.forceAgent = false
 
+    spyOn(autoSession, "getAutoSessionTokenForModel").mockResolvedValue(
+      "test-session-token",
+    )
     spyOn(telemetryModule, "trackRequestSent").mockImplementation(() => {})
     spyOn(telemetryModule, "trackResponseSuccess").mockImplementation(() => {})
     spyOn(telemetryModule, "trackResponseError").mockImplementation(() => {})
