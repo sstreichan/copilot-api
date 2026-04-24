@@ -379,14 +379,25 @@ export async function discoverModels(
       const res = await fetchImpl(`http://localhost:${inst.port}/v1/models`)
       const data: unknown = await res.json()
       const models = parseModelIds(data)
-      state.portToModels.set(inst.port, models)
-      for (const model of models) {
+      const allowlist = inst.allowedModels
+      const filteredModels =
+        allowlist !== undefined && allowlist.length > 0 ?
+          models.filter((model) => allowlist.includes(model))
+        : models
+      state.portToModels.set(inst.port, filteredModels)
+      for (const model of filteredModels) {
         const ports = state.modelToPorts.get(model) || []
         ports.push(inst.port)
         state.modelToPorts.set(model, ports)
       }
       const modelObjects = parseModelObjects(data)
-      for (const obj of modelObjects) {
+      const filteredModelObjects =
+        allowlist !== undefined && allowlist.length > 0 ?
+          modelObjects.filter((obj) =>
+            filteredModels.includes(obj.id as string),
+          )
+        : modelObjects
+      for (const obj of filteredModelObjects) {
         const id = obj.id as string
         const existing = state.modelDetails.get(id)
         if (!existing || getContextWindow(obj) > getContextWindow(existing)) {
@@ -394,7 +405,7 @@ export async function discoverModels(
         }
       }
       logger(
-        `discovered ${inst.name}:${inst.port} → ${models.length} models: ${models.join(", ")}`,
+        `discovered ${inst.name}:${inst.port} → ${filteredModels.length} models: ${filteredModels.join(", ")}`,
       )
     } catch (error) {
       logger(

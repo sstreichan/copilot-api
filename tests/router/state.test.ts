@@ -5,6 +5,7 @@ import {
   clearRouteHistory,
   clearSessionBindings,
   createStickyRouterState,
+  discoverModels,
   getStatusPayload,
   incrementCount,
   pickPort,
@@ -16,6 +17,29 @@ function createState() {
     { name: "alpha", port: 4141 },
     { name: "beta", port: 4142 },
   ])
+}
+
+function createDiscoverModelsFetchStub(
+  payload: unknown,
+): Parameters<typeof discoverModels>[2] {
+  const preconnect: typeof fetch.preconnect = (...args) => {
+    if (typeof fetch.preconnect === "function") {
+      fetch.preconnect(...args)
+      return
+    }
+  }
+
+  return Object.assign(
+    () =>
+      Promise.resolve(
+        new Response(JSON.stringify(payload), {
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    {
+      preconnect,
+    },
+  )
 }
 
 // eslint-disable-next-line max-lines-per-function
@@ -252,6 +276,47 @@ describe("router state helpers", () => {
       sessionRateLimit: null,
       weeklyRateLimit: null,
     })
+  })
+
+  test("discoverModels keeps all discovered models when allowlist is empty", async () => {
+    const state = createStickyRouterState([
+      { name: "company", port: 4142, allowedModels: [] },
+    ])
+    const fetchStub = createDiscoverModelsFetchStub({
+      data: [{ id: "gpt-5.4" }, { id: "gemini-3.1-pro-preview" }],
+    })
+
+    await discoverModels(state, () => {}, fetchStub)
+
+    expect(state.portToModels.get(4142)).toEqual([
+      "gpt-5.4",
+      "gemini-3.1-pro-preview",
+    ])
+  })
+
+  test("discoverModels filters discovered models through non-empty allowlist", async () => {
+    const state = createStickyRouterState([
+      {
+        name: "personal",
+        port: 4141,
+        allowedModels: ["claude-opus-4.7", "claude-sonnet-4.6"],
+      },
+    ])
+    const fetchStub = createDiscoverModelsFetchStub({
+      data: [
+        { id: "claude-opus-4.7", object: "model" },
+        { id: "claude-sonnet-4.6", object: "model" },
+        { id: "gpt-5.4", object: "model" },
+      ],
+    })
+
+    await discoverModels(state, () => {}, fetchStub)
+
+    expect(state.portToModels.get(4141)).toEqual([
+      "claude-opus-4.7",
+      "claude-sonnet-4.6",
+    ])
+    expect(state.modelDetails.has("gpt-5.4")).toBe(false)
   })
 
   test("clearRouteHistory and clearSessionBindings reset mutable state", () => {
