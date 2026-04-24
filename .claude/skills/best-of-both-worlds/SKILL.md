@@ -20,6 +20,24 @@ description: "This skill should be used when the user asks to merge `caozhiyuan/
 
 ## 核心原则
 
+### 分支职责（硬规则）
+
+- `remotes/caozhiyuan/all`：上游来源分支（对方仓库）。
+- `czy-all`（tracking `origin/czy-all`）：本仓库的**镜像/承接分支**，用于保持与 `caozhiyuan/all` 同步，并作为 PR 源头。
+- `dev`：本仓库目标集成分支。
+
+默认目标是：
+
+1. 先把 `caozhiyuan/all` 同步到 `czy-all`（只在 `czy-all` 上操作）
+2. 再把 `czy-all -> dev`
+
+**禁止默认做法：**
+
+- 未经用户明确要求，不得执行 `dev -> czy-all`（例如在 `czy-all` 上 merge `dev`）。
+- 未经用户明确要求，不得把 `czy-all` 当作日常开发分支写入与同步目标无关的提交。
+
+> 解释：`czy-all` 的职责是保持“可从 `caozhiyuan/all` 干净同步”的状态；反向混入 `dev` 会污染同步基线。
+
 1. **保持 tracking 不乱改。** 除非用户明确要求，不要擅自把 `czy-all` 的 upstream 从 `origin/czy-all` 改到别的远端。
 2. **把“拉内容”和“改 tracking”分开。** 需要同步 `caozhiyuan/all` 时，直接 `git pull caozhiyuan all` 或等价操作；不要顺手重写 upstream。
 3. **PR 方向固定。** 这条工作流里，PR 默认是 `czy-all -> dev`。
@@ -40,6 +58,13 @@ description: "This skill should be used when the user asks to merge `caozhiyuan/
 - 工作树是否干净
 - `czy-all` 当前是否继续跟踪 `origin/czy-all`
 - `caozhiyuan/all` 是否可 fetch / pull
+
+再做一次方向检查（必须明确回答）：
+
+- 本次是否在执行 `czy-all -> dev`？
+- 当前操作是否会把 `dev` 反向写入 `czy-all`？
+
+若第二问答案是“会”，且用户未明确要求，则应立即停止并改回正确流程。
 
 推荐命令：
 
@@ -200,6 +225,8 @@ czy-all 侧：
 - 不看 diff 就直接 `ours` / `theirs`
 - 因为冲突多就一次性全文件接受单边
 - 把“跟踪谁”与“拉谁的内容”混为一谈
+- 未经用户明确要求，在 `czy-all` 上执行 `merge dev` / `rebase dev` 之类反向写入
+- 把 `czy-all` 当作长期开发分支，写入与“同步 caozhiyuan/all + 提 PR 到 dev”无关的改动
 - 没有先 push `origin/czy-all` 就开 PR
 - PR 摘要不看实际提交和 diff，胡乱概括
 
