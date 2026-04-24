@@ -12,6 +12,7 @@ import {
   prepareInteractionHeaders,
 } from "~/lib/api-config"
 import { getAutoSessionTokenForModel } from "~/lib/auto-session"
+import { logCopilotRateLimits } from "~/lib/copilot-rate-limit"
 import { HTTPError } from "~/lib/error"
 import { attachPremiumInfo, getPremiumInfoFromHeaders } from "~/lib/logger"
 import { attachResponseHeaders } from "~/lib/response-headers"
@@ -239,6 +240,8 @@ export const createChatCompletions = async (
     headers,
     body: JSON.stringify(payload),
   })
+
+  logCopilotRateLimits(response.headers)
 
   if (response.ok) {
     trackSuccessUiTelemetry({ requestId, modelCallId, start })

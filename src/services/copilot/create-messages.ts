@@ -17,6 +17,7 @@ import {
 } from "~/lib/api-config"
 import { getAutoSessionTokenForModel } from "~/lib/auto-session"
 import { getReasoningEffortForModel } from "~/lib/config"
+import { logCopilotRateLimits } from "~/lib/copilot-rate-limit"
 import { HTTPError } from "~/lib/error"
 import { attachPremiumInfo, getPremiumInfoFromHeaders } from "~/lib/logger"
 import { attachResponseHeaders } from "~/lib/response-headers"
@@ -474,6 +475,8 @@ export const createMessages = async (
     }
     throw error
   }
+
+  logCopilotRateLimits(result.headers)
 
   scheduleFeedbackEvents(requestId)
   schedulePostResponseEvents(requestId, payload.model)

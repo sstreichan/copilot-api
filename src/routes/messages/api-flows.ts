@@ -430,9 +430,14 @@ const createNativeStreamBody = (options: {
       const parts = buffer.split("\n\n")
       buffer = parts.pop() ?? ""
 
-      const newEvents = parts.filter(
-        (eventText) => eventText.trim().length > 0,
-      ).length
+      const newEvents = parts.filter((eventText) => {
+        if (eventText.trim().length === 0) return false
+        const dataLine = eventText
+          .split("\n")
+          .find((l) => l.startsWith("data:"))
+        const data = dataLine ? dataLine.slice(5).trim() : ""
+        return data !== "" && data !== "[DONE]"
+      }).length
       if (newEvents > 0) {
         chunkCount += newEvents
       }
