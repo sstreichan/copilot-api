@@ -1,6 +1,7 @@
 export interface Instance {
   name: string
   port: number
+  allowedModels?: Array<string>
 }
 
 export function readPort(name: string, fallback: number): number {
@@ -36,7 +37,14 @@ export function parseInstances(value: unknown): Array<Instance> {
       return []
     }
 
-    return [{ name, port }]
+    const allowedModels =
+      Array.isArray(entry.allowedModels) ?
+        entry.allowedModels.filter(
+          (model): model is string => typeof model === "string",
+        )
+      : undefined
+
+    return [{ name, port, allowedModels }]
   })
 }
 

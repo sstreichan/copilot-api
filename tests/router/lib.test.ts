@@ -67,6 +67,34 @@ describe("router/lib pure helpers", () => {
     ])
   })
 
+  test("parseInstances returns undefined allowedModels when field is absent", () => {
+    const result = parseInstances([{ name: "company", port: 4142 }])
+
+    expect(result).toEqual([
+      { name: "company", port: 4142, allowedModels: undefined },
+    ])
+  })
+
+  test("parseInstances sanitizes allowedModels to string-only entries", () => {
+    const result = parseInstances([
+      {
+        name: "personal",
+        port: 4141,
+        allowedModels: [
+          "claude-sonnet-4.6",
+          123,
+          null,
+          "gemini-3.1-pro-preview",
+        ],
+      },
+    ])
+
+    expect(result[0]?.allowedModels).toEqual([
+      "claude-sonnet-4.6",
+      "gemini-3.1-pro-preview",
+    ])
+  })
+
   test("parseModelIds extracts ids from OpenAI-style model payloads", () => {
     expect(
       parseModelIds({
