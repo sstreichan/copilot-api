@@ -54,7 +54,7 @@ description: "This skill should be used when the user asks to merge `caozhiyuan/
 
 先确认：
 
-- 当前分支是否是 `czy-all`
+- 当前分支是否是 `dev`
 - 工作树是否干净
 - `czy-all` 当前是否继续跟踪 `origin/czy-all`
 - `caozhiyuan/all` 是否可 fetch / pull
@@ -62,9 +62,10 @@ description: "This skill should be used when the user asks to merge `caozhiyuan/
 再做一次方向检查（必须明确回答）：
 
 - 本次是否在执行 `czy-all -> dev`？
+- 当前操作是否只会临时切到 `czy-all` 做同步，然后回到 `dev`？
 - 当前操作是否会把 `dev` 反向写入 `czy-all`？
 
-若第二问答案是“会”，且用户未明确要求，则应立即停止并改回正确流程。
+若第三问答案是“会”，且用户未明确要求，则应立即停止并改回正确流程。
 
 推荐命令：
 
@@ -75,9 +76,9 @@ git remote -v
 git fetch caozhiyuan
 ```
 
-### 第二步：把 `caozhiyuan/all` 带进 `czy-all`
+### 第二步：临时切到 `czy-all`，把 `caozhiyuan/all` 带进 `czy-all`
 
-在 `czy-all` 上执行同步，但**不要改变 `czy-all` 的 tracking**。
+在 `czy-all` 上执行同步，但**不要改变 `czy-all` 的 tracking**。`czy-all` 只是同步落点，不是默认停留分支；完成这一段后应回到 `dev`。
 
 推荐做法：
 
@@ -96,7 +97,15 @@ git pull --ff-only caozhiyuan all
 git push origin czy-all
 ```
 
-### 第四步：创建 PR（`czy-all -> dev`）
+### 第四步：切回 `dev`
+
+完成 `czy-all` 同步与推送后，默认应切回 `dev`，不要停留在 `czy-all`：
+
+```bash
+git checkout dev
+```
+
+### 第五步：创建 PR（`czy-all -> dev`）
 
 使用 `gh` 创建 PR：
 
@@ -113,9 +122,50 @@ git log --oneline dev..czy-all
 git diff --stat dev...czy-all
 ```
 
+### 第六步：PR 创建后必须继续检查 merge 状态，而不是到此为止
+
+创建 PR 后，必须立即检查：
+
+- 是否存在 merge conflict
+- CI checks 是否通过
+- 是否还需要用户确认执行最终 merge
+
+推荐命令：
+
+```bash
+gh pr view <number> --json mergeable,mergeStateStatus,statusCheckRollup,reviewDecision,url
+```
+
+这里的分支处理规则是：
+
+- **有冲突**：进入后文的逐块冲突流程，并由用户逐块拍板。
+- **无冲突但 checks 失败/未完成**：把失败项或等待项明确告诉用户，不要把“已开 PR”误报成“已完成”。
+- **无冲突且可合并**：明确告诉用户“现在已可执行最终 merge”，并询问是否继续。
+
+### 第七步：得到用户授权后，执行最终 merge 到 `dev`
+
+PR 可合并时，除非用户已明确授权，否则不要擅自完成最终 merge。拿到授权后，再执行：
+
+```bash
+gh pr merge <number> --merge
+```
+
+merge 完成后，还要再次确认：
+
+- PR 已处于 merged 状态
+- 当前分支仍是 `dev`
+- 工作树仍干净
+
 ## 冲突处理：逐块走 “best of both worlds”
 
 如果 PR 出现冲突，按**文件 → 冲突块**逐个处理。
+
+如果 PR **没有**冲突，也不能直接收工。此时仍必须向用户明确汇报：
+
+- 当前 PR 没有冲突
+- 当前 checks / review 状态如何
+- 是否已经具备最终 merge 条件
+- 接下来是“等 checks / 处理阻塞项”还是“请用户确认现在就 merge”
 
 ### 每个冲突块都必须回答这 4 个问题
 
@@ -271,11 +321,13 @@ czy-all 侧：
 
 在结束前，确认：
 
+- 当前本地分支是 `dev`，而不是停留在 `czy-all`
 - `czy-all` 仍然跟踪 `origin/czy-all`
 - `caozhiyuan/all` 的最新内容已经带进本地 `czy-all`
 - `origin/czy-all` 已推送
 - PR 已从 `czy-all` 指向 `dev`
 - 若有冲突，已逐块分析，而不是整边覆盖
+- 若无冲突，已向用户明确汇报 checks / merge 状态，并处理到“等待项已说明”或“最终 merge 已完成”这两个收尾之一
 
 ## 一句话目标
 
