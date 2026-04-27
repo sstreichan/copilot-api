@@ -13,7 +13,7 @@
 | Token lifecycle | `token.ts` | GitHub/Copilot token 获取与刷新；wall-clock 按 token 剩余时间分段重新调度，AbortController 管理生命周期；opencode OAuth 模式复用 GitHub token 并停 refresh loop |
 | Rate limit / approval | `rate-limit.ts`, `approval.ts` | `-r` / `-w` 与手动确认 |
 | Response header forwarding | `response-headers.ts` | 统一附着/提取 upstream headers，剥离 hop-by-hop headers，并提供 JSON/SSE 回包 helper |
-| Logging / debug | `logger.ts`, `debug-logger.ts`, `models-log.ts` | stream log、debug dump、models 输出 |
+| Logging / debug | `logger.ts`, `models-log.ts` | stream log、debug dump、models 输出 |
 | 暗渡之门策略 | `smart-agent.ts` | forceAgent / 配额决断与缓存 |
 | API request config | `api-config.ts` | 统一组装 Copilot headers / host / UA / compact 前处理；含 `prepareForCompact`、`prepareMessageProxyHeaders`、`USER_AGENT`、`COPILOT_VERSION` |
 | Compact 标记 | `compact.ts` | compact request / auto-continue prompt 常量、`compactMessageSections` 与 `CompactType` 字面量联合类型 |

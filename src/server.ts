@@ -9,7 +9,6 @@ import { createAuthMiddleware } from "./lib/request-auth"
 import { traceIdMiddleware } from "./lib/trace"
 import { completionRoutes } from "./routes/chat-completions/route"
 import { embeddingRoutes } from "./routes/embeddings/route"
-import { geminiRouter } from "./routes/generate-content/route"
 import { messageRoutes } from "./routes/messages/route"
 import { modelRoutes } from "./routes/models/route"
 import { providerMessageRoutes } from "./routes/provider/messages/route"
@@ -61,9 +60,6 @@ server.route("/v1/responses", responsesRoutes)
 
 // Anthropic compatible endpoints
 server.route("/v1/messages", messageRoutes)
-
-// Gemini
-server.route("/", geminiRouter)
 
 // Provider scoped Anthropic-compatible endpoints
 server.route("/:provider/v1/messages", providerMessageRoutes)

@@ -1,7 +1,7 @@
 # Project Context
 
 ## Purpose
-Reverse-engineered proxy for GitHub Copilot API that exposes it as OpenAI and Anthropic compatible endpoints. Translates between different API formats (OpenAI, Anthropic, Gemini) and GitHub Copilot's internal API.
+Reverse-engineered proxy for GitHub Copilot API that exposes it as OpenAI and Anthropic compatible endpoints. Translates between different API formats (OpenAI, Anthropic) and GitHub Copilot's internal API.
 
 ## Tech Stack
 - **Runtime**: Bun (v1.3+)
@@ -43,7 +43,7 @@ Reverse-engineered proxy for GitHub Copilot API that exposes it as OpenAI and An
 
 ## Domain Context
 - **GitHub Copilot API**: Proprietary API used by VS Code Copilot extension
-- **Translation**: Converting between Anthropic Messages API, OpenAI Chat Completions, Gemini API
+- **Translation**: Converting between Anthropic Messages API, OpenAI Chat Completions
 - **Streaming**: Server-Sent Events (SSE) for real-time responses
 - **Tool Calls**: Function calling support across different API formats
 - **Responses API**: GitHub's advanced API supporting vision and complex tool use
@@ -65,5 +65,4 @@ Reverse-engineered proxy for GitHub Copilot API that exposes it as OpenAI and An
 - `src/lib/state.ts` - Global application state (SSoT)
 - `src/services/copilot/create-chat-completions.ts` - Central Copilot API caller
 - `src/routes/messages/handler.ts` - Anthropic API translation
-- `src/routes/generate-content/handler.ts` - Gemini API translation
 - `CLAUDE.md` - Comprehensive development guide

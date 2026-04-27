@@ -1,7 +1,7 @@
 
 # copilot-api AGENTS
 
-GitHub Copilot API 反向代理，基于 **Hono**，对外暴露 OpenAI / Anthropic / Gemini 兼容端点。
+GitHub Copilot API 反向代理，基于 **Hono**，对外暴露 OpenAI / Anthropic 兼容端点。
 
 ## 全局规则
 
@@ -65,7 +65,6 @@ pre-commit hook 只跑 `lint-staged`（仅暂存文件的 lint），不保证项
 - `src/routes/chat-completions/AGENTS.md` - OpenAI chat completions 路由与 stream/non-stream 分支
 - `src/routes/models/AGENTS.md` - `/v1/models` 过滤、排序与增强字段
 - `src/routes/responses/AGENTS.md` - OpenAI Responses 路由、stream ID sync、tool 预处理
-- `src/routes/generate-content/AGENTS.md` - Gemini 路由与 codex/responses 分流
 - `src/routes/provider/AGENTS.md` - `/:provider/v1/*` 代理路由、messages/models/count_tokens 分流
 - `src/services/AGENTS.md` - service 根层边界与目录职责
 - `src/services/copilot/AGENTS.md` - Copilot 上游调用、native messages 兼容、telemetry
@@ -73,7 +72,6 @@ pre-commit hook 只跑 `lint-staged`（仅暂存文件的 lint），不保证项
 - `src/services/providers/AGENTS.md` - 多 provider 转发、header allowlist、response 清洗
 - `src/services/telemetry/AGENTS.md` - telemetry envelope、identity、fire-and-forget
 - `tests/AGENTS.md` - Bun 测试布局、mock 约定、fixtures、断言风格
-- `tests/generate-content/AGENTS.md` - Gemini / codex 测试约束
 - `tests/router/AGENTS.md` - 多实例调遣之器测试规约：fetch/time 注入与 sticky 之验证
 - `router/AGENTS.md` - 多实例调遣之器之内里：session-sticky、least-loaded、dashboard、start.sh
 - `claude-plugin/AGENTS.md` - Claude Code plugin / marketplace 与 `__SUBAGENT_MARKER__`

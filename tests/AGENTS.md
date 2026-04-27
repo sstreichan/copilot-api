@@ -2,13 +2,12 @@
 
 ## Overview
 
-测试统一使用 `bun:test`，覆盖路由翻译、native messages、telemetry、models、暗渡之门与 Gemini/Responses 分支；主策略是 mock 上游服务，而不是打真实 Copilot API。
+测试统一使用 `bun:test`，覆盖路由翻译、native messages、telemetry、models、暗渡之门与 Responses 分支；主策略是 mock 上游服务，而不是打真实 Copilot API。
 
 ## Structure
 
 - `create-messages.test.ts`, `create-chat-completions.test.ts`, `create-responses.test.ts`, `cache-models.test.ts` - service / cache 边界测试
 - `native-messages-handler.test.ts`, `messages-*.test.ts`, `anthropic-*.test.ts`, `responses-*.test.ts` - Anthropic / Responses / messages 路径
-- `generate-content/` - Gemini 路由、translation、streaming、codex/responses 分支；详见 `tests/generate-content/AGENTS.md`
 - `router/` - 多实例调遣之器单元测试（lib.test.ts, state.test.ts, proxy.test.ts, integration.test.ts）；注入 `fetchImpl`/`now` 参数 mock
 - `router/` 有独立测试约定；详见 `tests/router/AGENTS.md`
 - `telemetry*.test.ts` - telemetry、identity 与 msft/integration 事件
