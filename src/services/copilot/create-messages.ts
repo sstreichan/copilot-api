@@ -450,7 +450,7 @@ export const createMessages = async (
     )
   }
 
-  consola.log(`<-- model: ${payload.model}`)
+  consola.debug(`<-- model: ${payload.model}`)
   consola.debug("Native Messages API request:", {
     model: payload.model,
     stream: payload.stream,

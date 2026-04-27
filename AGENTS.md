@@ -15,10 +15,23 @@ GitHub Copilot API 反向代理，基于 **Hono**，对外暴露 OpenAI / Anthro
 
 ```bash
 bun run dev            # 开发服务器（watch）
+bun run build          # 构建
 bun test               # 全量测试
 bun run lint:all --fix # Lint 并修复
 bun run typecheck      # 类型检查
 ```
+
+## 提交前检查（MUST）
+
+pre-commit hook 只跑 `lint-staged`（仅暂存文件的 lint），不保证项目级完整性。
+**任何 commit 之前，必须按顺序跑完以下四步，全部通过才能提交：**
+
+1. `bun run lint:all --fix` — 先跑，因为它可能改动文件
+2. `bun run build`
+3. `bun test`（全量测试，不是 `bun test -- --testPathPattern=...`）
+4. `bun run typecheck`
+
+如果有任何一步失败，修好再提交，**不要用 `--no-verify` 跳过**。
 
 常用启动标志：
 

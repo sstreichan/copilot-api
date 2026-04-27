@@ -47,6 +47,7 @@ description: "This skill should be used when the user asks to merge `caozhiyuan/
 7. **先报数量，再解冲突。** agent 应先告诉用户一共有多少冲突文件、多少冲突块，再进入逐个处理。
 8. **处理过程中持续播报。** 每解决一块或推进到下一文件时，都要让用户知道当前进度，不要闷头解到最后。
 9. **先讲非冲突改动的价值。** 在进入冲突决策前，agent 应先告诉用户这批不冲突改动分别带来了什么功能变化、面向什么 use case。
+10. **PR 创建不是完成。** 创建 PR 后，必须继续报告 `mergeable` / `mergeStateStatus` / checks / review / draft 等状态；未获用户对当前 PR 的明确最终授权，不得执行 merge。
 
 ## 标准流程
 
@@ -128,23 +129,35 @@ git diff --stat dev...czy-all
 
 - 是否存在 merge conflict
 - CI checks 是否通过
+- review / draft / merge queue 等状态是否仍阻塞 merge
 - 是否还需要用户确认执行最终 merge
 
 推荐命令：
 
 ```bash
-gh pr view <number> --json mergeable,mergeStateStatus,statusCheckRollup,reviewDecision,url
+gh pr view <number> --json mergeable,mergeStateStatus,statusCheckRollup,reviewDecision,isDraft,headRefOid,url
 ```
 
 这里的分支处理规则是：
 
 - **有冲突**：进入后文的逐块冲突流程，并由用户逐块拍板。
-- **无冲突但 checks 失败/未完成**：把失败项或等待项明确告诉用户，不要把“已开 PR”误报成“已完成”。
-- **无冲突且可合并**：明确告诉用户“现在已可执行最终 merge”，并询问是否继续。
+- **merge 状态未知 / 仍在计算**：若 `mergeable` 或 `mergeStateStatus` 为 `UNKNOWN`、空值或 GitHub 仍在计算，先等待片刻后重查；若重查后仍未知，明确告诉用户“GitHub 尚未给出可合并状态”，停止，不进入最终 merge。
+- **无冲突但仍有阻塞项**：若 checks 失败/未完成，或 `reviewDecision` 仍阻塞，或 PR 仍是 draft，或还有其他 merge queue / review 阻塞项，把这些失败项或等待项明确告诉用户，不要把“已开 PR”误报成“已完成”。
+- **无冲突且已具备 merge 条件**：只有在 checks 已通过、review 不阻塞、PR 不是 draft，且 `mergeable` / `mergeStateStatus` 已明确表明可继续时，才明确告诉用户“现在已可执行最终 merge”，并询问是否继续。
 
 ### 第七步：得到用户授权后，执行最终 merge 到 `dev`
 
-PR 可合并时，除非用户已明确授权，否则不要擅自完成最终 merge。拿到授权后，再执行：
+PR 可合并时，除非用户已明确授权，否则不要擅自完成最终 merge。
+
+在执行最终 merge 之前，必须先说出这句话（verbatim preflight）：
+
+```text
+确认：你已明确授权 merge PR #X 到 dev（URL：...，head SHA：...，原话：”...”），现在才执行。
+```
+
+若无法填入用户的授权原话、PR 编号、URL 或当前 `headRefOid`，则还没有最终授权，禁止执行 merge。
+
+拿到授权后，再次检查一次当前 PR 状态，确认 `headRefOid` 没有变化、merge 状态不再是 `UNKNOWN`、checks / review / draft 都没有重新变成阻塞项；只有满足这些条件，再执行：
 
 ```bash
 gh pr merge <number> --merge
@@ -155,6 +168,8 @@ merge 完成后，还要再次确认：
 - PR 已处于 merged 状态
 - 当前分支仍是 `dev`
 - 工作树仍干净
+
+补充说明：`gh pr merge` 完成的是 GitHub 上的远端 PR merge；若要确认本地 `dev` 也已包含 merge 结果，应再执行一次 `git pull --ff-only origin dev`（或等价的 fetch + fast-forward 验证），不要把“远端已 merge”误报成“本地 dev 已同步”。
 
 ## 冲突处理：逐块走 “best of both worlds”
 

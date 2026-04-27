@@ -52,3 +52,7 @@ docs/plans/
 .claude/settings.json
 .claude/settings.local.json
 .claude/metadata-updater.sh
+
+# MemPalace per-project files (issue #185)
+mempalace.yaml
+entities.json

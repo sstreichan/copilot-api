@@ -43,6 +43,58 @@ const logAvailableModels = () => {
   consola.info(formatModelsLog(availableModels))
 }
 
+async function handleClaudeCodeFlag(serverUrl: string) {
+  consola.log(
+    "\n💡 Tip: The --claude-code flag simply generates a clipboard command for launching Claude Code. \n"
+      + "All models remain fully accessible without this flag, just configure the model ID directly in your settings.json file.",
+  )
+
+  invariant(state.models, "Models should be loaded by now")
+
+  const selectedModel = await consola.prompt(
+    "Select a model to use with Claude Code",
+    {
+      type: "select",
+      options: state.models.data.map((model) => model.id),
+    },
+  )
+
+  const selectedSmallModel = await consola.prompt(
+    "Select a small model to use with Claude Code",
+    {
+      type: "select",
+      options: state.models.data.map((model) => model.id),
+    },
+  )
+
+  const command = generateEnvScript(
+    {
+      ANTHROPIC_BASE_URL: serverUrl,
+      ANTHROPIC_AUTH_TOKEN: "dummy",
+      ANTHROPIC_MODEL: selectedModel,
+      ANTHROPIC_DEFAULT_SONNET_MODEL: selectedModel,
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: selectedSmallModel,
+      DISABLE_NON_ESSENTIAL_MODEL_CALLS: "1",
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
+      CLAUDE_CODE_ATTRIBUTION_HEADER: "0",
+      CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION: "false",
+      CLAUDE_CODE_DISABLE_TERMINAL_TITLE: "true",
+      CLAUDE_CODE_ENABLE_AWAY_SUMMARY: "0",
+      CLAUDE_PLUGIN_ENABLE_QUESTION_RULES: "true",
+    },
+    "claude",
+  )
+
+  try {
+    clipboard.writeSync(command)
+    consola.success("Copied Claude Code command to clipboard!")
+  } catch {
+    consola.warn(
+      "Failed to copy to clipboard. Here is the Claude Code command:",
+    )
+    consola.log(command)
+  }
+}
 export async function runServer(options: RunServerOptions): Promise<void> {
   // Work around unjs/consola#357 until a release includes PR #359.
   consola.options.throttle = 0
@@ -98,58 +150,8 @@ export async function runServer(options: RunServerOptions): Promise<void> {
   logAvailableModels()
 
   const serverUrl = `http://localhost:${options.port}`
-
   if (options.claudeCode) {
-    consola.log(
-      "\n💡 Tip: The --claude-code flag simply generates a clipboard command for launching Claude Code. \n"
-        + "All models remain fully accessible without this flag, just configure the model ID directly in your settings.json file.",
-    )
-
-    invariant(state.models, "Models should be loaded by now")
-
-    const selectedModel = await consola.prompt(
-      "Select a model to use with Claude Code",
-      {
-        type: "select",
-        options: state.models.data.map((model) => model.id),
-      },
-    )
-
-    const selectedSmallModel = await consola.prompt(
-      "Select a small model to use with Claude Code",
-      {
-        type: "select",
-        options: state.models.data.map((model) => model.id),
-      },
-    )
-
-    const command = generateEnvScript(
-      {
-        ANTHROPIC_BASE_URL: serverUrl,
-        ANTHROPIC_AUTH_TOKEN: "dummy",
-        ANTHROPIC_MODEL: selectedModel,
-        ANTHROPIC_DEFAULT_SONNET_MODEL: selectedModel,
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: selectedSmallModel,
-        DISABLE_NON_ESSENTIAL_MODEL_CALLS: "1",
-        CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
-        CLAUDE_CODE_ATTRIBUTION_HEADER: "0",
-        CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION: "false",
-        CLAUDE_CODE_DISABLE_TERMINAL_TITLE: "true",
-        CLAUDE_CODE_ENABLE_AWAY_SUMMARY: "0",
-        CLAUDE_PLUGIN_ENABLE_QUESTION_RULES: "true",
-      },
-      "claude",
-    )
-
-    try {
-      clipboard.writeSync(command)
-      consola.success("Copied Claude Code command to clipboard!")
-    } catch {
-      consola.warn(
-        "Failed to copy to clipboard. Here is the Claude Code command:",
-      )
-      consola.log(command)
-    }
+    await handleClaudeCodeFlag(serverUrl)
   }
 
   consola.box(

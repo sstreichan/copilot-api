@@ -234,7 +234,7 @@ export const createChatCompletions = async (
   trackRequestSent(payload.model, state.accountType, requestId, modelCallId)
 
   // First attempt: passthrough unchanged
-  consola.log(`<-- model: ${payload.model}`)
+  consola.debug(`<-- model: ${payload.model}`)
   const response = await fetch(`${copilotBaseUrl(state)}/chat/completions`, {
     method: "POST",
     headers,

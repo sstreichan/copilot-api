@@ -439,7 +439,7 @@ export const createResponses = async (
   // service_tier is not supported by github copilot
   payload.service_tier = undefined
 
-  consola.log(`<-- model: ${payload.model}`)
+  consola.debug(`<-- model: ${payload.model}`)
 
   const response = await fetch(`${copilotBaseUrl(state)}/responses`, {
     method: "POST",

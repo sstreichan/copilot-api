@@ -91,7 +91,7 @@ export const logCopilotRateLimits = (
     const d = new Date(usage.resetAt)
     const dateStr =
       Number.isNaN(d.getTime()) ? usage.resetAt : d.toLocaleString()
-    consola.info(
+    consola.debug(
       `Copilot ${usage.type} quota remaining: ${usage.remaining}, resets at: ${dateStr}`,
     )
   }
