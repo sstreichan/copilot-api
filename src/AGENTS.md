@@ -6,10 +6,13 @@
 
 ## Structure
 
-- `main.ts` - CLI 根入口，挂 `auth` / `start` / `check-usage` / `debug`
-- `start.ts` - `citty` 命令定义、启动流程、usage viewer 链接、CLI flags
-- `server.ts` - Hono 中间件与路由注册；注意 `/` 与 `/v1/` 双注册模式
-- `lib/` - 共享状态、配置、日志、限流、paths、proxy、tokenizer 等
+- `main.ts` - CLI 根入口，挂 `auth` / `start` / `check-usage` / `debug`；全局 flags 在此解析并写入 env（早于模块加载）
+- `start.ts` - `citty` 命令定义与 `runServer()`；注意 server 是 lazy import（env 必须先设好）
+- `server.ts` - Hono 中间件与路由注册；`/` 与 `/v1/` 双注册模式；`/v1/messages` 无裸别名
+- `auth.ts` - `auth` 独立子命令（device flow，不启动 server）
+- `check-usage.ts` - `check-usage` 独立子命令
+- `debug.ts` - `debug` 独立子命令
+- `lib/` - 共享状态、配置、日志、限流、paths、proxy、tokenizer、auto-session 等
 - `routes/` - 各兼容 API 的 handler / translation / stream translation
 - `services/` - 真正访问 Copilot / GitHub / telemetry 的边界层
 

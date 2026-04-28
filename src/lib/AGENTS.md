@@ -6,19 +6,25 @@
 
 ## Where To Look
 
-| Task | Location | Notes |
-|------|----------|-------|
 | Runtime singleton state | `state.ts` | 全局唯一真相源；含 interactionId（per-session UUID） |
 | Config file / defaults | `config.ts`, `paths.ts` | `COPILOT_API_HOME`、`config.json`、默认 prompts |
 | Token lifecycle | `token.ts` | GitHub/Copilot token 获取与刷新；wall-clock 按 token 剩余时间分段重新调度，AbortController 管理生命周期；opencode OAuth 模式复用 GitHub token 并停 refresh loop |
-| Rate limit / approval | `rate-limit.ts`, `approval.ts` | `-r` / `-w` 与手动确认 |
+| Rate limit / approval / copilot-rate-limit | `rate-limit.ts`, `approval.ts`, `copilot-rate-limit.ts` | `-r` / `-w` 与手动确认；copilot-rate-limit 管理 Copilot 上游 429 响应的冷却逻辑 |
 | Response header forwarding | `response-headers.ts` | 统一附着/提取 upstream headers，剥离 hop-by-hop headers，并提供 JSON/SSE 回包 helper |
-| Logging / debug | `logger.ts`, `models-log.ts` | stream log、debug dump、models 输出 |
+| Logging / debug / models log | `logger.ts`, `models-log.ts` | stream log、debug dump、models 输出；三路路由共用 `getPremiumInfo()` / `formatStreamLog()` |
 | 暗渡之门策略 | `smart-agent.ts` | forceAgent / 配额决断与缓存 |
-| API request config | `api-config.ts` | 统一组装 Copilot headers / host / UA / compact 前处理；含 `prepareForCompact`、`prepareMessageProxyHeaders`、`USER_AGENT`、`COPILOT_VERSION` |
-| Compact 标记 | `compact.ts` | compact request / auto-continue prompt 常量、`compactMessageSections` 与 `CompactType` 字面量联合类型 |
-| Subagent 标记类型 | `subagent.ts` | `__SUBAGENT_MARKER__` 前缀常量与 `SubagentMarker` 类型；真正解析在 `src/routes/messages/subagent-marker.ts` |
-
+| API request config | `api-config.ts` | 统一组装 Copilot headers / host / UA / compact 前处理 |
+| Compact 标记 | `compact.ts` | compact request / auto-continue prompt 常量 |
+| Subagent 标记类型 | `subagent.ts` | `__SUBAGENT_MARKER__` 前缀常量与类型；真正解析在 `src/routes/messages/subagent-marker.ts` |
+| Auto-session 管理 | `auto-session.ts` | 自动会话初始化与续期逻辑 |
+| Device ID / opencode 识别 | `deviceid.ts`, `opencode.ts` | 设备指纹生成、opencode 运行模式检测 |
+| Request auth / context | `request-auth.ts`, `request-context.ts` | 请求级认证与上下文提取 |
+| Trace | `trace.ts` | 请求级 trace ID 注入 |
+| Tokenizer | `tokenizer.ts` | 本地 tokenizer 计算（count_tokens 用） |
+| Utils | `utils.ts` | 通用工具函数（重试、延时、类型守卫等） |
+| Proxy | `proxy.ts` | HTTP 代理配置 |
+| Shell | `shell.ts` | Shell 命令执行 helper |
+| Models | `models.ts` | 模型列表与映射 |
 ## Project-Specific Conventions
 
 - `state.ts` 不只是方便访问；它是运行时可变状态的唯一位置
