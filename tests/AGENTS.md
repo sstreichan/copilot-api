@@ -12,7 +12,12 @@
 - `router/` 有独立测试约定；详见 `tests/router/AGENTS.md`
 - `telemetry*.test.ts` - telemetry、identity 与 msft/integration 事件
 - `chat-completions-handler.test.ts`, `messages-handler.test.ts` - route handler 行为
-- `responses-handler.test.ts`, `responses-translation.test.ts`, `responses-stream-translation.test.ts` - Responses handler / translation 行为
+- `responses-handler.test.ts`, `responses-translation.test.ts`, `responses-stream-translation.test.ts` - Responses handler / translation 行为（公开端点测试）
+- `tests/responses/` - Responses 子目录，含双向翻译、stream 翻译与 replay 专项测试：
+  - `responses-from-messages.test.ts`, `responses-from-chat.test.ts` - 双向翻译测试
+  - `anthropic-to-responses-stream.test.ts`, `chat-to-responses-stream.test.ts` - stream 翻译事件序列测试
+  - `chat-to-responses.test.ts` - chat → responses 格式转换测试
+- `responses-preflight.test.ts` - Responses payload preflight 预处理测试
 - `provider-auth.test.ts` - provider auth (x-api-key / Authorization Bearer) 切换
 - `token-refresh.test.ts` - wall-clock token 刷新调度
 - `models-route.test.ts`, `models-log.test.ts`, `reasoning-effort.test.ts` - models 与 reasoning 能力覆盖
