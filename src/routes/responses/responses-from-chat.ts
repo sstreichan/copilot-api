@@ -14,6 +14,8 @@ import type {
   ResponseInputContent,
   ResponseInputItem,
   ResponseInputMessage,
+  ResponseOutputItemAddedEvent,
+  ResponseOutputItemDoneEvent,
   ResponseOutputFunctionCall,
   ResponseOutputItem,
   ResponseOutputMessage,
@@ -46,6 +48,8 @@ export interface ChatCompletionToResponsesStreamState {
   textOutputIndex?: number
   textItemId?: string
   textDoneEmitted: boolean
+  emittedOutputItemIds: Set<string>
+  doneOutputItemIds: Set<string>
   nextOutputIndex: number
   toolCalls: Map<number, ChatToolCallStreamState>
   latestUsage?: ChatCompletionChunk["usage"]
@@ -87,6 +91,8 @@ export const createChatCompletionToResponsesStreamState =
     sequenceNumber: 0,
     outputText: "",
     textDoneEmitted: false,
+    emittedOutputItemIds: new Set(),
+    doneOutputItemIds: new Set(),
     nextOutputIndex: 0,
     toolCalls: new Map(),
   })
@@ -117,14 +123,21 @@ export const translateChatCompletionChunkToResponsesStreamEvents = (
   if (delta.content && delta.content.length > 0) {
     const textOutput = ensureTextOutput(state)
     state.outputText += delta.content
-    events.push({
-      type: "response.output_text.delta",
-      sequence_number: nextSequenceNumber(state),
-      item_id: textOutput.itemId,
-      output_index: textOutput.outputIndex,
-      content_index: 0,
-      delta: delta.content,
-    })
+    events.push(
+      ...emitOutputItemAdded(
+        buildTextMessageItem(state, "in_progress"),
+        state,
+        textOutput.outputIndex,
+      ),
+      {
+        type: "response.output_text.delta",
+        sequence_number: nextSequenceNumber(state),
+        item_id: textOutput.itemId,
+        output_index: textOutput.outputIndex,
+        content_index: 0,
+        delta: delta.content,
+      },
+    )
   }
 
   if (delta.tool_calls && delta.tool_calls.length > 0) {
@@ -132,13 +145,20 @@ export const translateChatCompletionChunkToResponsesStreamEvents = (
       const toolCallState = ensureToolCall(state, toolCallDelta)
       if (toolCallDelta.function?.arguments) {
         toolCallState.arguments += toolCallDelta.function.arguments
-        events.push({
-          type: "response.function_call_arguments.delta",
-          sequence_number: nextSequenceNumber(state),
-          item_id: toolCallState.itemId,
-          output_index: toolCallState.outputIndex,
-          delta: toolCallDelta.function.arguments,
-        })
+        events.push(
+          ...emitOutputItemAdded(
+            buildFunctionCallItem(toolCallState, "in_progress"),
+            state,
+            toolCallState.outputIndex,
+          ),
+          {
+            type: "response.function_call_arguments.delta",
+            sequence_number: nextSequenceNumber(state),
+            item_id: toolCallState.itemId,
+            output_index: toolCallState.outputIndex,
+            delta: toolCallDelta.function.arguments,
+          },
+        )
       }
     }
   }
@@ -593,15 +613,25 @@ const buildFinishEvents = (
 ): Array<ResponseStreamEvent> => {
   const events: Array<ResponseStreamEvent> = []
   if (state.textOutputIndex !== undefined && !state.textDoneEmitted) {
-    events.push({
-      type: "response.output_text.done",
-      sequence_number: nextSequenceNumber(state),
-      item_id:
-        state.textItemId ?? `msg_${state.chatCompletionId ?? "chatcmpl"}_0`,
-      output_index: state.textOutputIndex,
-      content_index: 0,
-      text: state.outputText,
-    })
+    events.push(
+      {
+        type: "response.output_text.done",
+        sequence_number: nextSequenceNumber(state),
+        item_id:
+          state.textItemId ?? `msg_${state.chatCompletionId ?? "chatcmpl"}_0`,
+        output_index: state.textOutputIndex,
+        content_index: 0,
+        text: state.outputText,
+      },
+      ...emitOutputItemDone(
+        buildTextMessageItem(
+          state,
+          mapFinishReasonToStatus(finishReason ?? undefined),
+        ),
+        state,
+        state.textOutputIndex,
+      ),
+    )
     state.textDoneEmitted = true
   }
 
@@ -609,14 +639,24 @@ const buildFinishEvents = (
     if (toolCallState.doneEmitted) {
       continue
     }
-    events.push({
-      type: "response.function_call_arguments.done",
-      sequence_number: nextSequenceNumber(state),
-      item_id: toolCallState.itemId,
-      output_index: toolCallState.outputIndex,
-      name: toolCallState.name,
-      arguments: toolCallState.arguments,
-    })
+    events.push(
+      {
+        type: "response.function_call_arguments.done",
+        sequence_number: nextSequenceNumber(state),
+        item_id: toolCallState.itemId,
+        output_index: toolCallState.outputIndex,
+        name: toolCallState.name,
+        arguments: toolCallState.arguments,
+      },
+      ...emitOutputItemDone(
+        buildFunctionCallItem(
+          toolCallState,
+          mapFinishReasonToStatus(finishReason ?? undefined),
+        ),
+        state,
+        toolCallState.outputIndex,
+      ),
+    )
     toolCallState.doneEmitted = true
   }
 
@@ -668,31 +708,92 @@ const buildOutputItemsFromStreamState = (
   const outputStatus = status === "incomplete" ? "incomplete" : "completed"
 
   if (state.textOutputIndex !== undefined && state.outputText.length > 0) {
-    items.push({
-      id: state.textItemId ?? `msg_${state.chatCompletionId ?? "chatcmpl"}_0`,
-      type: "message",
-      role: "assistant",
-      status: outputStatus,
-      content: [
-        {
-          type: "output_text",
-          text: state.outputText,
-          annotations: [],
-        },
-      ],
-    })
+    items.push(buildTextMessageItem(state, outputStatus))
   }
 
   for (const toolCallState of state.toolCalls.values()) {
-    items.push({
-      id: toolCallState.itemId,
-      type: "function_call",
-      call_id: toolCallState.callId,
-      name: toolCallState.name,
-      arguments: toolCallState.arguments,
-      status: outputStatus,
-    })
+    items.push(buildFunctionCallItem(toolCallState, outputStatus))
   }
 
   return items
+}
+
+const buildTextMessageItem = (
+  state: ChatCompletionToResponsesStreamState,
+  status: ResponseStatus | "in_progress",
+): ResponseOutputMessage => ({
+  id: state.textItemId ?? `msg_${state.chatCompletionId ?? "chatcmpl"}_0`,
+  type: "message",
+  role: "assistant",
+  status,
+  content: [
+    {
+      type: "output_text",
+      text: state.outputText,
+      annotations: [],
+    },
+  ],
+})
+
+const buildFunctionCallItem = (
+  toolCallState: ChatToolCallStreamState,
+  status: ResponseStatus | "in_progress",
+): ResponseOutputFunctionCall => ({
+  id: toolCallState.itemId,
+  type: "function_call",
+  call_id: toolCallState.callId,
+  name: toolCallState.name,
+  arguments: toolCallState.arguments,
+  status,
+})
+
+const emitOutputItemAdded = (
+  item: ResponseOutputItem,
+  state: ChatCompletionToResponsesStreamState,
+  outputIndex: number,
+): Array<ResponseOutputItemAddedEvent> => {
+  const itemId = item.id
+  if (!itemId || state.emittedOutputItemIds.has(itemId)) return []
+  state.emittedOutputItemIds.add(itemId)
+  return [
+    {
+      type: "response.output_item.added",
+      sequence_number: nextSequenceNumber(state),
+      output_index: outputIndex,
+      item: cloneOutputItem(item),
+    },
+  ]
+}
+
+const emitOutputItemDone = (
+  item: ResponseOutputItem,
+  state: ChatCompletionToResponsesStreamState,
+  outputIndex: number,
+): Array<ResponseOutputItemDoneEvent> => {
+  const itemId = item.id
+  if (!itemId || state.doneOutputItemIds.has(itemId)) return []
+  state.doneOutputItemIds.add(itemId)
+  return [
+    {
+      type: "response.output_item.done",
+      sequence_number: nextSequenceNumber(state),
+      output_index: outputIndex,
+      item: cloneOutputItem(item),
+    },
+  ]
+}
+
+const cloneOutputItem = (item: ResponseOutputItem): ResponseOutputItem => {
+  if (item.type === "message") {
+    return {
+      ...item,
+      content: item.content?.map((block) => ({ ...block })),
+    }
+  }
+
+  if (item.type === "function_call") {
+    return { ...item }
+  }
+
+  return { ...item }
 }

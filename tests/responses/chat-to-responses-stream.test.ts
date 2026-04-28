@@ -19,7 +19,7 @@ const chunk = (
   ...overrides,
 })
 
-describe("translateChatCompletionChunkToResponsesStreamEvents", () => {
+describe("translateChatCompletionChunkToResponsesStreamEvents text", () => {
   it("maps initial, text delta, and finish chunks into ordered Responses stream events", () => {
     const state = createChatCompletionToResponsesStreamState()
     const events = [
@@ -71,17 +71,35 @@ describe("translateChatCompletionChunkToResponsesStreamEvents", () => {
 
     expect(events.map((event) => event.type)).toEqual([
       "response.created",
+      "response.output_item.added",
       "response.output_text.delta",
       "response.output_text.done",
+      "response.output_item.done",
       "response.completed",
     ])
     expect(events[1]).toMatchObject({
+      type: "response.output_item.added",
+      output_index: 0,
+      item: {
+        type: "message",
+        status: "in_progress",
+      },
+    })
+    expect(events[2]).toMatchObject({
       type: "response.output_text.delta",
       delta: "hello",
       output_index: 0,
       content_index: 0,
     })
-    expect(events[3]).toMatchObject({
+    expect(events[4]).toMatchObject({
+      type: "response.output_item.done",
+      output_index: 0,
+      item: {
+        type: "message",
+        status: "completed",
+      },
+    })
+    expect(events[5]).toMatchObject({
       type: "response.completed",
       response: {
         id: "resp_chatcmpl_stream_123",
@@ -95,7 +113,9 @@ describe("translateChatCompletionChunkToResponsesStreamEvents", () => {
       },
     })
   })
+})
 
+describe("translateChatCompletionChunkToResponsesStreamEvents tools", () => {
   it("maps tool call argument deltas into function_call argument events and done", () => {
     const state = createChatCompletionToResponsesStreamState()
     const events = [
@@ -158,24 +178,44 @@ describe("translateChatCompletionChunkToResponsesStreamEvents", () => {
 
     expect(events.map((event) => event.type)).toEqual([
       "response.created",
+      "response.output_item.added",
       "response.function_call_arguments.delta",
       "response.function_call_arguments.delta",
       "response.function_call_arguments.done",
+      "response.output_item.done",
       "response.completed",
     ])
     expect(events[1]).toMatchObject({
+      type: "response.output_item.added",
+      output_index: 0,
+      item: {
+        id: "fc_call_weather",
+        type: "function_call",
+        status: "in_progress",
+      },
+    })
+    expect(events[2]).toMatchObject({
       item_id: "fc_call_weather",
       output_index: 0,
       delta: '{"city":',
     })
-    expect(events[3]).toMatchObject({
+    expect(events[4]).toMatchObject({
       type: "response.function_call_arguments.done",
       item_id: "fc_call_weather",
       output_index: 0,
       name: "lookup_weather",
       arguments: '{"city":"Hangzhou"}',
     })
-    expect(events[4]).toMatchObject({
+    expect(events[5]).toMatchObject({
+      type: "response.output_item.done",
+      output_index: 0,
+      item: {
+        id: "fc_call_weather",
+        type: "function_call",
+        status: "completed",
+      },
+    })
+    expect(events[6]).toMatchObject({
       type: "response.completed",
       response: {
         output: [
@@ -190,7 +230,9 @@ describe("translateChatCompletionChunkToResponsesStreamEvents", () => {
       },
     })
   })
+})
 
+describe("translateChatCompletionStreamErrorToResponsesEvent", () => {
   it("maps stream failures into response.failed", () => {
     const state = createChatCompletionToResponsesStreamState()
     translateChatCompletionChunkToResponsesStreamEvents(

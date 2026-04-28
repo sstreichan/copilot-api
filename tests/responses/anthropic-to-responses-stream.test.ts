@@ -66,9 +66,14 @@ describe("translateAnthropicStreamEventToResponsesStreamEvents", () => {
 
     expect(events.map((event) => event.type)).toEqual([
       "response.created",
+      "response.output_item.added",
       "response.output_text.delta",
       "response.output_text.done",
+      "response.output_item.done",
       "response.completed",
+    ])
+    expect(events.map((event) => event.sequence_number)).toEqual([
+      0, 1, 2, 3, 4, 5,
     ])
     expect(events[0]).toMatchObject({
       type: "response.created",
@@ -79,17 +84,35 @@ describe("translateAnthropicStreamEventToResponsesStreamEvents", () => {
       },
     })
     expect(events[1]).toMatchObject({
+      type: "response.output_item.added",
+      output_index: 0,
+      item: {
+        id: "msg_123_message_0",
+        type: "message",
+        status: "in_progress",
+      },
+    })
+    expect(events[2]).toMatchObject({
       type: "response.output_text.delta",
       item_id: "msg_123_message_0",
       output_index: 0,
       content_index: 0,
       delta: "Hello",
     })
-    expect(events[2]).toMatchObject({
+    expect(events[3]).toMatchObject({
       type: "response.output_text.done",
       text: "Hello",
     })
-    expect(events[3]).toMatchObject({
+    expect(events[4]).toMatchObject({
+      type: "response.output_item.done",
+      output_index: 0,
+      item: {
+        id: "msg_123_message_0",
+        type: "message",
+        status: "completed",
+      },
+    })
+    expect(events[5]).toMatchObject({
       type: "response.completed",
       response: {
         output_text: "Hello",
@@ -178,31 +201,54 @@ describe("translateAnthropicStreamEventToResponsesStreamEvents", () => {
 
     expect(events.map((event) => event.type)).toEqual([
       "response.created",
+      "response.output_item.added",
       "response.function_call_arguments.delta",
       "response.function_call_arguments.delta",
       "response.function_call_arguments.done",
+      "response.output_item.done",
       "response.completed",
     ])
+    expect(events.map((event) => event.sequence_number)).toEqual([
+      0, 1, 2, 3, 4, 5, 6,
+    ])
     expect(events[1]).toMatchObject({
-      type: "response.function_call_arguments.delta",
-      item_id: "fc_tool_1",
+      type: "response.output_item.added",
       output_index: 0,
-      delta: '{"city":',
+      item: {
+        id: "fc_tool_1",
+        type: "function_call",
+        status: "in_progress",
+      },
     })
     expect(events[2]).toMatchObject({
       type: "response.function_call_arguments.delta",
       item_id: "fc_tool_1",
       output_index: 0,
-      delta: '"Hangzhou"}',
+      delta: '{"city":',
     })
     expect(events[3]).toMatchObject({
+      type: "response.function_call_arguments.delta",
+      item_id: "fc_tool_1",
+      output_index: 0,
+      delta: '"Hangzhou"}',
+    })
+    expect(events[4]).toMatchObject({
       type: "response.function_call_arguments.done",
       item_id: "fc_tool_1",
       output_index: 0,
       name: "lookup_weather",
       arguments: '{"city":"Hangzhou"}',
     })
-    expect(events[4]).toMatchObject({
+    expect(events[5]).toMatchObject({
+      type: "response.output_item.done",
+      output_index: 0,
+      item: {
+        id: "fc_tool_1",
+        type: "function_call",
+        status: "completed",
+      },
+    })
+    expect(events[6]).toMatchObject({
       type: "response.completed",
       response: {
         status: "completed",

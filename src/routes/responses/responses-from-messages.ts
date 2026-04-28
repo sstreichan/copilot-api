@@ -27,6 +27,8 @@ import type {
   ResponseFunctionCallArgumentsDeltaEvent,
   ResponseFunctionCallArgumentsDoneEvent,
   ResponseIncompleteEvent,
+  ResponseOutputItemAddedEvent,
+  ResponseOutputItemDoneEvent,
   ResponseOutputContentBlock,
   ResponseOutputFunctionCall,
   ResponseOutputItem,
@@ -48,11 +50,14 @@ const DEFAULT_MAX_TOKENS = 12800
 
 export interface AnthropicToResponsesStreamState {
   response: ResponsesResult | null
+  sequenceNumber: number
   currentTextBlockIndex: number | null
   currentToolUseBlockIndex: number | null
   pendingStopReason: "completed" | "incomplete"
   outputItems: Array<ResponseOutputItem>
   outputText: string
+  emittedOutputItemIds: Set<string>
+  doneOutputItemIds: Set<string>
   functionCalls: Map<
     number,
     {
@@ -65,11 +70,14 @@ export interface AnthropicToResponsesStreamState {
 export const createAnthropicToResponsesStreamState =
   (): AnthropicToResponsesStreamState => ({
     response: null,
+    sequenceNumber: 0,
     currentTextBlockIndex: null,
     currentToolUseBlockIndex: null,
     pendingStopReason: "completed",
     outputItems: [],
     outputText: "",
+    emittedOutputItemIds: new Set(),
+    doneOutputItemIds: new Set(),
     functionCalls: new Map(),
   })
 
@@ -150,6 +158,8 @@ export const translateAnthropicStreamEventToResponsesStreamEvents = (
   | ResponseFailedEvent
   | ResponseCompletedEvent
   | ResponseIncompleteEvent
+  | ResponseOutputItemAddedEvent
+  | ResponseOutputItemDoneEvent
   | {
       type: "response.output_text.delta"
       sequence_number: number
@@ -404,15 +414,31 @@ const translateResponsesInput = (
     }
 
     if (isResponseInputMessage(item)) {
-      flushAssistantBlocks()
       const message = translateMessage(item)
-      if (message) messages.push(message)
+      if (!message) continue
+      if (message.role === "assistant") {
+        pendingAssistantBlocks.push(
+          ...normalizeAssistantContent(message.content),
+        )
+        continue
+      }
+      flushAssistantBlocks()
+      messages.push(message)
     }
   }
 
   flushAssistantBlocks()
 
   return messages
+}
+
+const normalizeAssistantContent = (
+  content: AnthropicMessage["content"],
+): Array<AnthropicAssistantContentBlock> => {
+  if (typeof content === "string") {
+    return content ? [{ type: "text", text: content }] : []
+  }
+  return content as Array<AnthropicAssistantContentBlock>
 }
 
 const translateMessage = (
@@ -685,13 +711,19 @@ const handleAnthropicMessageStart = (
   }
 
   state.response = response
-  return [{ type: "response.created", sequence_number: 0, response }]
+  return [
+    {
+      type: "response.created",
+      sequence_number: nextSequenceNumber(state),
+      response,
+    },
+  ]
 }
 
 const handleAnthropicContentBlockStart = (
   event: AnthropicContentBlockStartEvent,
   state: AnthropicToResponsesStreamState,
-): Array<never> => {
+): Array<ResponseOutputItemAddedEvent> => {
   if (event.content_block.type === "text") {
     state.currentTextBlockIndex = event.index
     state.currentToolUseBlockIndex = null
@@ -706,7 +738,7 @@ const handleAnthropicContentBlockStart = (
       } satisfies ResponseOutputText
       messageItem.content = content
     }
-    return []
+    return emitOutputItemAdded(messageItem, state, 0)
   }
 
   if (event.content_block.type === "tool_use") {
@@ -736,6 +768,7 @@ const handleAnthropicContentBlockDelta = (
   event: AnthropicContentBlockDeltaEvent,
   state: AnthropicToResponsesStreamState,
 ): Array<
+  | ResponseOutputItemAddedEvent
   | ResponseFunctionCallArgumentsDeltaEvent
   | {
       type: "response.output_text.delta"
@@ -755,7 +788,7 @@ const handleAnthropicContentBlockDelta = (
     return [
       {
         type: "response.output_text.delta",
-        sequence_number: 0,
+        sequence_number: nextSequenceNumber(state),
         item_id: messageItem.id,
         output_index: 0,
         content_index: 0,
@@ -769,13 +802,15 @@ const handleAnthropicContentBlockDelta = (
     if (!functionCall) return []
 
     functionCall.item.arguments += event.delta.partial_json
+    const outputIndex = getFunctionCallOutputIndex(state, event.index)
 
     return [
+      ...emitOutputItemAdded(functionCall.item, state, outputIndex),
       {
         type: "response.function_call_arguments.delta",
-        sequence_number: 0,
+        sequence_number: nextSequenceNumber(state),
         item_id: functionCall.item.id ?? `fc_${functionCall.item.call_id}`,
-        output_index: getFunctionCallOutputIndex(state, event.index),
+        output_index: outputIndex,
         delta: event.delta.partial_json,
       },
     ]
@@ -787,7 +822,9 @@ const handleAnthropicContentBlockDelta = (
 const handleAnthropicContentBlockStop = (
   event: AnthropicContentBlockStopEvent,
   state: AnthropicToResponsesStreamState,
-): Array<ResponseFunctionCallArgumentsDoneEvent> => {
+): Array<
+  ResponseFunctionCallArgumentsDoneEvent | ResponseOutputItemDoneEvent
+> => {
   if (state.currentTextBlockIndex === event.index) {
     state.currentTextBlockIndex = null
     return []
@@ -804,15 +841,17 @@ const handleAnthropicContentBlockStop = (
   functionCall.item.status = "completed"
   functionCall.argumentsDone = true
 
+  const outputIndex = getFunctionCallOutputIndex(state, event.index)
   return [
     {
       type: "response.function_call_arguments.done",
-      sequence_number: 0,
+      sequence_number: nextSequenceNumber(state),
       item_id: functionCall.item.id ?? `fc_${functionCall.item.call_id}`,
-      output_index: getFunctionCallOutputIndex(state, event.index),
+      output_index: outputIndex,
       name: functionCall.item.name,
       arguments: functionCall.item.arguments,
     },
+    ...emitOutputItemDone(functionCall.item, state, outputIndex),
   ]
 }
 
@@ -842,6 +881,7 @@ const handleAnthropicMessageStop = (
       content_index: number
       text: string
     }
+  | ResponseOutputItemDoneEvent
   | ResponseCompletedEvent
   | ResponseIncompleteEvent
 > => {
@@ -856,6 +896,7 @@ const handleAnthropicMessageStop = (
         content_index: number
         text: string
       }
+    | ResponseOutputItemDoneEvent
     | ResponseCompletedEvent
     | ResponseIncompleteEvent
   >()
@@ -868,13 +909,14 @@ const handleAnthropicMessageStop = (
     const outputTextBlock = getOrCreateOutputTextBlock(messageItem)
     events.push({
       type: "response.output_text.done",
-      sequence_number: 0,
+      sequence_number: nextSequenceNumber(state),
       item_id: messageItem.id,
       output_index: 0,
       content_index: 0,
       text: outputTextBlock.text,
     })
     messageItem.status = "completed"
+    events.push(...emitOutputItemDone(messageItem, state, 0))
   }
 
   state.response.output = state.outputItems
@@ -891,7 +933,7 @@ const handleAnthropicMessageStop = (
       state.pendingStopReason === "incomplete" ?
         "response.incomplete"
       : "response.completed",
-    sequence_number: 0,
+    sequence_number: nextSequenceNumber(state),
     response: state.response,
   })
 
@@ -914,7 +956,7 @@ const handleAnthropicError = (
   return [
     {
       type: "response.failed",
-      sequence_number: 0,
+      sequence_number: nextSequenceNumber(state),
       response,
     },
   ]
@@ -955,6 +997,63 @@ const getOrCreateOutputTextBlock = (
   }
   messageItem.content = [block]
   return block
+}
+
+const emitOutputItemAdded = (
+  item: ResponseOutputItem,
+  state: AnthropicToResponsesStreamState,
+  outputIndex: number,
+): Array<ResponseOutputItemAddedEvent> => {
+  const itemId = item.id
+  if (!itemId || state.emittedOutputItemIds.has(itemId)) return []
+  state.emittedOutputItemIds.add(itemId)
+  return [
+    {
+      type: "response.output_item.added",
+      sequence_number: nextSequenceNumber(state),
+      output_index: outputIndex,
+      item: cloneOutputItem(item),
+    },
+  ]
+}
+
+const emitOutputItemDone = (
+  item: ResponseOutputItem,
+  state: AnthropicToResponsesStreamState,
+  outputIndex: number,
+): Array<ResponseOutputItemDoneEvent> => {
+  const itemId = item.id
+  if (!itemId || state.doneOutputItemIds.has(itemId)) return []
+  state.doneOutputItemIds.add(itemId)
+  return [
+    {
+      type: "response.output_item.done",
+      sequence_number: nextSequenceNumber(state),
+      output_index: outputIndex,
+      item: cloneOutputItem(item),
+    },
+  ]
+}
+
+const nextSequenceNumber = (state: AnthropicToResponsesStreamState): number => {
+  const current = state.sequenceNumber
+  state.sequenceNumber += 1
+  return current
+}
+
+const cloneOutputItem = (item: ResponseOutputItem): ResponseOutputItem => {
+  if (item.type === "message") {
+    return {
+      ...item,
+      content: item.content?.map((block) => ({ ...block })),
+    }
+  }
+
+  if (item.type === "function_call") {
+    return { ...item }
+  }
+
+  return { ...item }
 }
 
 const getFunctionCallOutputIndex = (

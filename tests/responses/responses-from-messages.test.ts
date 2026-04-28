@@ -207,7 +207,67 @@ describe("translateResponsesToAnthropicMessages", () => {
     ])
   })
 })
+describe("translateResponsesToAnthropicMessages replay tool results", () => {
+  it("merges assistant text before tool calls into one assistant message", () => {
+    const result = translateResponsesToAnthropicMessages({
+      model: "claude-sonnet-4.6",
+      input: [
+        {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: "inspect git status" }],
+        },
+        {
+          type: "message",
+          role: "assistant",
+          content: [{ type: "output_text", text: "I will inspect it." }],
+        },
+        {
+          type: "function_call",
+          call_id: "call_status",
+          name: "exec_command",
+          arguments: '{"cmd":"git status --short"}',
+          status: "completed",
+        },
+        {
+          type: "function_call_output",
+          call_id: "call_status",
+          output: "M src/file.ts",
+          status: "completed",
+        },
+      ],
+    })
 
+    expect(result.messages).toEqual([
+      {
+        role: "user",
+        content: [{ type: "text", text: "inspect git status" }],
+      },
+      {
+        role: "assistant",
+        content: [
+          { type: "text", text: "I will inspect it." },
+          {
+            type: "tool_use",
+            id: "call_status",
+            name: "exec_command",
+            input: { cmd: "git status --short" },
+          },
+        ],
+      },
+      {
+        role: "user",
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: "call_status",
+            content: "M src/file.ts",
+          },
+        ],
+      },
+    ])
+  })
+})
 describe("translateAnthropicMessageToResponses", () => {
   it("maps text, thinking, and tool_use blocks into Responses output items and normalized usage", () => {
     const result = translateAnthropicMessageToResponses({
