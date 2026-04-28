@@ -102,4 +102,5 @@ bd close bd-42 --reason "完成" --json
 - Claude `-M` 原生 messages 分支别有上游约束；相关兼容逻辑集中在 `src/services/copilot/create-messages.ts`。
 - 暗渡之门（`-F`）之取舍，并 token / usage 判别之机，俱归 `src/lib/smart-agent.ts` 与相关 usage service 收束。
 - Provider-scoped 路由、Responses API、`/v1/models` 增强能力都已有现成实现；改动前先读对应目录 AGENTS。
-- 最近 1 个 commit 把上游 quota / rate-limit headers 的处理收束为跨目录契约：`src/services/copilot/*` 负责附着原始 headers，`src/lib/response-headers.ts` 统一过滤/转发，`src/routes/*` 负责最终回包，`router/` 则把 snapshot 暴露到 `/api/status` 与 dashboard。
+- Responses 已支持三路分支（原生 / messages fallback / chat fallback）；双向翻译模块 `src/routes/responses/responses-from-messages.ts` 与 `responses-from-chat.ts` 含 monotonic `sequence_number` 与 output item 生命周期。
+- Gemini 支持已完全移除（`src/routes/generate-content/`、`GEMINI.md`、`tests/generate-content/` 不再存在）；quota/rate-limit headers 收束为跨目录契约：`src/services/copilot/*` 附着 headers，`src/lib/response-headers.ts` 过滤转发，`src/routes/*` 最终回包。
