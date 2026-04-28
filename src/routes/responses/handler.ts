@@ -3,12 +3,10 @@ import type { Context } from "hono"
 import consola from "consola"
 import { streamSSE } from "hono/streaming"
 
+import type { Model } from "~/services/copilot/get-models"
+
 import { awaitApproval } from "~/lib/approval"
-import {
-  getConfig,
-  isResponsesApiWebSearchEnabled,
-  resolveEffortForLog,
-} from "~/lib/config"
+import { resolveEffortForLog } from "~/lib/config"
 import {
   colorizeModel,
   createHandlerLogger,
@@ -18,6 +16,7 @@ import {
   shouldUseColor,
   writeStreamLog,
 } from "~/lib/logger"
+import { findEndpointModel } from "~/lib/models"
 import { checkRateLimit } from "~/lib/rate-limit"
 import {
   applyForwardableResponseHeaders,
@@ -32,25 +31,62 @@ import {
   getUUID,
 } from "~/lib/utils"
 import {
+  createChatCompletions,
+  type ChatCompletionChunk,
+  type ChatCompletionResponse,
+} from "~/services/copilot/create-chat-completions"
+import { createMessages } from "~/services/copilot/create-messages"
+import {
   createResponses,
   type Reasoning,
   type ResponsesPayload,
   type ResponsesResult,
 } from "~/services/copilot/create-responses"
 
+import type { AnthropicStreamEventData } from "../messages/anthropic-types"
+
+import { preflightResponsesPayload } from "./preflight"
+import {
+  createChatCompletionToResponsesStreamState,
+  translateChatCompletionChunkToResponsesStreamEvents,
+  translateChatCompletionStreamErrorToResponsesEvent,
+  translateChatCompletionToResponsesResult,
+  translateResponsesToChatCompletions,
+} from "./responses-from-chat"
+import {
+  createAnthropicToResponsesStreamState,
+  translateAnthropicMessageToResponses,
+  translateAnthropicStreamEventToResponsesStreamEvents,
+  translateResponsesToAnthropicMessages,
+} from "./responses-from-messages"
 import { createStreamIdTracker, fixStreamIds } from "./stream-id-sync"
 import {
   applyResponsesApiContextManagement,
-  compactInputByLatestCompaction,
   getResponsesRequestOptions,
-  normalizeResponsesInputForReplay,
 } from "./utils"
+
+export { removeUnsupportedTools } from "./preflight"
 
 const logger = createHandlerLogger("responses-handler")
 
 const cm = (model: string) => (shouldUseColor() ? colorizeModel(model) : model)
 
 const RESPONSES_ENDPOINT = "/responses"
+const MESSAGES_ENDPOINT = "/v1/messages"
+
+type ResponsesHandlerContext = {
+  payload: ResponsesPayload
+  requestId: string
+  sessionId: string
+}
+
+type CopilotResponsesContext = {
+  c: Context
+  payload: ResponsesPayload
+  selectedModel: Model
+  requestId: string
+  sessionId: string
+}
 
 export const handleResponses = async (c: Context) => {
   await checkRateLimit(state)
@@ -75,40 +111,240 @@ export const handleResponses = async (c: Context) => {
   const sessionId = rootSessionId ?? getUUID(requestId)
   logger.debug("Extracted session ID:", sessionId)
 
-  useFunctionApplyPatch(payload)
+  preflightResponsesPayload(payload)
 
-  removeUnsupportedTools(payload)
-
-  if (!isResponsesApiWebSearchEnabled()) {
-    removeWebSearchTool(payload)
-  }
-
-  normalizeResponsesInputForReplay(payload)
-
-  compactInputByLatestCompaction(payload)
-
-  const selectedModel = state.models?.data.find(
-    (model) => model.id === payload.model,
-  )
-  const supportsResponses =
-    selectedModel?.supported_endpoints?.includes(RESPONSES_ENDPOINT) ?? false
-
-  if (!supportsResponses) {
+  const selectedModel = findEndpointModel(payload.model)
+  if (!selectedModel) {
     return c.json(
       {
         error: {
-          message:
-            "This model does not support the responses endpoint. Please choose a different model.",
+          message: `Model '${payload.model}' is not supported by /v1/responses`,
           type: "invalid_request_error",
+          code: "model_not_found",
+          param: "model",
         },
       },
       400,
     )
   }
+  payload.model = selectedModel.id
 
+  // Path A: model supports /responses → native Copilot Responses API
+  if (selectedModel.supported_endpoints?.includes(RESPONSES_ENDPOINT)) {
+    return handleWithCopilotResponses({
+      c,
+      payload,
+      selectedModel,
+      requestId,
+      sessionId,
+    })
+  }
+
+  // Path B: model supports /v1/messages → messages backend
+  if (selectedModel.supported_endpoints?.includes(MESSAGES_ENDPOINT)) {
+    return handleWithMessagesBackend(c, { payload, requestId, sessionId })
+  }
+
+  // Path C: generic fallback → chat completions bridge
+  return handleWithChatFallback(c, { payload, requestId, sessionId })
+}
+
+const handleWithMessagesBackend = async (
+  c: Context,
+  { payload, requestId, sessionId }: ResponsesHandlerContext,
+) => {
+  const anthropicPayload = translateResponsesToAnthropicMessages(payload)
+
+  consola.info(`IN ${cm(payload.model)} [messages-backend]`)
+
+  if (state.manualApprove) {
+    await awaitApproval()
+  }
+
+  const { initiator } = getResponsesRequestOptions(payload)
+
+  let response: Awaited<ReturnType<typeof createMessages>>
+  try {
+    response = await createMessages(anthropicPayload, {
+      initiator,
+      requestId,
+      sessionId,
+    })
+  } catch (err) {
+    const message =
+      err instanceof Error ? err.message : "Messages backend failed"
+    return c.json({ error: { message, type: "server_error" } }, 500)
+  }
+
+  if (isStreamingRequested(payload)) {
+    applyStreamingHeaders(c, response)
+
+    return streamSSE(c, async (stream) => {
+      const streamState = createAnthropicToResponsesStreamState()
+      let chunkCount = 0
+      try {
+        for await (const event of parseAnthropicSSEBody(response.body)) {
+          await writeAnthropicStreamEvents(stream, event, streamState)
+          chunkCount++
+        }
+      } catch (err) {
+        await writeResponsesStreamError(
+          stream,
+          createPathBStreamErrorEvent(payload.model, err),
+        )
+      } finally {
+        const premium = await resolvePremiumInfo(
+          response,
+          "responses/path-b/stream",
+        )
+        writeStreamLog(
+          { model: payload.model, chunks: chunkCount, done: true, premium },
+          true,
+        )
+        if (!stream.closed) {
+          await stream.close()
+        }
+      }
+    })
+  }
+
+  // Non-stream path
+  let jsonResponse: unknown
+  try {
+    jsonResponse = await response.json()
+  } catch (err) {
+    const message =
+      err instanceof Error ? err.message : "Failed to parse response"
+    return c.json({ error: { message, type: "server_error" } }, 500)
+  }
+
+  const result = translateAnthropicMessageToResponses(
+    jsonResponse as Parameters<typeof translateAnthropicMessageToResponses>[0],
+  )
+  debugJsonTail(logger, "Path B non-stream result:", {
+    value: result,
+    tailLength: 400,
+  })
+  const premium = await resolvePremiumInfo(
+    response,
+    "responses/path-b/non-stream",
+  )
+  writeStreamLog({ model: payload.model, chunks: 0, done: true, premium }, true)
+  return jsonWithForwardedHeaders(
+    result,
+    getAttachedResponseHeaders(response) ?? response.headers,
+  )
+}
+
+const handleWithChatFallback = async (
+  c: Context,
+  { payload, requestId, sessionId }: ResponsesHandlerContext,
+) => {
+  const chatPayload = translateResponsesToChatCompletions(payload)
+
+  consola.info(`IN ${cm(payload.model)} [chat-fallback]`)
+
+  if (state.manualApprove) {
+    await awaitApproval()
+  }
+
+  let response: Awaited<ReturnType<typeof createChatCompletions>>
+  try {
+    response = await createChatCompletions(chatPayload, {
+      requestId,
+      sessionId,
+    })
+  } catch (err) {
+    const message =
+      err instanceof Error ? err.message : "Chat completions fallback failed"
+    return c.json({ error: { message, type: "server_error" } }, 500)
+  }
+
+  if (isStreamingRequested(payload)) {
+    applyForwardableResponseHeaders(c, getAttachedResponseHeaders(response), {
+      "content-type": null,
+      "cache-control": null,
+      connection: null,
+    })
+    return streamSSE(c, async (stream) => {
+      const streamState = createChatCompletionToResponsesStreamState()
+      try {
+        for await (const chunk of response as AsyncIterable<{
+          data?: string
+        }>) {
+          if (chunk.data === "[DONE]") break
+          if (!chunk.data) continue
+          let parsed: ChatCompletionChunk
+          try {
+            parsed = JSON.parse(chunk.data) as ChatCompletionChunk
+          } catch {
+            continue
+          }
+          const sseEvents = translateChatCompletionChunkToResponsesStreamEvents(
+            parsed,
+            streamState,
+          )
+          for (const ev of sseEvents) {
+            debugJson(logger, "Path C stream event:", ev)
+            await stream.writeSSE({ event: ev.type, data: JSON.stringify(ev) })
+          }
+        }
+      } catch (err) {
+        const errorEvent = translateChatCompletionStreamErrorToResponsesEvent(
+          err,
+          streamState,
+        )
+        try {
+          await stream.writeSSE({
+            event: errorEvent.type,
+            data: JSON.stringify(errorEvent),
+          })
+        } catch {
+          // stream already closed
+        }
+      } finally {
+        const premium = await resolvePremiumInfo(
+          response,
+          "responses/path-c/stream",
+        )
+        writeStreamLog(
+          { model: payload.model, chunks: 0, done: true, premium },
+          true,
+        )
+        if (!stream.closed) {
+          await stream.close()
+        }
+      }
+    })
+  }
+
+  // Non-stream
+  const chatResult = response as ChatCompletionResponse
+  const responsesResult = translateChatCompletionToResponsesResult(chatResult)
+  debugJsonTail(logger, "Path C non-stream result:", {
+    value: responsesResult,
+    tailLength: 400,
+  })
+  const premium = await resolvePremiumInfo(
+    response,
+    "responses/path-c/non-stream",
+  )
+  writeStreamLog({ model: payload.model, chunks: 0, done: true, premium }, true)
+  return jsonWithForwardedHeaders(
+    responsesResult,
+    getAttachedResponseHeaders(response),
+  )
+}
+const handleWithCopilotResponses = async ({
+  c,
+  payload,
+  selectedModel,
+  requestId,
+  sessionId,
+}: CopilotResponsesContext) => {
   applyResponsesApiContextManagement(
     payload,
-    selectedModel?.capabilities.limits.max_prompt_tokens,
+    selectedModel.capabilities.limits.max_prompt_tokens,
   )
 
   debugJson(logger, "Translated Responses payload:", payload)
@@ -187,8 +423,82 @@ const handleStreamingResponse = (
     } finally {
       const premium = await resolvePremiumInfo(response, "responses/stream")
       writeStreamLog({ model, chunks: chunkCount, done: true, premium }, true)
+      if (!stream.closed) {
+        await stream.close()
+      }
     }
   })
+}
+
+const applyStreamingHeaders = (c: Context, response: { headers?: Headers }) => {
+  applyForwardableResponseHeaders(
+    c,
+    getAttachedResponseHeaders(response) ?? response.headers,
+    {
+      "content-type": null,
+      "cache-control": null,
+      connection: null,
+    },
+  )
+}
+
+const writeAnthropicStreamEvents = async (
+  stream: Parameters<Parameters<typeof streamSSE>[1]>[0],
+  event: AnthropicStreamEventData,
+  streamState: ReturnType<typeof createAnthropicToResponsesStreamState>,
+) => {
+  const sseEvents = translateAnthropicStreamEventToResponsesStreamEvents(
+    event,
+    streamState,
+  )
+  for (const ev of sseEvents) {
+    debugJson(logger, "Path B stream event:", ev)
+    await stream.writeSSE({
+      event: ev.type,
+      data: JSON.stringify(ev),
+    })
+  }
+}
+
+const createPathBStreamErrorEvent = (model: string, err: unknown) => {
+  const message = err instanceof Error ? err.message : "Stream error"
+  return {
+    type: "response.failed",
+    sequence_number: 0,
+    response: {
+      id: "resp_stream_error",
+      object: "response",
+      created_at: Math.floor(Date.now() / 1000),
+      model,
+      output: [],
+      output_text: "",
+      status: "failed",
+      error: { message },
+      incomplete_details: null,
+      instructions: null,
+      metadata: null,
+      parallel_tool_calls: false,
+      temperature: null,
+      tool_choice: "auto",
+      tools: [],
+      top_p: null,
+      usage: null,
+    },
+  }
+}
+
+const writeResponsesStreamError = async (
+  stream: Parameters<Parameters<typeof streamSSE>[1]>[0],
+  errorEvent: ReturnType<typeof createPathBStreamErrorEvent>,
+) => {
+  try {
+    await stream.writeSSE({
+      event: errorEvent.type,
+      data: JSON.stringify(errorEvent),
+    })
+  } catch {
+    // stream already closed
+  }
 }
 
 const ensureReasoningEffort = (
@@ -212,61 +522,78 @@ const ensureReasoningEffort = (
 const isStreamingRequested = (payload: ResponsesPayload): boolean =>
   Boolean(payload.stream)
 
-const useFunctionApplyPatch = (payload: ResponsesPayload): void => {
-  const config = getConfig()
-  const useFunctionApplyPatch = config.useFunctionApplyPatch ?? true
-  if (useFunctionApplyPatch) {
-    logger.debug("Using function tool apply_patch for responses")
-    if (Array.isArray(payload.tools)) {
-      const toolsArr = payload.tools
-      for (let i = 0; i < toolsArr.length; i++) {
-        const t = toolsArr[i]
-        if (t.type === "custom" && t.name === "apply_patch") {
-          toolsArr[i] = {
-            type: "function",
-            name: t.name,
-            description: "Use the `apply_patch` tool to edit files",
-            parameters: {
-              type: "object",
-              properties: {
-                input: {
-                  type: "string",
-                  description: "The entire contents of the apply_patch command",
-                },
-              },
-              required: ["input"],
-            },
-            strict: false,
-          }
+const parseAnthropicSSEBody = async function* (
+  body: ReadableStream<Uint8Array> | null,
+) {
+  if (!body) {
+    return
+  }
+
+  const reader = body.getReader()
+  const decoder = new TextDecoder()
+  const bufferState = { value: "" }
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+
+      bufferState.value += decoder.decode(value, { stream: true })
+
+      while (true) {
+        const nextEvent = consumeAnthropicSSEEvent(bufferState)
+        if (nextEvent === null) {
+          break
         }
+        if (!nextEvent || nextEvent === "[DONE]") {
+          continue
+        }
+
+        yield parseAnthropicSSEData(nextEvent)
       }
     }
-  }
-}
 
-const removeWebSearchTool = (payload: ResponsesPayload): void => {
-  if (!Array.isArray(payload.tools) || payload.tools.length === 0) return
-
-  payload.tools = payload.tools.filter((t) => {
-    return t.type !== "web_search"
-  })
-}
-
-const COPILOT_UNSUPPORTED_TOOL_TYPES = new Set(["image_generation"])
-
-export const removeUnsupportedTools = (payload: ResponsesPayload): void => {
-  if (!Array.isArray(payload.tools) || payload.tools.length === 0) return
-
-  const dropped: Array<string> = []
-  payload.tools = payload.tools.filter((t) => {
-    const type = t.type as string
-    if (COPILOT_UNSUPPORTED_TOOL_TYPES.has(type)) {
-      dropped.push(type)
-      return false
+    const rest = extractAnthropicSSEData(
+      `${bufferState.value}${decoder.decode()}`,
+    )
+    if (!rest) {
+      return
     }
-    return true
-  })
-  if (dropped.length > 0) {
-    logger.debug("Removed unsupported tools:", dropped)
+
+    if (rest === "[DONE]") {
+      return
+    }
+
+    yield parseAnthropicSSEData(rest)
+  } finally {
+    reader.releaseLock()
   }
 }
+
+const consumeAnthropicSSEEvent = (bufferRef: {
+  value: string
+}): string | null => {
+  const boundaryIndex = bufferRef.value.indexOf("\n\n")
+  if (boundaryIndex === -1) {
+    return null
+  }
+
+  const rawEvent = bufferRef.value.slice(0, boundaryIndex)
+  bufferRef.value = bufferRef.value.slice(boundaryIndex + 2)
+  return extractAnthropicSSEData(rawEvent)
+}
+
+const extractAnthropicSSEData = (rawEvent: string): string => {
+  const lines = rawEvent.split("\n").map((line) => line.replace(/\r$/, ""))
+  let data = ""
+  for (const line of lines) {
+    if (line.startsWith("data:")) {
+      data += `${line.slice(5).trimStart()}\n`
+    }
+  }
+
+  return data.trim()
+}
+
+const parseAnthropicSSEData = (data: string): AnthropicStreamEventData =>
+  JSON.parse(data) as AnthropicStreamEventData

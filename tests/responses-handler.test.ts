@@ -1,6 +1,8 @@
+/* eslint-disable max-lines -- comprehensive responses handler coverage; splitting would obscure related scenarios */
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test"
 import consola from "consola"
 import { Hono } from "hono"
+import { StreamingApi } from "hono/utils/stream"
 import { stripVTControlCharacters } from "node:util"
 
 import type {
@@ -16,6 +18,8 @@ import { attachResponseHeaders } from "~/lib/response-headers"
 import { state } from "~/lib/state"
 import { generateRequestIdFromPayload, getUUID } from "~/lib/utils"
 import { handleResponses } from "~/routes/responses/handler"
+import * as createChatCompletionsModule from "~/services/copilot/create-chat-completions"
+import * as createMessagesModule from "~/services/copilot/create-messages"
 import * as createResponsesModule from "~/services/copilot/create-responses"
 
 const responseResult: ResponsesResult = {
@@ -48,6 +52,69 @@ const createStreamResponse = (
     }
   })() as ResponsesStream
 
+const chatCompletionResponse = {
+  id: "chatcmpl-1",
+  object: "chat.completion" as const,
+  created: 0,
+  model: "gemini-2.5-pro",
+  choices: [
+    {
+      index: 0,
+      message: {
+        role: "assistant" as const,
+        content: "Hello from Gemini",
+        tool_calls: [] as [],
+      },
+      finish_reason: "stop" as const,
+      logprobs: null,
+    },
+  ],
+  usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+}
+
+const anthropicMessageResponse = {
+  id: "msg_123",
+  type: "message",
+  role: "assistant",
+  model: "claude-sonnet-4",
+  content: [{ type: "text", text: "Hello from Claude" }],
+  stop_reason: "end_turn",
+  stop_sequence: null,
+  usage: { input_tokens: 12, output_tokens: 7 },
+}
+
+const anthropicToolUseResponse = {
+  id: "msg_tool",
+  type: "message",
+  role: "assistant",
+  model: "claude-sonnet-4",
+  content: [
+    { type: "text", text: "Using tool" },
+    {
+      type: "tool_use",
+      id: "toolu_1",
+      name: "get_weather",
+      input: { city: "Shanghai" },
+    },
+  ],
+  stop_reason: "tool_use",
+  stop_sequence: null,
+  usage: { input_tokens: 14, output_tokens: 9 },
+}
+
+const createAnthropicNativeResponse = (
+  body: string,
+  init?: ResponseInit,
+): Response => new Response(body, init)
+
+const createAnthropicSSEChunks = (events: Array<unknown>): string =>
+  events
+    .map(
+      (event) =>
+        `event: ${(event as { type: string }).type}\ndata: ${JSON.stringify(event)}\n\n`,
+    )
+    .join("")
+
 const attachHeaders = <T extends object>(
   value: T,
   headers: Record<string, string>,
@@ -77,6 +144,188 @@ const getFirstInfoCall = (
 type CreateResponsesOptions = Parameters<
   typeof createResponsesModule.createResponses
 >[1]
+type AppConfig = configModule.AppConfig
+
+const testModels = {
+  object: "list" as const,
+  data: [
+    {
+      id: "gpt-test",
+      name: "gpt-test",
+      object: "model" as const,
+      preview: false,
+      model_picker_enabled: true,
+      vendor: "copilot",
+      version: "1",
+      supported_endpoints: ["/responses"],
+      capabilities: {
+        family: "gpt",
+        object: "model" as const,
+        supports: { streaming: true },
+        tokenizer: "tiktoken",
+        type: "text",
+        limits: { max_prompt_tokens: 1000 },
+      },
+    },
+    {
+      id: "claude-sonnet-4",
+      name: "claude-sonnet-4",
+      object: "model" as const,
+      preview: false,
+      model_picker_enabled: true,
+      vendor: "anthropic",
+      version: "1",
+      supported_endpoints: ["/chat/completions", "/v1/messages"],
+      capabilities: {
+        family: "claude",
+        object: "model" as const,
+        supports: { streaming: true },
+        tokenizer: "claude",
+        type: "text",
+        limits: { max_prompt_tokens: 128000 },
+      },
+    },
+    {
+      id: "gemini-2.5-pro",
+      name: "gemini-2.5-pro",
+      object: "model" as const,
+      preview: false,
+      model_picker_enabled: true,
+      vendor: "google",
+      version: "1",
+      supported_endpoints: undefined,
+      capabilities: {
+        family: "gemini",
+        object: "model" as const,
+        supports: { streaming: true },
+        tokenizer: "tiktoken",
+        type: "text",
+        limits: { max_prompt_tokens: 100000 },
+      },
+    },
+  ],
+}
+
+const defaultConfig = (): AppConfig => ({
+  ...configModule.getConfig(),
+  useFunctionApplyPatch: true,
+  modelReasoningEfforts: { "gpt-test": "high" },
+})
+
+const postResponses = (payload: Record<string, unknown>) =>
+  createApp().request("/v1/responses", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  })
+
+const createRoutingTestSpies = () => {
+  const rateLimitSpy = spyOn(
+    rateLimitModule,
+    "checkRateLimit",
+  ).mockResolvedValue()
+  const getConfigSpy = spyOn(configModule, "getConfig").mockReturnValue(
+    defaultConfig(),
+  )
+  const createResponsesSpy = spyOn(
+    createResponsesModule,
+    "createResponses",
+  ).mockResolvedValue(responseResult)
+  const createChatCompletionsSpy = spyOn(
+    createChatCompletionsModule,
+    "createChatCompletions",
+  ).mockResolvedValue(chatCompletionResponse)
+  const createMessagesSpy = spyOn(
+    createMessagesModule,
+    "createMessages",
+  ).mockResolvedValue(
+    createAnthropicNativeResponse(JSON.stringify(anthropicMessageResponse)),
+  )
+
+  return {
+    rateLimitSpy,
+    getConfigSpy,
+    createResponsesSpy,
+    createChatCompletionsSpy,
+    createMessagesSpy,
+  }
+}
+
+const postRoutingRequest = (
+  model: string,
+  overrides: Record<string, unknown> = {},
+) =>
+  postResponses({
+    model,
+    input: [{ role: "user", content: "hi" }],
+    ...overrides,
+  })
+
+const createPathBStreamResponse = (events: Array<unknown>) =>
+  createAnthropicNativeResponse(createAnthropicSSEChunks(events), {
+    headers: { "content-type": "text/event-stream" },
+  })
+
+const pathBStreamEvents = (): Array<unknown> => [
+  {
+    type: "message_start",
+    message: {
+      id: "msg_stream",
+      type: "message",
+      role: "assistant",
+      model: "claude-sonnet-4",
+      content: [],
+      stop_reason: null,
+      stop_sequence: null,
+      usage: { input_tokens: 10, output_tokens: 0 },
+    },
+  },
+  {
+    type: "content_block_start",
+    index: 0,
+    content_block: { type: "text", text: "" },
+  },
+  { type: "ping" },
+  {
+    type: "content_block_delta",
+    index: 0,
+    delta: { type: "text_delta", text: "Hello" },
+  },
+  { type: "content_block_stop", index: 0 },
+  {
+    type: "message_delta",
+    delta: { stop_reason: "end_turn", stop_sequence: null },
+    usage: { output_tokens: 5 },
+  },
+  { type: "message_stop" },
+]
+
+const pathBStreamErrorEvents = (): Array<unknown> => [
+  {
+    type: "message_start",
+    message: {
+      id: "msg_stream_error",
+      type: "message",
+      role: "assistant",
+      model: "claude-sonnet-4",
+      content: [],
+      stop_reason: null,
+      stop_sequence: null,
+      usage: { input_tokens: 10, output_tokens: 0 },
+    },
+  },
+  { type: "error", error: { type: "api_error", message: "upstream boom" } },
+]
+
+const restoreRoutingTestSpies = (
+  spies: Partial<ReturnType<typeof createRoutingTestSpies>>,
+) => {
+  spies.rateLimitSpy?.mockRestore()
+  spies.getConfigSpy?.mockRestore()
+  spies.createResponsesSpy?.mockRestore()
+  spies.createChatCompletionsSpy?.mockRestore()
+  spies.createMessagesSpy?.mockRestore()
+}
 
 test("normalizes ANSI-colored info logs before assertions", () => {
   expect(
@@ -113,29 +362,7 @@ describe("handleResponses reasoning effort", () => {
   >
 
   beforeEach(() => {
-    state.models = {
-      object: "list",
-      data: [
-        {
-          id: "gpt-test",
-          name: "gpt-test",
-          object: "model",
-          preview: false,
-          model_picker_enabled: true,
-          vendor: "copilot",
-          version: "1",
-          supported_endpoints: ["/responses"],
-          capabilities: {
-            family: "gpt",
-            object: "model",
-            supports: { streaming: true },
-            tokenizer: "tiktoken",
-            type: "text",
-            limits: { max_prompt_tokens: 1000 },
-          },
-        },
-      ],
-    }
+    state.models = { object: testModels.object, data: [testModels.data[0]] }
 
     receivedPayload = undefined
     receivedOptions = undefined
@@ -151,11 +378,9 @@ describe("handleResponses reasoning effort", () => {
       return Promise.resolve(responseResult)
     })
     rateLimitSpy = spyOn(rateLimitModule, "checkRateLimit").mockResolvedValue()
-    getConfigSpy = spyOn(configModule, "getConfig").mockReturnValue({
-      ...configModule.getConfig(),
-      useFunctionApplyPatch: true,
-      modelReasoningEfforts: { "gpt-test": "high" },
-    })
+    getConfigSpy = spyOn(configModule, "getConfig").mockReturnValue(
+      defaultConfig(),
+    )
     resolveEffortSpy = spyOn(
       configModule,
       "resolveEffortForLog",
@@ -639,5 +864,304 @@ describe("handleResponses streaming logs", () => {
     expect(res.headers.get("x-usage-ratelimit-weekly")).toBe(
       "rem=74.9&rst=2026-04-27T00%3A00%3A00Z",
     )
+  })
+})
+
+describe("handleResponses 3-level model routing", () => {
+  const originalModels = state.models
+  let routingSpies: ReturnType<typeof createRoutingTestSpies>
+
+  beforeEach(() => {
+    state.models = structuredClone(testModels)
+    routingSpies = createRoutingTestSpies()
+  })
+
+  afterEach(() => {
+    state.models = originalModels
+    restoreRoutingTestSpies(routingSpies)
+  })
+
+  describe("Path A", () => {
+    test("model with /responses endpoint returns 200 (behavior unchanged)", async () => {
+      const res = await postRoutingRequest("gpt-test")
+
+      expect(res.status).toBe(200)
+      expect(routingSpies.createResponsesSpy).toHaveBeenCalled()
+    })
+  })
+
+  describe("Path B", () => {
+    test("model with /v1/messages endpoint returns ResponsesResult", async () => {
+      const res = await postRoutingRequest("claude-sonnet-4")
+
+      expect(res.status).toBe(200)
+      const body = (await res.json()) as ResponsesResult
+      expect(body.object).toBe("response")
+      expect(body.output_text).toBe("Hello from Claude")
+      expect(body.status).toBe("completed")
+      expect(routingSpies.createMessagesSpy).toHaveBeenCalled()
+      expect(routingSpies.createResponsesSpy).not.toHaveBeenCalled()
+      expect(routingSpies.createChatCompletionsSpy).not.toHaveBeenCalled()
+    })
+
+    test("forwards attached upstream headers on non-stream response", async () => {
+      routingSpies.createMessagesSpy.mockResolvedValueOnce(
+        attachResponseHeaders(
+          createAnthropicNativeResponse(
+            JSON.stringify(anthropicMessageResponse),
+          ),
+          new Headers({
+            "x-usage-ratelimit-session": "rem=4.2&rst=2026-04-28T00%3A00%3A00Z",
+          }),
+        ),
+      )
+
+      const res = await postRoutingRequest("claude-sonnet-4")
+
+      expect(res.status).toBe(200)
+      expect(res.headers.get("x-usage-ratelimit-session")).toBe(
+        "rem=4.2&rst=2026-04-28T00%3A00%3A00Z",
+      )
+    })
+
+    test("tool_use non-stream is translated into Responses function_call", async () => {
+      routingSpies.createMessagesSpy.mockResolvedValueOnce(
+        createAnthropicNativeResponse(JSON.stringify(anthropicToolUseResponse)),
+      )
+
+      const res = await postResponses({
+        model: "claude-sonnet-4",
+        input: [{ role: "user", content: "weather" }],
+      })
+
+      expect(res.status).toBe(200)
+      const body = (await res.json()) as ResponsesResult
+      const functionCall = body.output.find(
+        (item) => item.type === "function_call",
+      )
+      expect(functionCall).toBeDefined()
+      expect(functionCall).toMatchObject({
+        type: "function_call",
+        call_id: "toolu_1",
+        name: "get_weather",
+        arguments: JSON.stringify({ city: "Shanghai" }),
+        status: "completed",
+      })
+    })
+
+    describe("streaming", () => {
+      test("returns Responses SSE events", async () => {
+        routingSpies.createMessagesSpy.mockResolvedValueOnce(
+          createPathBStreamResponse(pathBStreamEvents()),
+        )
+
+        const res = await postRoutingRequest("claude-sonnet-4", {
+          stream: true,
+        })
+
+        expect(res.status).toBe(200)
+        const text = await res.text()
+        expect(text).toContain("event: response.created")
+        expect(text).toContain("event: response.output_text.delta")
+        expect(text).toContain("event: response.completed")
+        expect(text).not.toContain("event: ping")
+      })
+
+      test("ignores [DONE] terminator without emitting response.failed", async () => {
+        const sseBody = `${createAnthropicSSEChunks(pathBStreamEvents())}data: [DONE]\n\n`
+        routingSpies.createMessagesSpy.mockResolvedValueOnce(
+          createAnthropicNativeResponse(sseBody, {
+            headers: { "content-type": "text/event-stream" },
+          }),
+        )
+
+        const res = await postRoutingRequest("claude-sonnet-4", {
+          stream: true,
+        })
+
+        expect(res.status).toBe(200)
+        const text = await res.text()
+        expect(text).toContain("event: response.completed")
+        expect(text).not.toContain("event: response.failed")
+        expect(text).not.toContain("DONE")
+      })
+
+      test("errors are mapped to response.failed", async () => {
+        routingSpies.createMessagesSpy.mockResolvedValueOnce(
+          createPathBStreamResponse(pathBStreamErrorEvents()),
+        )
+
+        const res = await postRoutingRequest("claude-sonnet-4", {
+          stream: true,
+        })
+
+        expect(res.status).toBe(200)
+        const text = await res.text()
+        expect(text).toContain("event: response.failed")
+        expect(text).toContain("upstream boom")
+      })
+    })
+
+    test("upstream non-stream errors are wrapped in Responses-style envelope", async () => {
+      routingSpies.createMessagesSpy.mockRejectedValueOnce(
+        new Error("messages backend failed"),
+      )
+
+      const res = await postRoutingRequest("claude-sonnet-4")
+
+      expect(res.status).toBe(500)
+      const body = (await res.json()) as {
+        error: { message: string; type: string }
+      }
+      expect(body.error).toEqual({
+        message: "messages backend failed",
+        type: "server_error",
+      })
+    })
+  })
+
+  describe("Path C", () => {
+    test("model with undefined endpoints (gemini-2.5-pro) routes to chat fallback", async () => {
+      const res = await postRoutingRequest("gemini-2.5-pro")
+
+      expect(res.status).toBe(200)
+      expect(routingSpies.createChatCompletionsSpy).toHaveBeenCalled()
+      expect(routingSpies.createResponsesSpy).not.toHaveBeenCalled()
+      const body = (await res.json()) as {
+        id: string
+        object: string
+        status: string
+      }
+      expect(body.object).toBe("response")
+      expect(body.status).toBe("completed")
+    })
+
+    test("gemini non-stream returns ResponsesResult with output_text", async () => {
+      const res = await postResponses({
+        model: "gemini-2.5-pro",
+        input: [{ role: "user", content: "hello" }],
+      })
+
+      expect(res.status).toBe(200)
+      const body = (await res.json()) as { output_text: string; id: string }
+      expect(body.output_text).toBe("Hello from Gemini")
+      expect(body.id).toMatch(/^resp_/)
+    })
+  })
+
+  describe("unknown model", () => {
+    test("returns 400 invalid_request_error and skips upstream fetch", async () => {
+      const res = await postRoutingRequest("not-a-real-model")
+
+      expect(res.status).toBe(400)
+      const body = (await res.json()) as {
+        error: { type: string; message: string; code?: string; param?: string }
+      }
+      expect(body.error.type).toBe("invalid_request_error")
+      expect(body.error.message).toContain("not-a-real-model")
+      expect(routingSpies.createResponsesSpy).not.toHaveBeenCalled()
+      expect(routingSpies.createMessagesSpy).not.toHaveBeenCalled()
+      expect(routingSpies.createChatCompletionsSpy).not.toHaveBeenCalled()
+    })
+  })
+})
+
+describe("handleResponses stream cleanup", () => {
+  const originalModels = state.models
+  let routingSpies: ReturnType<typeof createRoutingTestSpies>
+  let closeSpy: ReturnType<typeof spyOn<StreamingApi, "close">>
+
+  beforeEach(() => {
+    state.models = structuredClone(testModels)
+    routingSpies = createRoutingTestSpies()
+    closeSpy = spyOn(StreamingApi.prototype, "close")
+  })
+
+  afterEach(() => {
+    state.models = originalModels
+    restoreRoutingTestSpies(routingSpies)
+    closeSpy.mockRestore()
+  })
+
+  test("Path A native Responses stream closes the SSE stream in finally", async () => {
+    routingSpies.createResponsesSpy.mockResolvedValueOnce(
+      createStreamResponse([
+        { event: "response.created", data: '{"type":"response.created"}' },
+        { event: "response.completed", data: '{"type":"response.completed"}' },
+      ]),
+    )
+
+    const res = await postRoutingRequest("gpt-test", { stream: true })
+    expect(res.status).toBe(200)
+    await res.text()
+    expect(closeSpy).toHaveBeenCalled()
+  })
+
+  test("Path A closes the SSE stream even when upstream iterator throws", async () => {
+    const explodingStream = (async function* () {
+      yield await Promise.resolve({
+        event: "response.created",
+        data: '{"type":"response.created"}',
+      })
+      throw new Error("upstream blew up")
+    })() as ResponsesStream
+    routingSpies.createResponsesSpy.mockResolvedValueOnce(explodingStream)
+
+    const res = await postRoutingRequest("gpt-test", { stream: true })
+    expect(res.status).toBe(200)
+    try {
+      await res.text()
+    } catch {
+      // body abort is acceptable; we only care about the close contract
+    }
+    expect(closeSpy).toHaveBeenCalled()
+  })
+
+  test("Path B Anthropic SSE translation closes the SSE stream in finally", async () => {
+    routingSpies.createMessagesSpy.mockResolvedValueOnce(
+      createPathBStreamResponse(pathBStreamEvents()),
+    )
+
+    const res = await postRoutingRequest("claude-sonnet-4", { stream: true })
+    expect(res.status).toBe(200)
+    await res.text()
+    expect(closeSpy).toHaveBeenCalled()
+  })
+
+  test("Path B closes the SSE stream when upstream emits an error event", async () => {
+    routingSpies.createMessagesSpy.mockResolvedValueOnce(
+      createPathBStreamResponse(pathBStreamErrorEvents()),
+    )
+
+    const res = await postRoutingRequest("claude-sonnet-4", { stream: true })
+    expect(res.status).toBe(200)
+    await res.text()
+    expect(closeSpy).toHaveBeenCalled()
+  })
+
+  test("Path C chat fallback stream closes the SSE stream in finally", async () => {
+    routingSpies.createChatCompletionsSpy.mockResolvedValueOnce(
+      createStreamResponse([
+        {
+          data: JSON.stringify({
+            id: "chatcmpl-stream",
+            object: "chat.completion.chunk",
+            created: 0,
+            model: "gemini-2.5-pro",
+            choices: [
+              { index: 0, delta: { content: "hi" }, finish_reason: null },
+            ],
+          }),
+        },
+        { data: "[DONE]" },
+      ]) as unknown as Awaited<
+        ReturnType<typeof createChatCompletionsModule.createChatCompletions>
+      >,
+    )
+
+    const res = await postRoutingRequest("gemini-2.5-pro", { stream: true })
+    expect(res.status).toBe(200)
+    await res.text()
+    expect(closeSpy).toHaveBeenCalled()
   })
 })
