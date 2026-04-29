@@ -14,6 +14,7 @@ description: "This skill should be used when the user asks to merge `caozhiyuan/
 - “merge caozhiyuan/all to czy-all”
 - “push czy-all”
 - “raise pr from czy-all to dev”
+- “merge PR from czy-all to dev”
 - “resolve the pr conflicts one by one”
 - “best of both worlds”
 - “把 caozhiyuan/all 同步到 czy-all 再 PR 到 dev”
@@ -26,15 +27,21 @@ description: "This skill should be used when the user asks to merge `caozhiyuan/
 - `czy-all`（tracking `origin/czy-all`）：本仓库的**镜像/承接分支**，用于保持与 `caozhiyuan/all` 同步，并作为 PR 源头。
 - `dev`：本仓库目标集成分支。
 
-默认目标是：
+固定目标是：
 
 1. 先把 `caozhiyuan/all` 同步到 `czy-all`（只在 `czy-all` 上操作）
-2. 再把 `czy-all -> dev`
+2. 再把 `czy-all -> dev` 集成到 `dev`
 
-`czy-all -> dev` 有两种合法执行方式，按用户意图选择：
+### PR 是唯一集成入口（关键）
 
-- **PR 流（默认）**：推送 `origin/czy-all` 后创建或更新 `czy-all -> dev` PR，通过 GitHub PR 状态、checks、review 与最终授权完成合并。
-- **直接本地 merge 流（仅在用户明确说 “just merge from czy-all to dev” / “merge czy-all into dev” / 等价表达时）**：留在或切回 `dev`，执行 `git merge czy-all`，逐块解决冲突，验证后把 merge commit 落在 `dev`。这仍然是 `czy-all -> dev`，不是反向污染 `czy-all`。
+始终创建或使用 `czy-all -> dev` PR。这里的“merge PR”在本仓库按下面方式完成：
+
+1. 先确保 `origin/czy-all` 已推送，且 PR 指向 `dev`。
+2. 若 PR 可直接通过 GitHub merge，则按 PR 状态和用户授权执行。
+3. 若 PR 有冲突，则在本地 `dev` 上执行 `git merge --no-ff czy-all`，逐块解决冲突，验证后 push `origin dev`。
+4. GitHub 发现 `dev` 已包含 PR head 后，原 `czy-all -> dev` PR 会自动变为 merged/closed。
+
+这仍然是通过 PR 完成 `czy-all -> dev`，不是绕过 PR，也不是反向污染 `czy-all`。
 
 **禁止默认做法：**
 
@@ -45,7 +52,7 @@ description: "This skill should be used when the user asks to merge `caozhiyuan/
 
 1. **保持 tracking 不乱改。** 除非用户明确要求，不要擅自把 `czy-all` 的 upstream 从 `origin/czy-all` 改到别的远端。
 2. **把“拉内容”和“改 tracking”分开。** 需要同步 `caozhiyuan/all` 时，直接 `git pull caozhiyuan all` 或等价操作；不要顺手重写 upstream。
-3. **合并方向固定。** 这条工作流里，默认 PR 方向是 `czy-all -> dev`；用户明确要求直接 merge 时，本地方向也是 `dev <- czy-all`。
+3. **合并方向固定。** 这条工作流里，PR 方向始终是 `czy-all -> dev`；PR 冲突时，本地解决方向是 `dev <- czy-all`。
 4. **冲突逐个解，不批量糊。** 出现 PR conflict 后，不要直接全选 ours/theirs，不要一次性大面积接受某一边。
 5. **优先保留两边有效意图。** 目标不是“偏向哪边”，而是“best of both worlds”。
 6. **冲突决定权在用户。** agent 负责把每个冲突拆成可理解的选项、说明影响并执行用户决定；不要替用户拍板。
@@ -68,10 +75,11 @@ description: "This skill should be used when the user asks to merge `caozhiyuan/
 再做一次方向检查（必须明确回答）：
 
 - 本次是否在执行 `czy-all -> dev`？
-- 当前操作是否只会临时切到 `czy-all` 做同步，然后回到 `dev`；或在用户明确要求直接 merge 时留在 `dev` 执行 `git merge czy-all`？
+- 当前是否已创建或确认存在 `czy-all -> dev` PR？
+- 当前操作是否只会临时切到 `czy-all` 做同步，然后回到 `dev`；若要解决 PR 冲突，是否是在 `dev` 上执行 `git merge --no-ff czy-all`？
 - 当前操作是否会把 `dev` 反向写入 `czy-all`？
 
-若第三问答案是“会”，且用户未明确要求，则应立即停止并改回正确流程。用户明确要求“merge from `czy-all` to `dev`”时，执行 `dev <- czy-all`，不要误判为禁止项；禁止项只是不经授权把 `dev` 合回 `czy-all`。
+若最后一问答案是“会”，立即停止；这不是本 skill 的流程。解决 PR 冲突时允许 `dev <- czy-all`，禁止 `czy-all <- dev`。
 
 推荐命令：
 
@@ -111,7 +119,7 @@ git push origin czy-all
 git checkout dev
 ```
 
-### 第五步：创建 PR（`czy-all -> dev`）
+### 第五步：创建或确认 PR（`czy-all -> dev`）
 
 使用 `gh` 创建 PR：
 
@@ -150,7 +158,7 @@ gh pr view <number> --json mergeable,mergeStateStatus,statusCheckRollup,reviewDe
 - **无冲突但仍有阻塞项**：若 checks 失败/未完成，或 `reviewDecision` 仍阻塞，或 PR 仍是 draft，或还有其他 merge queue / review 阻塞项，把这些失败项或等待项明确告诉用户，不要把“已开 PR”误报成“已完成”。
 - **无冲突且已具备 merge 条件**：只有在 checks 已通过、review 不阻塞、PR 不是 draft，且 `mergeable` / `mergeStateStatus` 已明确表明可继续时，才明确告诉用户“现在已可执行最终 merge”，并询问是否继续。
 
-### 第七步：得到用户授权后，执行最终 merge 到 `dev`
+### 第七步：merge PR 到 `dev`
 
 PR 可合并时，除非用户已明确授权，否则不要擅自完成最终 merge。
 
@@ -174,7 +182,30 @@ merge 完成后，还要再次确认：
 - 当前分支仍是 `dev`
 - 工作树仍干净
 
-补充说明：`gh pr merge` 完成的是 GitHub 上的远端 PR merge；若要确认本地 `dev` 也已包含 merge 结果，应再执行一次 `git pull --ff-only origin dev`（或等价的 fetch + fast-forward 验证），不要把“远端已 merge”误报成“本地 dev 已同步”。
+若 PR 有冲突，按本仓库约定在本地合并 PR：
+
+```bash
+git checkout dev
+git merge --no-ff czy-all
+```
+
+冲突仍按后文“逐块走 best of both worlds”处理；冲突解决应落在 `dev` 的 merge commit 中，不得在 `czy-all` 上提交“解决冲突”提交。
+
+验证通过后提交 merge commit（若 `git merge` 未自动提交）并推送：
+
+```bash
+git push origin dev
+```
+
+推送后立即检查原 `czy-all -> dev` PR：
+
+```bash
+gh pr view <number> --json state,mergedAt,mergeable,mergeStateStatus,headRefOid,url
+```
+
+若 GitHub 显示 PR `MERGED` 或 base 已包含 head，则本地解决 PR 冲突流程完成；若状态仍为 `UNKNOWN`，等待后重查；若仍 `CONFLICTING`，停止并报告实际状态。
+
+补充说明：若 PR 无冲突且通过 `gh pr merge` 完成远端 merge，应再执行一次 `git pull --ff-only origin dev`（或等价的 fetch + fast-forward 验证），不要把“远端已 merge”误报成“本地 dev 已同步”。
 
 ## 冲突处理：逐块走 “best of both worlds”
 
@@ -331,6 +362,7 @@ czy-all 侧：
 - 因为冲突多就一次性全文件接受单边
 - 把”跟踪谁”与”拉谁的内容”混为一谈
 - 未经用户明确要求，在 `czy-all` 上执行 `merge dev` / `rebase dev` 之类反向写入
+- PR 有冲突时，仍误以为只能在 GitHub 页面解决，而拒绝在本地 `dev <- czy-all` 后 push `dev` 让 PR 自动 merged
 - 把 `czy-all` 当作长期开发分支，写入与”同步 caozhiyuan/all + 提 PR 到 dev”无关的改动
 - 没有先 push `origin/czy-all` 就开 PR
 - PR 摘要不看实际提交和 diff，胡乱概括
@@ -346,6 +378,7 @@ czy-all 侧：
 - `caozhiyuan/all` 的最新内容已经带进本地 `czy-all`
 - `origin/czy-all` 已推送
 - PR 已从 `czy-all` 指向 `dev`
+- 若通过本地解决 PR 冲突，`dev` 已包含 `czy-all` head，已推送 `origin/dev`，且 PR 已自动变为 merged/closed
 - 若有冲突，已逐块分析，而不是整边覆盖
 - 若无冲突，已向用户明确汇报 checks / merge 状态，并处理到“等待项已说明”或“最终 merge 已完成”这两个收尾之一
 
