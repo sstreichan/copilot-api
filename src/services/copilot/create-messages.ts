@@ -153,26 +153,13 @@ const allowedAnthropicBetas = new Set([
   ADVANCED_TOOL_USE_BETA,
 ])
 
-const TOOL_SEARCH_SUPPORTED_MODELS = [
-  "claude-sonnet-4.5",
-  "claude-sonnet-4.6",
-  "claude-opus-4.5",
-  "claude-opus-4.6",
-] as const
-
-const modelSupportsToolSearch = (modelId: string): boolean => {
-  return TOOL_SEARCH_SUPPORTED_MODELS.some((prefix) =>
-    modelId.toLowerCase().startsWith(prefix),
-  )
-}
-
-const resolveAnthropicBetaHeader = (
-  options: CreateMessagesOptions,
-  supportsAdaptive: boolean,
-  payload: AnthropicMessagesPayload,
+const buildAnthropicBetaHeader = (
+  anthropicBetaHeader: string | undefined,
+  adaptiveThinkingEnabled: boolean,
+  thinking: AnthropicMessagesPayload["thinking"],
 ): string | undefined => {
-  if (options.anthropicBeta) {
-    const filteredBeta = options.anthropicBeta
+  if (anthropicBetaHeader) {
+    const filteredBeta = anthropicBetaHeader
       .split(",")
       .map((item) => item.trim())
       .filter((item) => item.length > 0)
@@ -180,19 +167,13 @@ const resolveAnthropicBetaHeader = (
     const dedupedBetas = [...new Set(filteredBeta)]
     // Adaptive thinking conflicts with interleaved-thinking beta
     const finalFilteredBetas =
-      supportsAdaptive ?
+      adaptiveThinkingEnabled ?
         dedupedBetas.filter((item) => item !== INTERLEAVED_THINKING_BETA)
       : dedupedBetas
 
     // in vscode copilot extension, advanced-tool-use is enabled by default
     // align header with vscode copilot extension
-
-    // will remove append ADVANCED_TOOL_USE_BETA in next github copilot extension version (>0.44.2)
-    const copilotHeaderSet =
-      modelSupportsToolSearch(payload.model) ? [ADVANCED_TOOL_USE_BETA] : []
-    const headerSet = new Set([...copilotHeaderSet, ...finalFilteredBetas])
-    const uniqueFilteredBetas = [...headerSet]
-
+    const uniqueFilteredBetas = [...new Set(finalFilteredBetas)]
     if (uniqueFilteredBetas.length > 0) {
       return uniqueFilteredBetas.join(",")
     }
@@ -200,7 +181,7 @@ const resolveAnthropicBetaHeader = (
     return undefined
   }
 
-  if (!supportsAdaptive && payload.thinking?.budget_tokens) {
+  if (!adaptiveThinkingEnabled && thinking?.budget_tokens) {
     return INTERLEAVED_THINKING_BETA
   }
 
@@ -430,10 +411,10 @@ export const createMessages = async (
   const adaptiveThinkingEnabled =
     supportsAdaptive && !shouldDisableThinkingForToolChoice(payload)
 
-  const betaHeader = resolveAnthropicBetaHeader(
-    options,
+  const betaHeader = buildAnthropicBetaHeader(
+    options.anthropicBeta,
     adaptiveThinkingEnabled,
-    payload,
+    payload.thinking,
   )
   if (betaHeader) {
     headers["anthropic-beta"] = betaHeader

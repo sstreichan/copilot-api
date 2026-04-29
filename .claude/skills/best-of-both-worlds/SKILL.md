@@ -1,6 +1,6 @@
 ---
 name: best-of-both-worlds
-description: "This skill should be used when the user asks to merge `caozhiyuan/all` into `czy-all`, push `czy-all`, create a PR from `czy-all` to `dev`, or resolve merge conflicts one by one by combining the best parts of both branches."
+description: "This skill should be used when the user asks to merge `caozhiyuan/all` into `czy-all`, push `czy-all`, create a PR from `czy-all` to `dev`, directly merge `czy-all` into `dev`, or resolve merge conflicts by combining both branches."
 ---
 
 # Best of Both Worlds
@@ -31,6 +31,11 @@ description: "This skill should be used when the user asks to merge `caozhiyuan/
 1. 先把 `caozhiyuan/all` 同步到 `czy-all`（只在 `czy-all` 上操作）
 2. 再把 `czy-all -> dev`
 
+`czy-all -> dev` 有两种合法执行方式，按用户意图选择：
+
+- **PR 流（默认）**：推送 `origin/czy-all` 后创建或更新 `czy-all -> dev` PR，通过 GitHub PR 状态、checks、review 与最终授权完成合并。
+- **直接本地 merge 流（仅在用户明确说 “just merge from czy-all to dev” / “merge czy-all into dev” / 等价表达时）**：留在或切回 `dev`，执行 `git merge czy-all`，逐块解决冲突，验证后把 merge commit 落在 `dev`。这仍然是 `czy-all -> dev`，不是反向污染 `czy-all`。
+
 **禁止默认做法：**
 
 - 未经用户明确要求，不得执行 `dev -> czy-all`（例如在 `czy-all` 上 merge `dev`）。
@@ -40,7 +45,7 @@ description: "This skill should be used when the user asks to merge `caozhiyuan/
 
 1. **保持 tracking 不乱改。** 除非用户明确要求，不要擅自把 `czy-all` 的 upstream 从 `origin/czy-all` 改到别的远端。
 2. **把“拉内容”和“改 tracking”分开。** 需要同步 `caozhiyuan/all` 时，直接 `git pull caozhiyuan all` 或等价操作；不要顺手重写 upstream。
-3. **PR 方向固定。** 这条工作流里，PR 默认是 `czy-all -> dev`。
+3. **合并方向固定。** 这条工作流里，默认 PR 方向是 `czy-all -> dev`；用户明确要求直接 merge 时，本地方向也是 `dev <- czy-all`。
 4. **冲突逐个解，不批量糊。** 出现 PR conflict 后，不要直接全选 ours/theirs，不要一次性大面积接受某一边。
 5. **优先保留两边有效意图。** 目标不是“偏向哪边”，而是“best of both worlds”。
 6. **冲突决定权在用户。** agent 负责把每个冲突拆成可理解的选项、说明影响并执行用户决定；不要替用户拍板。
@@ -63,10 +68,10 @@ description: "This skill should be used when the user asks to merge `caozhiyuan/
 再做一次方向检查（必须明确回答）：
 
 - 本次是否在执行 `czy-all -> dev`？
-- 当前操作是否只会临时切到 `czy-all` 做同步，然后回到 `dev`？
+- 当前操作是否只会临时切到 `czy-all` 做同步，然后回到 `dev`；或在用户明确要求直接 merge 时留在 `dev` 执行 `git merge czy-all`？
 - 当前操作是否会把 `dev` 反向写入 `czy-all`？
 
-若第三问答案是“会”，且用户未明确要求，则应立即停止并改回正确流程。
+若第三问答案是“会”，且用户未明确要求，则应立即停止并改回正确流程。用户明确要求“merge from `czy-all` to `dev`”时，执行 `dev <- czy-all`，不要误判为禁止项；禁止项只是不经授权把 `dev` 合回 `czy-all`。
 
 推荐命令：
 
