@@ -138,10 +138,16 @@ export function recordTokenUsageEvent(input: TokenUsageEventInput): void {
 export function createTokenUsageRecorder(
   options: TokenUsageRecorderOptions,
 ): (usage: UsageTokens) => void {
+  const store = requestContext.getStore()
+  const traceId = options.traceId ?? store?.traceId
+  const sessionId = options.sessionId ?? store?.sessionAffinity
+
   return (usage) => {
     recordTokenUsageEvent({
       ...usage,
       ...options,
+      sessionId,
+      traceId,
     })
   }
 }

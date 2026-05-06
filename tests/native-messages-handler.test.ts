@@ -11,12 +11,17 @@ import * as modelsModule from "~/lib/models"
 import * as rateLimitModule from "~/lib/rate-limit"
 import { attachResponseHeaders } from "~/lib/response-headers"
 import { state } from "~/lib/state"
+import { closeUsageStore } from "~/lib/token-usage"
+import { traceIdMiddleware } from "~/lib/trace"
 import {
   getInitiatorFromPayload,
   isClaudeModel,
 } from "~/routes/messages/api-flows"
 import { handleCompletion } from "~/routes/messages/handler"
+import { tokenUsageRoute } from "~/routes/token-usage/route"
 import * as createMessagesModule from "~/services/copilot/create-messages"
+
+const DB_PATH_ENV = "COPILOT_API_SQLITE_DB_PATH"
 
 const createSseResponse = (events: Array<string>): Response => {
   const encoder = new TextEncoder()
@@ -296,6 +301,7 @@ describe("native handler", () => {
 
   test("logs anthropic effort mapping for config fallback", async () => {
     const app = new Hono()
+    app.use("*", traceIdMiddleware)
     app.post("/v1/messages", (c) => handleCompletion(c))
 
     const res = await app.request("/v1/messages", {
@@ -448,5 +454,64 @@ describe("native handler", () => {
     expect(res.headers.get("x-usage-ratelimit-weekly")).toBe(
       "rem=74.9&rst=2026-04-27T00%3A00%3A00Z",
     )
+  })
+
+  test("records usage from native stream message events", async () => {
+    process.env[DB_PATH_ENV] = ":memory:"
+    await closeUsageStore()
+    createMessagesSpy.mockResolvedValueOnce(
+      createSseResponse([
+        'event: message_start\ndata: {"type":"message_start","message":{"id":"msg-usage","type":"message","role":"assistant","model":"claude-opus-4","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":37,"output_tokens":1}}}\n\n',
+        'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"max_tokens","stop_sequence":null},"usage":{"input_tokens":37,"output_tokens":96}}\n\n',
+        'event: message_stop\ndata: {"type":"message_stop"}\n\n',
+      ]),
+    )
+
+    const app = new Hono()
+    app.post("/v1/messages", (c) => handleCompletion(c))
+    app.route("/token-usage", tokenUsageRoute)
+
+    const res = await app.request("/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-session-affinity": "native-stream-test",
+        "x-trace-id": "native-stream-usage-test",
+      },
+      body: JSON.stringify({
+        model: "claude-opus-4",
+        stream: true,
+        max_tokens: 1024,
+        messages: [{ role: "user", content: "hi" }],
+      } satisfies AnthropicMessagesPayload),
+    })
+
+    expect(res.status).toBe(200)
+    await res.text()
+
+    const eventsResponse = await app.request(
+      "/token-usage/events?period=day&page=1&page_size=10",
+    )
+    const page = (await eventsResponse.json()) as {
+      items: Array<{
+        input_tokens: number
+        output_tokens: number
+        session_id: string
+        total_tokens: number
+        trace_id: string
+      }>
+    }
+
+    expect(page.items).toHaveLength(1)
+    expect(page.items[0]).toMatchObject({
+      input_tokens: 37,
+      output_tokens: 96,
+      session_id: "native-stream-test",
+      total_tokens: 133,
+      trace_id: "native-stream-usage-test",
+    })
+
+    await closeUsageStore()
+    Reflect.deleteProperty(process.env, DB_PATH_ENV)
   })
 })

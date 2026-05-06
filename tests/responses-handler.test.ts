@@ -32,6 +32,13 @@ import * as createChatCompletionsModule from "~/services/copilot/create-chat-com
 import * as createMessagesModule from "~/services/copilot/create-messages"
 import * as createResponsesModule from "~/services/copilot/create-responses"
 
+const DB_PATH_ENV = "COPILOT_API_SQLITE_DB_PATH"
+
+const isolateTokenUsageStore = async () => {
+  process.env[DB_PATH_ENV] = ":memory:"
+  await closeUsageStore()
+}
+
 const responseResult: ResponsesResult = {
   id: "resp-1",
   object: "response",
@@ -337,6 +344,15 @@ const restoreRoutingTestSpies = (
   spies.createChatCompletionsSpy?.mockRestore()
   spies.createMessagesSpy?.mockRestore()
 }
+
+beforeEach(async () => {
+  await isolateTokenUsageStore()
+})
+
+afterEach(async () => {
+  await closeUsageStore()
+  Reflect.deleteProperty(process.env, DB_PATH_ENV)
+})
 
 test("normalizes ANSI-colored info logs before assertions", () => {
   expect(
@@ -1187,7 +1203,6 @@ describe("responses handler token usage", () => {
     rateLimitWait: state.rateLimitWait,
     verbose: state.verbose,
   }
-  const dbPathEnv = "COPILOT_API_SQLITE_DB_PATH"
   const createResponsesMock = mock((() =>
     Promise.resolve(
       createStreamResponse([]),
@@ -1198,8 +1213,7 @@ describe("responses handler token usage", () => {
   let getConfigSpy: ReturnType<typeof spyOn<typeof configModule, "getConfig">>
 
   beforeEach(async () => {
-    process.env[dbPathEnv] = ":memory:"
-    await closeUsageStore()
+    await isolateTokenUsageStore()
 
     state.copilotToken = "test-token"
     state.manualApprove = false
@@ -1226,7 +1240,7 @@ describe("responses handler token usage", () => {
     createResponsesSpy.mockRestore()
     getConfigSpy.mockRestore()
     await closeUsageStore()
-    Reflect.deleteProperty(process.env, dbPathEnv)
+    Reflect.deleteProperty(process.env, DB_PATH_ENV)
 
     state.copilotToken = originalState.copilotToken
     state.manualApprove = originalState.manualApprove
