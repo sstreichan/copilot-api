@@ -1,35 +1,37 @@
 ---
 name: best-of-both-worlds
-description: "This skill should be used when the user asks to merge `caozhiyuan/all` into `czy-all`, push `czy-all`, create a PR from `czy-all` to `dev`, directly merge `czy-all` into `dev`, or resolve merge conflicts by combining both branches."
+description: "This skill should be used when the user asks to merge `caozhiyuan/dev` (the upstream sync source; previously `caozhiyuan/all`, now removed upstream) into `czy-all`, push `czy-all`, create a PR from `czy-all` to `dev`, directly merge `czy-all` into `dev`, or resolve merge conflicts by combining both branches."
 ---
 
 # Best of Both Worlds
 
-把 `caozhiyuan/all` 的最新内容带到本仓库的 `czy-all`，再向 `dev` 发起 PR；若 PR 出现冲突，不要一把梭接受单边，而要逐个冲突块分析，尽量取两边之长。
+把 `caozhiyuan/dev` 的最新内容带到本仓库的 `czy-all`，再向本仓库 `dev` 发起 PR；若 PR 出现冲突，不要一把梭接受单边，而要逐个冲突块分析，尽量取两边之长。
+
+> **上游分支变更说明（2026-05）**：上游仓库 `caozhiyuan` 已经删除 `all` 分支，唯一的活跃分支是 `caozhiyuan/dev`。本 skill 中所有原来写作 `caozhiyuan/all` 的位置一律改用 `caozhiyuan/dev`。本地遗留的 `remotes/caozhiyuan/all` ref 是历史残留，请勿再用。
 
 ## 适用场景
 
 当用户提出类似下面这些请求时，使用此 skill：
 
-- “merge caozhiyuan/all to czy-all”
+- “merge caozhiyuan/dev to czy-all”
 - “push czy-all”
 - “raise pr from czy-all to dev”
 - “merge PR from czy-all to dev”
 - “resolve the pr conflicts one by one”
 - “best of both worlds”
-- “把 caozhiyuan/all 同步到 czy-all 再 PR 到 dev”
+- “把 caozhiyuan/dev 同步到 czy-all 再 PR 到 dev”（注意：本仓库 `dev` 与上游 `caozhiyuan/dev` 是两个不同分支，分别属于不同 remote）
 
 ## 核心原则
 
 ### 分支职责（硬规则）
 
-- `remotes/caozhiyuan/all`：上游来源分支（对方仓库）。
-- `czy-all`（tracking `origin/czy-all`）：本仓库的**镜像/承接分支**，用于保持与 `caozhiyuan/all` 同步，并作为 PR 源头。
+- `remotes/caozhiyuan/dev`：上游来源分支（对方仓库；曾经是 `caozhiyuan/all`，已被上游删除）。
+- `czy-all`（tracking `origin/czy-all`）：本仓库的**镜像/承接分支**，用于保持与 `caozhiyuan/dev` 同步，并作为 PR 源头。
 - `dev`：本仓库目标集成分支。
 
 固定目标是：
 
-1. 先把 `caozhiyuan/all` 同步到 `czy-all`（只在 `czy-all` 上操作）
+1. 先把 `caozhiyuan/dev` 同步到 `czy-all`（只在 `czy-all` 上操作）
 2. 再把 `czy-all -> dev` 集成到 `dev`
 
 ### PR 是唯一集成入口（关键）
@@ -48,10 +50,10 @@ description: "This skill should be used when the user asks to merge `caozhiyuan/
 - 未经用户明确要求，不得执行 `dev -> czy-all`（例如在 `czy-all` 上 merge `dev`）。
 - 未经用户明确要求，不得把 `czy-all` 当作日常开发分支写入与同步目标无关的提交。
 
-> 解释：`czy-all` 的职责是保持“可从 `caozhiyuan/all` 干净同步”的状态；反向混入 `dev` 会污染同步基线。
+> 解释：`czy-all` 的职责是保持“可从 `caozhiyuan/dev` 干净同步”的状态；反向混入本仓库 `dev` 会污染同步基线。
 
 1. **保持 tracking 不乱改。** 除非用户明确要求，不要擅自把 `czy-all` 的 upstream 从 `origin/czy-all` 改到别的远端。
-2. **把“拉内容”和“改 tracking”分开。** 需要同步 `caozhiyuan/all` 时，直接 `git pull caozhiyuan all` 或等价操作；不要顺手重写 upstream。
+2. **把“拉内容”和“改 tracking”分开。** 需要同步 `caozhiyuan/dev` 时，直接 `git pull caozhiyuan dev` 或等价操作；不要顺手重写 upstream。注意命令中第二个 `dev` 指的是上游 remote 的分支名，与本仓库的 `dev` 同名但不是同一分支。
 3. **合并方向固定。** 这条工作流里，PR 方向始终是 `czy-all -> dev`；PR 冲突时，本地解决方向是 `dev <- czy-all`。
 4. **冲突逐个解，不批量糊。** 出现 PR conflict 后，不要直接全选 ours/theirs，不要一次性大面积接受某一边。
 5. **优先保留两边有效意图。** 目标不是“偏向哪边”，而是“best of both worlds”。
@@ -70,7 +72,7 @@ description: "This skill should be used when the user asks to merge `caozhiyuan/
 - 当前分支是否是 `dev`
 - 工作树是否干净
 - `czy-all` 当前是否继续跟踪 `origin/czy-all`
-- `caozhiyuan/all` 是否可 fetch / pull
+- `caozhiyuan/dev` 是否可 fetch / pull（若本地仍残留 `remotes/caozhiyuan/all`，可用 `git fetch caozhiyuan --prune` 清理）
 
 再做一次方向检查（必须明确回答）：
 
@@ -90,7 +92,7 @@ git remote -v
 git fetch caozhiyuan
 ```
 
-### 第二步：临时切到 `czy-all`，把 `caozhiyuan/all` 带进 `czy-all`
+### 第二步：临时切到 `czy-all`，把 `caozhiyuan/dev` 带进 `czy-all`
 
 在 `czy-all` 上执行同步，但**不要改变 `czy-all` 的 tracking**。`czy-all` 只是同步落点，不是默认停留分支；完成这一段后应回到 `dev`。
 
@@ -98,7 +100,7 @@ git fetch caozhiyuan
 
 ```bash
 git checkout czy-all
-git pull --ff-only caozhiyuan all
+git pull --ff-only caozhiyuan dev
 ```
 
 若不是 fast-forward，再进入正常 merge / rebase 判断，但不要先改 upstream。
@@ -127,7 +129,7 @@ git checkout dev
 gh pr create --base dev --head czy-all
 ```
 
-PR 标题和摘要要围绕**这次从 `caozhiyuan/all` 带来的真实变更**，不要只写一句泛泛的 sync branch。
+PR 标题和摘要要围绕**这次从 `caozhiyuan/dev` 带来的真实变更**，不要只写一句泛泛的 sync branch。
 
 生成 PR 摘要时，先看：
 
@@ -363,7 +365,7 @@ czy-all 侧：
 - 把”跟踪谁”与”拉谁的内容”混为一谈
 - 未经用户明确要求，在 `czy-all` 上执行 `merge dev` / `rebase dev` 之类反向写入
 - PR 有冲突时，仍误以为只能在 GitHub 页面解决，而拒绝在本地 `dev <- czy-all` 后 push `dev` 让 PR 自动 merged
-- 把 `czy-all` 当作长期开发分支，写入与”同步 caozhiyuan/all + 提 PR 到 dev”无关的改动
+- 把 `czy-all` 当作长期开发分支，写入与”同步 caozhiyuan/dev + 提 PR 到 dev”无关的改动
 - 没有先 push `origin/czy-all` 就开 PR
 - PR 摘要不看实际提交和 diff，胡乱概括
 - **看到 sub-agent 意见与自身建议相同，就以”三方对齐”为由直接执行** — 这是最常见的违规，必须明确禁止
@@ -375,7 +377,7 @@ czy-all 侧：
 
 - 当前本地分支是 `dev`，而不是停留在 `czy-all`
 - `czy-all` 仍然跟踪 `origin/czy-all`
-- `caozhiyuan/all` 的最新内容已经带进本地 `czy-all`
+- `caozhiyuan/dev` 的最新内容已经带进本地 `czy-all`
 - `origin/czy-all` 已推送
 - PR 已从 `czy-all` 指向 `dev`
 - 若通过本地解决 PR 冲突，`dev` 已包含 `czy-all` head，已推送 `origin/dev`，且 PR 已自动变为 merged/closed
