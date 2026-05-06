@@ -17,8 +17,25 @@ const originalState = {
   vsCodeVersion: state.vsCodeVersion,
 }
 
-const fetchMock = mock(() =>
-  Promise.resolve(
+const requestUrl = (url: string | URL | Request): string =>
+  url instanceof Request ? url.url : url.toString()
+
+const createModelsSessionResponse = () =>
+  new Response(
+    JSON.stringify({
+      available_models: [],
+      expires_at: Math.floor(Date.now() / 1000) + 3600,
+      session_token: "test-session-token",
+    }),
+    { status: 200, headers: { "content-type": "application/json" } },
+  )
+
+const fetchMock = mock((url: string | URL | Request) => {
+  if (requestUrl(url).includes("/models/session")) {
+    return Promise.resolve(createModelsSessionResponse())
+  }
+
+  return Promise.resolve(
     new Response(
       JSON.stringify({
         id: "chatcmpl-test",
@@ -36,12 +53,16 @@ const fetchMock = mock(() =>
         },
       },
     ),
-  ),
-)
+  )
+})
 
 const createStreamingFetchMock = () =>
-  mock(() =>
-    Promise.resolve(
+  mock((url: string | URL | Request) => {
+    if (requestUrl(url).includes("/models/session")) {
+      return Promise.resolve(createModelsSessionResponse())
+    }
+
+    return Promise.resolve(
       new Response(
         new ReadableStream({
           start(controller) {
@@ -57,8 +78,8 @@ const createStreamingFetchMock = () =>
           },
         },
       ),
-    ),
-  )
+    )
+  })
 
 const createModels = () => ({
   object: "list" as const,

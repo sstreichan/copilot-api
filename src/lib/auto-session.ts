@@ -57,10 +57,15 @@ export const isModelAutoCovered = (model: string): boolean => {
 export const getAutoSessionTokenForModel = async (
   model: string,
 ): Promise<string | undefined> => {
-  if (cache.availableModels.size === 0 || !cache.sessionToken) {
-    await refreshAutoSession()
-  } else if (shouldRefresh()) {
-    await refreshAutoSession()
+  try {
+    if (cache.availableModels.size === 0 || !cache.sessionToken) {
+      await refreshAutoSession()
+    } else if (shouldRefresh()) {
+      await refreshAutoSession()
+    }
+  } catch (error) {
+    consola.warn("[auto-session] refresh failed", error)
+    return undefined
   }
 
   if (!isModelAutoCovered(model)) {

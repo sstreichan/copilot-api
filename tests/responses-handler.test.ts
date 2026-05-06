@@ -1,5 +1,13 @@
 /* eslint-disable max-lines -- comprehensive responses handler coverage; splitting would obscure related scenarios */
-import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test"
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  mock,
+  spyOn,
+  test,
+} from "bun:test"
 import consola from "consola"
 import { Hono } from "hono"
 import { StreamingApi } from "hono/utils/stream"
@@ -16,8 +24,10 @@ import * as loggerModule from "~/lib/logger"
 import * as rateLimitModule from "~/lib/rate-limit"
 import { attachResponseHeaders } from "~/lib/response-headers"
 import { state } from "~/lib/state"
+import { closeUsageStore } from "~/lib/token-usage"
 import { generateRequestIdFromPayload, getUUID } from "~/lib/utils"
 import { handleResponses } from "~/routes/responses/handler"
+import { tokenUsageRoute } from "~/routes/token-usage/route"
 import * as createChatCompletionsModule from "~/services/copilot/create-chat-completions"
 import * as createMessagesModule from "~/services/copilot/create-messages"
 import * as createResponsesModule from "~/services/copilot/create-responses"
@@ -43,7 +53,7 @@ const responseResult: ResponsesResult = {
 }
 
 const createStreamResponse = (
-  chunks: Array<{ event?: string; data?: string }>,
+  chunks: Array<{ data?: string; event?: string; id?: string }>,
 ): ResponsesStream =>
   (async function* () {
     for (const chunk of chunks) {
@@ -123,6 +133,7 @@ const attachHeaders = <T extends object>(
 const createApp = () => {
   const app = new Hono()
   app.post("/v1/responses", (c) => handleResponses(c))
+  app.route("/token-usage", tokenUsageRoute)
   return app
 }
 
@@ -1163,5 +1174,148 @@ describe("handleResponses stream cleanup", () => {
     expect(res.status).toBe(200)
     await res.text()
     expect(closeSpy).toHaveBeenCalled()
+  })
+})
+
+describe("responses handler token usage", () => {
+  const originalState = {
+    copilotToken: state.copilotToken,
+    lastRequestTimestamp: state.lastRequestTimestamp,
+    manualApprove: state.manualApprove,
+    models: state.models,
+    rateLimitSeconds: state.rateLimitSeconds,
+    rateLimitWait: state.rateLimitWait,
+    verbose: state.verbose,
+  }
+  const dbPathEnv = "COPILOT_API_SQLITE_DB_PATH"
+  const createResponsesMock = mock((() =>
+    Promise.resolve(
+      createStreamResponse([]),
+    )) as typeof createResponsesModule.createResponses)
+  let createResponsesSpy: ReturnType<
+    typeof spyOn<typeof createResponsesModule, "createResponses">
+  >
+  let getConfigSpy: ReturnType<typeof spyOn<typeof configModule, "getConfig">>
+
+  beforeEach(async () => {
+    process.env[dbPathEnv] = ":memory:"
+    await closeUsageStore()
+
+    state.copilotToken = "test-token"
+    state.manualApprove = false
+    state.verbose = false
+    state.rateLimitSeconds = undefined
+    state.rateLimitWait = false
+    state.lastRequestTimestamp = undefined
+    state.models = {
+      object: "list",
+      data: [testModels.data[0]],
+    }
+
+    createResponsesMock.mockClear()
+    createResponsesSpy = spyOn(
+      createResponsesModule,
+      "createResponses",
+    ).mockImplementation(createResponsesMock)
+    getConfigSpy = spyOn(configModule, "getConfig").mockReturnValue(
+      defaultConfig(),
+    )
+  })
+
+  afterEach(async () => {
+    createResponsesSpy.mockRestore()
+    getConfigSpy.mockRestore()
+    await closeUsageStore()
+    Reflect.deleteProperty(process.env, dbPathEnv)
+
+    state.copilotToken = originalState.copilotToken
+    state.manualApprove = originalState.manualApprove
+    state.verbose = originalState.verbose
+    state.rateLimitSeconds = originalState.rateLimitSeconds
+    state.rateLimitWait = originalState.rateLimitWait
+    state.lastRequestTimestamp = originalState.lastRequestTimestamp
+    state.models = originalState.models
+  })
+
+  test("records usage from failed streaming responses and falls back to interaction id", async () => {
+    createResponsesMock.mockImplementation(() =>
+      Promise.resolve(
+        createStreamResponse([
+          {
+            data: JSON.stringify({
+              response: {
+                created_at: 0,
+                error: { message: "request failed" },
+                id: "resp_123",
+                incomplete_details: null,
+                instructions: null,
+                metadata: null,
+                model: "gpt-test",
+                object: "response",
+                output: [],
+                output_text: "",
+                parallel_tool_calls: false,
+                status: "failed",
+                temperature: null,
+                tool_choice: "auto",
+                tools: [],
+                top_p: null,
+                usage: {
+                  input_tokens: 5,
+                  input_tokens_details: { cached_tokens: 1 },
+                  output_tokens: 2,
+                  total_tokens: 7,
+                },
+              },
+              sequence_number: 1,
+              type: "response.failed",
+            }),
+            event: "response.failed",
+          },
+        ]),
+      ),
+    )
+
+    const app = createApp()
+    const payload = {
+      input: "hello",
+      model: "gpt-test",
+      stream: true,
+    }
+    const response = await app.request("/v1/responses", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+    })
+
+    expect(response.status).toBe(200)
+    await response.text()
+
+    const eventsResponse = await app.request(
+      "/token-usage/events?period=day&page=1&page_size=10",
+    )
+    expect(eventsResponse.status).toBe(200)
+
+    const page = (await eventsResponse.json()) as {
+      items: Array<{
+        cache_read_input_tokens: number
+        input_tokens: number
+        output_tokens: number
+        session_id: string
+        total_tokens: number
+      }>
+    }
+    expect(page.items).toHaveLength(1)
+
+    const expectedRequestId = generateRequestIdFromPayload({
+      messages: payload.input,
+    })
+    const expectedInteractionId = getUUID(expectedRequestId)
+
+    expect(page.items[0]?.session_id).toBe(expectedInteractionId)
+    expect(page.items[0]?.cache_read_input_tokens).toBe(1)
+    expect(page.items[0]?.input_tokens).toBe(4)
+    expect(page.items[0]?.output_tokens).toBe(2)
+    expect(page.items[0]?.total_tokens).toBe(7)
   })
 })

@@ -6,6 +6,7 @@ import type { SmartAgentDecision } from "~/services/github/get-copilot-usage"
 export interface State {
   interactionId: string
   githubToken?: string
+  userName?: string
   copilotToken?: string
   copilotApiUrl?: string
   copilotTrackingId?: string

@@ -17,9 +17,15 @@ import {
   jsonWithForwardedHeaders,
 } from "~/lib/response-headers"
 import { state } from "~/lib/state"
+import {
+  createCopilotTokenUsageRecorder,
+  normalizeOpenAIUsage,
+  type UsageTokens,
+} from "~/lib/token-usage"
 import { generateRequestIdFromPayload, getUUID, isNullish } from "~/lib/utils"
 import {
   createChatCompletions,
+  type ChatCompletionChunk,
   type ChatCompletionResponse,
   type ChatCompletionsPayload,
 } from "~/services/copilot/create-chat-completions"
@@ -65,6 +71,11 @@ export async function handleCompletion(c: Context) {
 
   const sessionId = getUUID(requestId)
   logger.debug("Extracted session ID:", sessionId)
+  const recordUsage = createCopilotTokenUsageRecorder({
+    endpoint: "chat_completions",
+    fallbackSessionId: sessionId,
+    model: payload.model,
+  })
 
   const response = await createChatCompletions(payload, {
     requestId,
@@ -73,6 +84,7 @@ export async function handleCompletion(c: Context) {
 
   if (isNonStreaming(response)) {
     debugJson(logger, "Non-streaming response:", response)
+    recordUsage(normalizeOpenAIUsage(response.usage))
     const premium = await resolvePremiumInfo(
       response,
       "chat-completions/non-stream",
@@ -95,19 +107,30 @@ export async function handleCompletion(c: Context) {
   })
   return streamSSE(c, async (stream) => {
     let chunkCount = 0
+    let usage: UsageTokens = {}
     try {
       for await (const chunk of response) {
         debugJson(logger, "Streaming chunk:", chunk)
 
-        chunkCount++
         // Check for [DONE] marker
         const sseChunk = chunk as SSEMessage
-        if (sseChunk.data === "[DONE]") {
-          await stream.writeSSE(sseChunk)
+        const chunkData = normalizeSSEData(await sseChunk.data)
+        if (chunkData === "[DONE]") {
+          await stream.writeSSE({ ...sseChunk, data: chunkData })
           break
         }
 
-        await stream.writeSSE(sseChunk)
+        if (chunkData === undefined) {
+          continue
+        }
+
+        chunkCount++
+        const parsedChunk = parseChatCompletionChunk(chunkData)
+        if (parsedChunk?.usage) {
+          usage = normalizeOpenAIUsage(parsedChunk.usage)
+        }
+
+        await stream.writeSSE({ ...sseChunk, data: chunkData })
       }
     } finally {
       const premium = await resolvePremiumInfo(
@@ -118,6 +141,7 @@ export async function handleCompletion(c: Context) {
         { model: payload.model, chunks: chunkCount, done: true, premium },
         true,
       )
+      recordUsage(usage)
     }
   })
 }
@@ -125,3 +149,29 @@ export async function handleCompletion(c: Context) {
 const isNonStreaming = (
   response: Awaited<ReturnType<typeof createChatCompletions>>,
 ): response is ChatCompletionResponse => Object.hasOwn(response, "choices")
+
+const parseChatCompletionChunk = (
+  data: string | undefined,
+): ChatCompletionChunk | null => {
+  if (!data || data === "[DONE]") {
+    return null
+  }
+
+  try {
+    return JSON.parse(data) as ChatCompletionChunk
+  } catch {
+    return null
+  }
+}
+
+const normalizeSSEData = (data: string | undefined): string | undefined => {
+  if (!data?.startsWith("data:")) {
+    return data
+  }
+
+  return data
+    .split("\n")
+    .filter((line) => line.startsWith("data:"))
+    .map((line) => line.slice(5).trim())
+    .join("\n")
+}

@@ -25,6 +25,14 @@ import {
 } from "~/lib/response-headers"
 import { state } from "~/lib/state"
 import {
+  createCopilotTokenUsageRecorder,
+  mergeAnthropicUsage,
+  normalizeAnthropicUsage,
+  normalizeOpenAIUsage,
+  normalizeResponsesUsage,
+  type UsageTokens,
+} from "~/lib/token-usage"
+import {
   generateRequestIdFromPayload,
   getRootSessionIdFromResponsesPayload,
   getStableSessionKeyFromResponsesPayload,
@@ -41,6 +49,7 @@ import {
   type Reasoning,
   type ResponsesPayload,
   type ResponsesResult,
+  type ResponseStreamEvent,
 } from "~/services/copilot/create-responses"
 
 import type { AnthropicStreamEventData } from "../messages/anthropic-types"
@@ -76,9 +85,12 @@ const MESSAGES_ENDPOINT = "/v1/messages"
 
 type ResponsesHandlerContext = {
   payload: ResponsesPayload
+  recordUsage: ResponsesUsageRecorder
   requestId: string
   sessionId: string
 }
+
+type ResponsesUsageRecorder = (usage: UsageTokens) => void
 
 type CopilotResponsesContext = {
   c: Context
@@ -86,6 +98,7 @@ type CopilotResponsesContext = {
   selectedModel: Model
   requestId: string
   sessionId: string
+  recordUsage: ResponsesUsageRecorder
 }
 
 export const handleResponses = async (c: Context) => {
@@ -110,6 +123,12 @@ export const handleResponses = async (c: Context) => {
 
   const sessionId = rootSessionId ?? getUUID(requestId)
   logger.debug("Extracted session ID:", sessionId)
+
+  const recordUsage = createCopilotTokenUsageRecorder({
+    endpoint: "responses",
+    fallbackSessionId: sessionId,
+    model: payload.model,
+  })
 
   preflightResponsesPayload(payload)
 
@@ -137,21 +156,32 @@ export const handleResponses = async (c: Context) => {
       selectedModel,
       requestId,
       sessionId,
+      recordUsage,
     })
   }
 
   // Path B: model supports /v1/messages → messages backend
   if (selectedModel.supported_endpoints?.includes(MESSAGES_ENDPOINT)) {
-    return handleWithMessagesBackend(c, { payload, requestId, sessionId })
+    return handleWithMessagesBackend(c, {
+      payload,
+      recordUsage,
+      requestId,
+      sessionId,
+    })
   }
 
   // Path C: generic fallback → chat completions bridge
-  return handleWithChatFallback(c, { payload, requestId, sessionId })
+  return handleWithChatFallback(c, {
+    payload,
+    recordUsage,
+    requestId,
+    sessionId,
+  })
 }
 
 const handleWithMessagesBackend = async (
   c: Context,
-  { payload, requestId, sessionId }: ResponsesHandlerContext,
+  { payload, recordUsage, requestId, sessionId }: ResponsesHandlerContext,
 ) => {
   const anthropicPayload = translateResponsesToAnthropicMessages(payload)
 
@@ -182,8 +212,10 @@ const handleWithMessagesBackend = async (
     return streamSSE(c, async (stream) => {
       const streamState = createAnthropicToResponsesStreamState()
       let chunkCount = 0
+      let usage: UsageTokens = {}
       try {
         for await (const event of parseAnthropicSSEBody(response.body)) {
+          usage = mergeAnthropicStreamUsage(usage, event)
           await writeAnthropicStreamEvents(stream, event, streamState)
           chunkCount++
         }
@@ -201,6 +233,7 @@ const handleWithMessagesBackend = async (
           { model: payload.model, chunks: chunkCount, done: true, premium },
           true,
         )
+        recordUsage(usage)
         if (!stream.closed) {
           await stream.close()
         }
@@ -221,6 +254,7 @@ const handleWithMessagesBackend = async (
   const result = translateAnthropicMessageToResponses(
     jsonResponse as Parameters<typeof translateAnthropicMessageToResponses>[0],
   )
+  recordUsage(normalizeResponsesUsage(result.usage))
   debugJsonTail(logger, "Path B non-stream result:", {
     value: result,
     tailLength: 400,
@@ -238,7 +272,7 @@ const handleWithMessagesBackend = async (
 
 const handleWithChatFallback = async (
   c: Context,
-  { payload, requestId, sessionId }: ResponsesHandlerContext,
+  { payload, recordUsage, requestId, sessionId }: ResponsesHandlerContext,
 ) => {
   const chatPayload = translateResponsesToChatCompletions(payload)
 
@@ -268,6 +302,7 @@ const handleWithChatFallback = async (
     })
     return streamSSE(c, async (stream) => {
       const streamState = createChatCompletionToResponsesStreamState()
+      let usage: UsageTokens = {}
       try {
         for await (const chunk of response as AsyncIterable<{
           data?: string
@@ -279,6 +314,9 @@ const handleWithChatFallback = async (
             parsed = JSON.parse(chunk.data) as ChatCompletionChunk
           } catch {
             continue
+          }
+          if (parsed.usage) {
+            usage = normalizeOpenAIUsage(parsed.usage)
           }
           const sseEvents = translateChatCompletionChunkToResponsesStreamEvents(
             parsed,
@@ -311,6 +349,7 @@ const handleWithChatFallback = async (
           { model: payload.model, chunks: 0, done: true, premium },
           true,
         )
+        recordUsage(usage)
         if (!stream.closed) {
           await stream.close()
         }
@@ -321,6 +360,7 @@ const handleWithChatFallback = async (
   // Non-stream
   const chatResult = response as ChatCompletionResponse
   const responsesResult = translateChatCompletionToResponsesResult(chatResult)
+  recordUsage(normalizeOpenAIUsage(chatResult.usage))
   debugJsonTail(logger, "Path C non-stream result:", {
     value: responsesResult,
     tailLength: 400,
@@ -341,6 +381,7 @@ const handleWithCopilotResponses = async ({
   selectedModel,
   requestId,
   sessionId,
+  recordUsage,
 }: CopilotResponsesContext) => {
   applyResponsesApiContextManagement(
     payload,
@@ -369,13 +410,19 @@ const handleWithCopilotResponses = async ({
   })
 
   if (isStreamingRequested(payload) && isAsyncIterable(response)) {
-    return handleStreamingResponse(c, response, payload.model)
+    return handleStreamingResponse({
+      c,
+      model: payload.model,
+      recordUsage,
+      response,
+    })
   }
 
   debugJsonTail(logger, "Forwarding native Responses result:", {
     value: response,
     tailLength: 400,
   })
+  recordUsage(normalizeResponsesUsage((response as ResponsesResult).usage))
   const premium = await resolvePremiumInfo(response, "responses/non-stream")
   writeStreamLog({ model: payload.model, chunks: 0, done: true, premium }, true)
   return jsonWithForwardedHeaders(
@@ -388,11 +435,13 @@ const isAsyncIterable = <T>(value: unknown): value is AsyncIterable<T> =>
   Boolean(value)
   && typeof (value as AsyncIterable<T>)[Symbol.asyncIterator] === "function"
 
-const handleStreamingResponse = (
-  c: Context,
-  response: AsyncIterable<unknown>,
-  model: string,
-) => {
+const handleStreamingResponse = (options: {
+  c: Context
+  model: string
+  recordUsage: ResponsesUsageRecorder
+  response: AsyncIterable<unknown>
+}) => {
+  const { c, model, recordUsage, response } = options
   logger.debug("Forwarding native Responses stream")
   applyForwardableResponseHeaders(c, getAttachedResponseHeaders(response), {
     "content-type": null,
@@ -403,11 +452,20 @@ const handleStreamingResponse = (
   return streamSSE(c, async (stream) => {
     let chunkCount = 0
     const idTracker = createStreamIdTracker()
+    let usage: UsageTokens = {}
 
     try {
       for await (const chunk of response) {
         debugJson(logger, "Responses stream chunk:", chunk)
         chunkCount++
+        const parsedEvent = parseResponsesStreamEvent(chunk)
+        if (
+          parsedEvent?.type === "response.completed"
+          || parsedEvent?.type === "response.failed"
+          || parsedEvent?.type === "response.incomplete"
+        ) {
+          usage = normalizeResponsesUsage(getResponsesStreamUsage(parsedEvent))
+        }
         const processedData = fixStreamIds(
           (chunk as { data?: string }).data ?? "",
           (chunk as { event?: string }).event,
@@ -423,6 +481,7 @@ const handleStreamingResponse = (
     } finally {
       const premium = await resolvePremiumInfo(response, "responses/stream")
       writeStreamLog({ model, chunks: chunkCount, done: true, premium }, true)
+      recordUsage(usage)
       if (!stream.closed) {
         await stream.close()
       }
@@ -487,6 +546,33 @@ const createPathBStreamErrorEvent = (model: string, err: unknown) => {
   }
 }
 
+const mergeAnthropicStreamUsage = (
+  current: UsageTokens,
+  event: AnthropicStreamEventData,
+): UsageTokens => {
+  if (event.type === "message_start") {
+    return mergeAnthropicUsage(
+      current,
+      normalizeAnthropicUsage(getAnthropicMessageStartUsage(event)),
+    )
+  }
+
+  if (event.type === "message_delta") {
+    return mergeAnthropicUsage(current, normalizeAnthropicUsage(event.usage))
+  }
+
+  return current
+}
+
+const getAnthropicMessageStartUsage = (
+  event: AnthropicStreamEventData,
+): Parameters<typeof normalizeAnthropicUsage>[0] => {
+  const messageStart = event as { message?: { usage?: unknown } }
+  return messageStart.message?.usage as Parameters<
+    typeof normalizeAnthropicUsage
+  >[0]
+}
+
 const writeResponsesStreamError = async (
   stream: Parameters<Parameters<typeof streamSSE>[1]>[0],
   errorEvent: ReturnType<typeof createPathBStreamErrorEvent>,
@@ -521,6 +607,30 @@ const ensureReasoningEffort = (
 
 const isStreamingRequested = (payload: ResponsesPayload): boolean =>
   Boolean(payload.stream)
+
+const parseResponsesStreamEvent = (
+  chunk: unknown,
+): ResponseStreamEvent | null => {
+  const data = (chunk as { data?: string }).data
+  if (!data || data === "[DONE]") {
+    return null
+  }
+
+  try {
+    return JSON.parse(data) as ResponseStreamEvent
+  } catch {
+    return null
+  }
+}
+
+const getResponsesStreamUsage = (
+  event: ResponseStreamEvent,
+): Parameters<typeof normalizeResponsesUsage>[0] =>
+  (
+    event as {
+      response?: { usage?: Parameters<typeof normalizeResponsesUsage>[0] }
+    }
+  ).response?.usage
 
 const parseAnthropicSSEBody = async function* (
   body: ReadableStream<Uint8Array> | null,

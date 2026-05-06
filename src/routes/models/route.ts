@@ -76,30 +76,36 @@ modelRoutes.get("/", async (c) => {
       await cacheModels()
     }
 
-    const models = state.models?.data.map((model) => ({
-      ...model,
-      id: model.id,
-      object: "model",
-      type: model.capabilities.type,
-      created: 0,
-      created_at: new Date(0).toISOString(),
-      owned_by: model.vendor,
-      display_name: model.name,
-      family: model.capabilities.family,
-      preview: model.preview,
-      model_picker_enabled: model.model_picker_enabled,
-      endpoints: model.supported_endpoints ?? null,
-      supports_tool_calls: model.capabilities.supports.tool_calls ?? false,
-      supports_parallel_tool_calls:
-        model.capabilities.supports.parallel_tool_calls ?? false,
-      supports_streaming: model.capabilities.supports.streaming ?? false,
-      supports_structured_outputs:
-        model.capabilities.supports.structured_outputs ?? false,
-      limits: buildLimits(model),
-      is_premium: model.billing?.is_premium ?? false,
-      billing_multiplier: model.billing?.multiplier ?? 0,
-      available_to: model.billing?.restricted_to ?? null,
-    }))
+    const models = state.models?.data.map((model) => {
+      // limits is typed as required but is missing for embedding models at runtime
+      const is1m =
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+        model.capabilities.limits?.max_context_window_tokens === 1_000_000
+      return {
+        ...model,
+        id: is1m ? `${model.id}[1m]` : model.id,
+        object: "model",
+        type: model.capabilities.type,
+        created: 0, // No date available from source
+        created_at: new Date(0).toISOString(), // No date available from source
+        owned_by: model.vendor,
+        display_name: model.name,
+        family: model.capabilities.family,
+        preview: model.preview,
+        model_picker_enabled: model.model_picker_enabled,
+        endpoints: model.supported_endpoints ?? null,
+        supports_tool_calls: model.capabilities.supports.tool_calls ?? false,
+        supports_parallel_tool_calls:
+          model.capabilities.supports.parallel_tool_calls ?? false,
+        supports_streaming: model.capabilities.supports.streaming ?? false,
+        supports_structured_outputs:
+          model.capabilities.supports.structured_outputs ?? false,
+        limits: buildLimits(model),
+        is_premium: model.billing?.is_premium ?? false,
+        billing_multiplier: model.billing?.multiplier ?? 0,
+        available_to: model.billing?.restricted_to ?? null,
+      }
+    })
 
     const sortedModels = sortModels(models as Array<TransformedModel>)
 
