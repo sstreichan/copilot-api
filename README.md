@@ -21,11 +21,6 @@ English | [简体中文](./README.zh-CN.md)
 
 ---
 
-> [!NOTE]
-> [opencode](https://github.com/sst/opencode) already ships with a built-in GitHub Copilot provider, so you may not need this project for basic usage. This proxy is still useful if you want OpenCode to talk to Copilot through `@ai-sdk/anthropic`, preserve Anthropic Messages semantics for tool use, prefer the native Messages API over Chat Completions API for Claude-family models, use gpt phase-aware commentary, or optimize premium requests.
-
----
-
 ## Important Notes
 
 > [!IMPORTANT]
@@ -67,7 +62,7 @@ Compared with routing everything through plain Chat Completions compatibility, t
 - **Opencode OAuth Support**: Use opencode GitHub Copilot authentication by setting `COPILOT_API_OAUTH_APP=opencode` environment variable or using `--oauth-app=opencode` command line option.
 - **GitHub Enterprise Support**: Connect to GHE.com by setting `COPILOT_API_ENTERPRISE_URL` environment variable (e.g., `company.ghe.com`) or using `--enterprise-url=company.ghe.com` command line option.
 - **Custom Data Directory**: Change the default data directory (where tokens and config are stored) by setting `COPILOT_API_HOME` environment variable or using `--api-home=/path/to/dir` command line option.
-- **Multi-Provider Anthropic Proxy Routes**: Add global provider configs and call external Anthropic-compatible APIs via `/:provider/v1/messages` and `/:provider/v1/models`.
+- **Multi-Provider Messages Proxy Routes**: Add global provider configs and call external Anthropic-compatible or OpenAI-compatible APIs via `/:provider/v1/messages` and `/:provider/v1/models`.
 - **Accurate Claude Token Counting**: Optionally forward `/v1/messages/count_tokens` requests for Claude models to Anthropic's free token counting endpoint for exact counts instead of GPT tokenizer estimation.
 - **GPT Context Management**: Configurable context compaction for long-running GPT conversations via `responsesApiContextManagementModels`, reducing unnecessary premium requests when approaching token limits. See [Configuration](#configuration-configjson) for details.
 
@@ -129,6 +124,7 @@ When an Anthropic API key is configured, the proxy forwards Claude model token c
 ## Prerequisites
 
 - Bun (>= 1.2.x)
+- Node.js if you plan to run the published CLI with `npx`
 - GitHub account with Copilot subscription (individual, business, or enterprise)
 
 ## Installation
@@ -149,6 +145,11 @@ bun run start start
 
 You can run the project directly using npx:
 
+> [!IMPORTANT]
+> Token usage storage uses Node's built-in `node:sqlite` module when running with `npx`. It is enabled on Node.js >= 22.13.0. On Node.js < 22.13.0, the CLI still starts, but token usage storage is disabled.
+>
+> If you want token usage storage without upgrading Node.js, run the published CLI with Bun instead: `bunx --bun @jeffreycao/copilot-api@latest start`.
+
 ```sh
 npx @jeffreycao/copilot-api@latest start
 ```
@@ -164,6 +165,16 @@ For authentication only:
 ```sh
 npx @jeffreycao/copilot-api@latest auth
 ```
+
+## Electron Desktop App
+
+If you prefer a GUI, this repository also includes an Electron desktop app in `desktop/`. It supports GitHub Copilot sign-in or manual token entry, can start and stop the local proxy with one click, and shows the local endpoint, auth header, available models, usage, and logs in the app.
+
+The settings screen also exposes `OAuth App`, `API Home`, `Enterprise URL`, verbose logging, and minimize-to-tray. Desktop packages are published in GitHub Releases:
+
+https://github.com/caozhiyuan/copilot-api/releases
+
+Download the installer for your platform, sign in inside the app, choose a port, start the server, then point your client at the local endpoint shown in the app. Packaged desktop builds use the bundled Electron runtime, so normal desktop usage does not require installing Node.js separately. Token usage history is enabled when that bundled runtime supports SQLite.
 
 ## Using with Docker
 
@@ -298,6 +309,31 @@ The following command line options are available for the `start` command:
             "topP": 0.95
           }
         }
+      },
+      "dashscope": {
+        "type": "openai-compatible",
+        "enabled": true,
+        "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode",
+        "apiKey": "sk-your-dashscope-key",
+        "models": {
+          "qwen3.6-plus": {
+            "temperature": 1,
+            "topP": 0.95,
+            "topK": 20,
+            "extraBody": {
+              "preserve_thinking": true
+            },
+            "contextCache": true
+          },
+          "glm-5.1": {
+            "temperature": 0.7,
+            "topP": 0.95,
+            "contextCache": true,
+            "extraBody": {
+              "preserve_thinking": true
+            }
+          }
+        }
       }
     },
     "extraPrompts": {
@@ -321,16 +357,20 @@ The following command line options are available for the `start` command:
   ```
 - **auth.apiKeys:** API keys used for request authentication. Supports multiple keys for rotation. Requests can authenticate with either `x-api-key: <key>` or `Authorization: Bearer <key>`. If empty or omitted, authentication is disabled.
 - **extraPrompts:** Map of `model -> prompt` appended to the first system prompt when translating Anthropic-style requests to Copilot. Use this to inject guardrails or guidance per model. Missing default entries are auto-added without overwriting your custom prompts. The built-in prompts for `gpt-5.3-codex` and `gpt-5.4` enable phase-aware commentary, which lets the model emit a short user-facing progress update before tools or deeper reasoning.
-- **providers:** Global upstream provider map. Each provider key (for example `custom`) becomes a route prefix (`/custom/v1/messages`). Currently only `type: "anthropic"` is supported.
+- **providers:** Global upstream provider map. Each provider key (for example `custom`) becomes a route prefix (`/custom/v1/messages`). Supports `type: "anthropic"` and `type: "openai-compatible"`.
   - `enabled` defaults to `true` if omitted.
-  - `baseUrl` should be provider API base URL without trailing `/v1/messages`.
+  - `baseUrl` should be provider API base URL without the final endpoint. For Anthropic providers, omit `/v1/messages`; for OpenAI-compatible providers, omit `/v1/chat/completions`.
   - `apiKey` is used as the upstream credential value.
-  - `authType` (optional): Controls how `apiKey` is sent upstream. Supports `x-api-key` (default) and `authorization`. When set to `authorization`, the proxy sends `Authorization: Bearer <apiKey>`.
+  - `authType` (optional): Controls how `apiKey` is sent upstream. Supports `x-api-key` and `authorization`. Anthropic providers default to `x-api-key`; OpenAI-compatible providers default to `authorization`. When set to `authorization`, the proxy sends `Authorization: Bearer <apiKey>`.
   - `adjustInputTokens` (optional): When `true`, the proxy will adjust the `input_tokens` in the usage response by subtracting `cache_read_input_tokens` and `cache_creation_input_tokens`. 
   - `models` (optional): Per-model configuration map. Each key is a model ID (matching the model name in requests), and the value is:
     - `temperature` (optional): Default temperature value used when the request does not specify one.
     - `topP` (optional): Default top_p value used when the request does not specify one.
     - `topK` (optional): Default top_k value used when the request does not specify one.
+    - `extraBody` (optional): Dynamic fields merged into the upstream request body for that model. Request body fields with the same name take precedence. OpenAI-compatible providers can use this for fields such as `enable_thinking`, `preserve_thinking`, `reasoning_effort`.
+    - `contextCache` (optional): Defaults to `true` for OpenAI-compatible providers. This enables Alibaba Cloud Model Studio/DashScope explicit context cache by injecting `cache_control: { "type": "ephemeral" }` on up to 4 content blocks using the Context Cache format. The cache breakpoint strategy matches opencode's main provider flow: the first 2 system messages plus the last 2 non-system messages. Marked string content is converted to text content part arrays for `system` / `user` / `assistant` / `tool` messages; existing array content is marked on the last part. Set this to `false` when the model already supports implicit caching, or when the upstream does not accept this explicit-cache extension field.
+    - `supportPdf` (optional): Controls whether the model supports PDF/document content. Defaults to `false`; unsupported PDFs are converted to a text notice. Set it to `true` to send PDF/document blocks as OpenAI Chat Completions file parts.
+    - `toolContentSupportType` (optional): Tool result content capabilities for that model, as an array of `array`, `image`, and `pdf`. Provider routes default to string-only tool content when omitted. If `supportPdf` is `true` but this list does not include `pdf`, file parts in tool results are moved to user role messages. This provider default does not change the Copilot main flow, which continues to support array + image and not PDF.
 - **smallModel:** Fallback model used for tool-less warmup messages (e.g., Claude Code probe requests) to avoid spending premium requests; defaults to gpt-5-mini.
 - **responsesApiContextManagementModels:** List of GPT model IDs that should receive Responses API `context_management` compaction instructions. This defaults to `[]`, so you need to opt in explicitly. A good starting point is `["gpt-5-mini", "gpt-5.3-codex", "gpt-5.4-mini", "gpt-5.4"]`. When enabled, the request includes `context_management` in the body and keeps only the latest compaction carrier on follow-up turns. The actual compaction is handled server-side and appears to begin when usage approaches roughly 90% of the model's `maxPromptTokens`, which makes it especially useful for long-running tasks without consuming additional premium requests. In practice, the effective `compact_threshold` also appears to be fixed on the server side, so changing it in this project does not currently alter compaction behavior. At the moment, this optimization is intended for GPT-family models only.
 - **modelReasoningEfforts:** Per-model `reasoning.effort` sent to the Copilot Responses API. Allowed values are `none`, `minimal`, `low`, `medium`, `high`, and `xhigh`. If a model isn’t listed, `high` is used by default.
@@ -381,8 +421,8 @@ These endpoints are designed to be compatible with the Anthropic Messages API.
 | -------------------------------- | ------ | ------------------------------------------------------------ |
 | `POST /v1/messages`              | `POST` | Creates a model response for a given conversation.           |
 | `POST /v1/messages/count_tokens` | `POST` | Calculates the number of tokens for a given set of messages. |
-| `POST /:provider/v1/messages`       | `POST` | Proxies Anthropic Messages API to the configured provider.   |
-| `GET /:provider/v1/models`          | `GET`  | Proxies Anthropic Models API to the configured provider.     |
+| `POST /:provider/v1/messages`       | `POST` | Proxies Anthropic Messages requests to the configured Anthropic or OpenAI-compatible provider. |
+| `GET /:provider/v1/models`          | `GET`  | Proxies model listing requests to the configured provider.   |
 | `POST /:provider/v1/messages/count_tokens` | `POST` | Calculates tokens locally for provider route requests. |
 
 ### Usage Monitoring Endpoints
@@ -455,6 +495,9 @@ npx @jeffreycao/copilot-api@latest --oauth-app=opencode start
 
 # Combine multiple global options
 npx @jeffreycao/copilot-api@latest --api-home=/custom/path --oauth-app=opencode --enterprise-url=company.ghe.com start
+
+# Run the published CLI with Bun instead of Node.js
+bunx --bun @jeffreycao/copilot-api@latest start
 ```
 
 ## Using with OpenCode
@@ -560,6 +603,8 @@ After starting the server, a URL to the Copilot Usage Dashboard will be displaye
     - If you use the `start.bat` script on Windows, this page will open automatically.
 
 The dashboard provides a user-friendly interface to view your Copilot usage data:
+
+> Token usage history requires Bun or Node.js >= 22.13.0. On Node.js < 22.13.0, the server runs normally but token usage storage is disabled.
 
 - **API Endpoint URL**: The dashboard is pre-configured to fetch data from your local server endpoint via the URL query parameter. You can change this URL to point to any other compatible API endpoint.
 - **Fetch Data**: Click the "Fetch" button to load or refresh the usage data. The dashboard will automatically fetch data on load.

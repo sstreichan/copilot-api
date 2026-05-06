@@ -92,7 +92,8 @@ export interface ChatCompletionChunk {
     completion_tokens: number
     total_tokens: number
     prompt_tokens_details?: {
-      cached_tokens: number
+      cache_creation_input_tokens?: number
+      cached_tokens?: number
     }
     completion_tokens_details?: {
       accepted_prediction_tokens: number
@@ -114,6 +115,7 @@ export interface Delta {
     }
   }>
   reasoning_text?: string | null
+  reasoning_content?: string | null
   reasoning_opaque?: string | null
 }
 
@@ -138,7 +140,8 @@ export interface ChatCompletionResponse {
     completion_tokens: number
     total_tokens: number
     prompt_tokens_details?: {
-      cached_tokens: number
+      cache_creation_input_tokens?: number
+      cached_tokens?: number
     }
   }
 }
@@ -147,6 +150,7 @@ interface ResponseMessage {
   role: "assistant"
   content: string | null
   reasoning_text?: string | null
+  reasoning_content?: string | null
   reasoning_opaque?: string | null
   tool_calls?: Array<ToolCall>
 }
@@ -161,6 +165,8 @@ interface ChoiceNonStreaming {
 // Payload types
 
 export interface ChatCompletionsPayload {
+  [key: string]: unknown
+
   messages: Array<Message>
   model: string
   temperature?: number | null
@@ -184,7 +190,12 @@ export interface ChatCompletionsPayload {
     | { type: "function"; function: { name: string } }
     | null
   user?: string | null
+  stream_options?: {
+    include_usage?: boolean | null
+  } | null
   thinking_budget?: number
+  top_k?: number | null
+  parallel_tool_calls?: boolean | null
 }
 
 export interface Tool {
@@ -203,8 +214,10 @@ export interface Message {
   name?: string
   tool_calls?: Array<ToolCall>
   tool_call_id?: string
+  reasoning_content?: string | null
   reasoning_text?: string | null
   reasoning_opaque?: string | null
+  copilot_cache_control?: CopilotCacheControl
 }
 
 export interface ToolCall {
@@ -216,11 +229,20 @@ export interface ToolCall {
   }
 }
 
-export type ContentPart = TextPart | ImagePart
+export type ContentPart = TextPart | ImagePart | FilePart
+
+export interface CacheControl {
+  type: "ephemeral"
+}
+
+export interface CopilotCacheControl {
+  type: "ephemeral"
+}
 
 export interface TextPart {
   type: "text"
   text: string
+  cache_control?: CacheControl
 }
 
 export interface ImagePart {
@@ -229,4 +251,14 @@ export interface ImagePart {
     url: string
     detail?: "low" | "high" | "auto"
   }
+  cache_control?: CacheControl
+}
+
+export interface FilePart {
+  type: "file"
+  file: {
+    file_data: string
+    filename?: string
+  }
+  cache_control?: CacheControl
 }
