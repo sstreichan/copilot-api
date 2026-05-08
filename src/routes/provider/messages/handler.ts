@@ -1,4 +1,4 @@
-import type { Context } from "hono"
+import type { Context, Env } from "hono"
 
 import { events } from "fetch-event-stream"
 import { streamSSE } from "hono/streaming"
@@ -46,6 +46,7 @@ import {
 } from "~/services/providers/anthropic-proxy"
 
 const logger = createHandlerLogger("provider-messages-handler")
+
 const OPENAI_COMPATIBLE_CONTEXT_CACHE_MARKER_LIMIT = 4
 const OPENAI_COMPATIBLE_CONTEXT_CACHE_CONTROL = {
   type: "ephemeral",
@@ -57,8 +58,22 @@ const OPENAI_COMPATIBLE_CONTEXT_CACHE_ROLES = new Set<Message["role"]>([
   "tool",
 ])
 
-export async function handleProviderMessages(c: Context): Promise<Response> {
+export async function handleProviderMessages(
+  c: Context<Env, "/:provider">,
+): Promise<Response> {
   const provider = c.req.param("provider")
+  const payload = await c.req.json<AnthropicMessagesPayload>()
+  return await handleProviderMessagesForProvider(c, { payload, provider })
+}
+
+export async function handleProviderMessagesForProvider(
+  c: Context,
+  options: {
+    payload: AnthropicMessagesPayload
+    provider: string
+  },
+): Promise<Response> {
+  const { payload, provider } = options
   const providerConfig = getProviderConfig(provider)
   if (!providerConfig) {
     return c.json(
@@ -73,8 +88,6 @@ export async function handleProviderMessages(c: Context): Promise<Response> {
   }
 
   try {
-    const payload = await c.req.json<AnthropicMessagesPayload>()
-
     const modelConfig = providerConfig.models?.[payload.model]
     applyModelDefaults(payload, modelConfig)
 
