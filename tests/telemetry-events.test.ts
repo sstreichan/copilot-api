@@ -2,15 +2,7 @@
  * Comprehensive test suite for telemetry event functions.
  * Tests envelope structure, properties, measurements, and fire-and-forget behavior.
  */
-import {
-  afterEach,
-  beforeEach,
-  describe,
-  expect,
-  it,
-  jest,
-  mock,
-} from "bun:test"
+import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test"
 
 import {
   initTelemetry,
@@ -186,18 +178,18 @@ describe("Telemetry Events", () => {
 
   describe("scheduleFeedbackEvents", () => {
     it("should schedule feedback events after delay", async () => {
-      // randomFeedbackDelay() returns 2000-15000ms; use fake timers to advance past it.
-      jest.useFakeTimers()
+      const originalSetTimeout = globalThis.setTimeout
+      globalThis.setTimeout = mock((callback: () => void) => {
+        callback()
+        return 0 as unknown as ReturnType<typeof setTimeout>
+      }) as unknown as typeof setTimeout
       try {
         initTelemetry("token", "individual")
         scheduleFeedbackEvents("session-123")
-        // Advance past the max possible feedback delay (15000ms)
-        jest.advanceTimersByTime(15001)
-        // Timer callback fires synchronously; fetch is called inside trackEditFeedback
         await Promise.resolve()
         expect(globalThis.fetch).toHaveBeenCalled()
       } finally {
-        jest.useRealTimers()
+        globalThis.setTimeout = originalSetTimeout
       }
     })
   })
