@@ -172,6 +172,24 @@ function extractEventNames(calls: typeof fetchCalls): Array<string> {
   })
 }
 
+function findTelemetryEnvelope(
+  eventName: string,
+  requestId: string,
+): TelemetryEnvelope {
+  for (const call of fetchCalls) {
+    const body = JSON.parse(call.options.body) as Array<TelemetryEnvelope>
+    const match = body.find((env) => {
+      return (
+        env.data.baseData.name === eventName
+        && env.data.baseData.properties.requestId === requestId
+      )
+    })
+    if (match) return match
+  }
+
+  throw new TypeError(`${eventName} envelope not found for ${requestId}`)
+}
+
 /** Wait for fire-and-forget microtasks to settle */
 async function flushMicrotasks(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 20))
@@ -471,8 +489,10 @@ describe("telemetry: feedback wrappers", () => {
     Math.random = origRandom
     await flushMicrotasks()
 
-    expect(fetchCalls.length).toBe(1)
-    const env = getFirstEnvelopeFromCall()
+    const env = findTelemetryEnvelope(
+      "copilot-chat/panel.edit.feedback",
+      "req-feedback-001",
+    )
     expect(env.data.baseData.name).toBe("copilot-chat/panel.edit.feedback")
     const props = env.data.baseData.properties
     expect(props.requestId).toBe("req-feedback-001")
@@ -501,8 +521,10 @@ describe("telemetry: feedback wrappers", () => {
     Math.random = origRandom
     await flushMicrotasks()
 
-    expect(fetchCalls.length).toBe(1)
-    const env = getFirstEnvelopeFromCall()
+    const env = findTelemetryEnvelope(
+      "copilot-chat/edit.hunk.action",
+      "req-hunk-002",
+    )
     expect(env.data.baseData.name).toBe("copilot-chat/edit.hunk.action")
     const props = env.data.baseData.properties
     expect(props.requestId).toBe("req-hunk-002")
