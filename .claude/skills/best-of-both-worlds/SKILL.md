@@ -1,11 +1,11 @@
 ---
 name: best-of-both-worlds
-description: "This skill should be used when the user asks to merge `caozhiyuan/dev` (the upstream sync source; previously `caozhiyuan/all`, now removed upstream) into `czy-all`, push `czy-all`, create a PR from `czy-all` to `dev`, directly merge `czy-all` into `dev`, or resolve merge conflicts by combining both branches."
+description: "This skill should be used when the user asks to sync upstream `caozhiyuan/dev` (previously `caozhiyuan/all`, now removed upstream) into the buffer branch `czy-all`, push `czy-all`, create/update a PR from `czy-all` to `dev`, or, if that PR conflicts, resolve conflicts only in a local `dev <- czy-all` integration merge and never on `czy-all`."
 ---
 
 # Best of Both Worlds
 
-把 `caozhiyuan/dev` 的最新内容带到本仓库的 `czy-all`，再向本仓库 `dev` 发起 PR；若 PR 出现冲突，不要一把梭接受单边，而要逐个冲突块分析，尽量取两边之长。
+把 `caozhiyuan/dev` 的最新内容带到本仓库的 `czy-all`，再向本仓库 `dev` 发起 PR；若 PR 出现冲突，只能在本地 `dev <- czy-all` 集成工作区逐个冲突块分析，尽量取两边之长，不得在 `czy-all` 上解决 PR 冲突。
 
 > **上游分支变更说明（2026-05）**：上游仓库 `caozhiyuan` 已经删除 `all` 分支，唯一的活跃分支是 `caozhiyuan/dev`。本 skill 中所有原来写作 `caozhiyuan/all` 的位置一律改用 `caozhiyuan/dev`。本地遗留的 `remotes/caozhiyuan/all` ref 是历史残留，请勿再用。
 
@@ -23,11 +23,46 @@ description: "This skill should be used when the user asks to merge `caozhiyuan/
 
 ## 核心原则
 
+### STOP：先挡住最高风险误操作
+
+如果你打算在 `czy-all` 上做下面任何一件事，立即停止：
+
+- 修测试 / 测试隔离 / mock 调整
+- 修 lint / 修 typecheck / 修 build
+- 修 skill / agent memory / config
+- “顺手清理一下”的 cleanup commit
+- `git commit --amend` / `git rebase` / 重写上游同步提交
+- 任何不是来自 `caozhiyuan/dev` 的 commit
+
+这些动作的正确发生地点是 **`dev` 分支**，且必须在 `git merge --no-ff czy-all` 之后的 `dev <- czy-all` 集成工作区里完成，不是在 `czy-all`。
+
 ### 分支职责（硬规则）
 
 - `remotes/caozhiyuan/dev`：上游来源分支（对方仓库；曾经是 `caozhiyuan/all`，已被上游删除）。
 - `czy-all`（tracking `origin/czy-all`）：本仓库的**镜像/承接分支**，用于保持与 `caozhiyuan/dev` 同步，并作为 PR 源头。
 - `dev`：本仓库目标集成分支。
+
+### `czy-all` 是只读式上游缓冲区（最高风险红线）
+
+`czy-all` 的唯一职责是把 `caozhiyuan/dev` 搬进本仓库，作为 `czy-all -> dev` PR 的 head。它不是修复分支，不是验证修复分支，不是冲突解决分支。
+
+**允许出现在 `czy-all` 的提交：**
+
+- 从 `caozhiyuan/dev` fast-forward 得来的上游提交。
+- 在 fast-forward 不可用时，把 `caozhiyuan/dev` 合入 `czy-all` 的纯同步 merge commit。
+
+**禁止出现在 `czy-all` 的提交：**
+
+- 测试修复、lint 修复、typecheck 修复、build 修复。
+- 冲突解决提交。
+- 本仓库 `dev` 侧的功能、文档、配置、skill、agent memory、cleanup。
+- 为了让 `czy-all` 上的验证变绿而做的任何本地 patch。
+
+如果在 `czy-all` 同步后运行验证发现失败，只能记录失败现象；不要在 `czy-all` 上修。正确动作是创建/更新 `czy-all -> dev` PR，然后切到 `dev`，在 `dev <- czy-all` 的本地 merge 过程中修复。
+
+更严格地说：`czy-all` 同步阶段默认**不运行** `bun test`、`bun run lint:all`、`bun run build`、`bun run typecheck` 这类项目级验证。同步阶段只做 `git fetch` / `git status` / `git log` / 纯同步 merge / push / PR 状态检查。需要项目级验证时，先进入 `dev <- czy-all` 集成阶段。
+
+**提交前强制自检：**如果当前分支是 `czy-all`，且待提交内容不是“来自 `caozhiyuan/dev` 的同步结果”，立即停止。除非用户明确要求清理/重写 `czy-all` 本身，否则不得在 `czy-all` 上创建本地修复提交。
 
 固定目标是：
 
@@ -49,11 +84,12 @@ description: "This skill should be used when the user asks to merge `caozhiyuan/
 
 - 未经用户明确要求，不得执行 `dev -> czy-all`（例如在 `czy-all` 上 merge `dev`）。
 - 未经用户明确要求，不得把 `czy-all` 当作日常开发分支写入与同步目标无关的提交。
+- 不得在 `czy-all` 上修测试、修 lint、修 build、修 typecheck；这些修复属于 `dev <- czy-all` 集成阶段。
 
 > 解释：`czy-all` 的职责是保持“可从 `caozhiyuan/dev` 干净同步”的状态；反向混入本仓库 `dev` 会污染同步基线。
 
 1. **保持 tracking 不乱改。** 除非用户明确要求，不要擅自把 `czy-all` 的 upstream 从 `origin/czy-all` 改到别的远端。
-2. **把“拉内容”和“改 tracking”分开。** 需要同步 `caozhiyuan/dev` 时，直接 `git pull caozhiyuan dev` 或等价操作；不要顺手重写 upstream。注意命令中第二个 `dev` 指的是上游 remote 的分支名，与本仓库的 `dev` 同名但不是同一分支。
+2. **把“拉内容”和“改 tracking”分开。** 需要同步 `caozhiyuan/dev` 时，优先 `git fetch caozhiyuan --prune` 后 `git merge --ff-only caozhiyuan/dev`；若 fast-forward 不可用，只能做明确的纯同步 merge commit。不要顺手重写 upstream，不要让 `git pull` 隐式 rebase 或生成含本地修复的 merge。注意 `caozhiyuan/dev` 指的是上游 remote 的分支名，与本仓库的 `dev` 同名但不是同一分支。
 3. **合并方向固定。** 这条工作流里，PR 方向始终是 `czy-all -> dev`；PR 冲突时，本地解决方向是 `dev <- czy-all`。
 4. **冲突逐个解，不批量糊。** 出现 PR conflict 后，不要直接全选 ours/theirs，不要一次性大面积接受某一边。
 5. **优先保留两边有效意图。** 目标不是“偏向哪边”，而是“best of both worlds”。
@@ -65,6 +101,35 @@ description: "This skill should be used when the user asks to merge `caozhiyuan/
 
 ## 标准流程
 
+### 第零步：Preflight branch & pollution check
+
+在任何 checkout、merge、push、PR 操作之前，先确认当前状态与 `czy-all` 是否已经被污染。
+
+推荐命令：
+
+```bash
+git status --short --branch
+git rev-parse --abbrev-ref HEAD
+git rev-parse --abbrev-ref czy-all@{upstream}
+git fetch caozhiyuan --prune
+git fetch origin --prune
+git log --oneline caozhiyuan/dev..czy-all
+git rev-list --left-right --count origin/czy-all...czy-all
+```
+
+判定规则：
+
+| 检查项 | 期望 | 不符合时 |
+|---|---|---|
+| 工作树 | clean，或只有用户明确允许保留的 unrelated untracked 文件 | 停止，先说明脏状态 |
+| `czy-all` upstream | `origin/czy-all` | 停止，不擅自改 upstream |
+| `git log caozhiyuan/dev..czy-all` | 空，或只有纯同步 merge commit | 若出现测试/lint/build/typecheck/skill/config 修复提交，进入污染恢复流程 |
+| `origin/czy-all...czy-all` | 明确知道本地/远端差异 | 不清楚时停止说明 |
+
+注意：`git log caozhiyuan/dev..czy-all` 有输出不必然等于污染；纯同步 merge commit 可以存在。污染的判断标准是：输出里是否出现本仓库本地修复、配置、skill、测试、lint、cleanup 等非上游同步提交。
+
+若第零步检测到 `czy-all` 已被污染（`git log caozhiyuan/dev..czy-all` 含非同步提交），不要继续第一步到第七步，直接跳转到本文末“污染恢复流程”。恢复完成、`czy-all` 重新干净后再回到第一步。
+
 ### 第一步：确认当前状态
 
 先确认：
@@ -72,7 +137,26 @@ description: "This skill should be used when the user asks to merge `caozhiyuan/
 - 当前分支是否是 `dev`
 - 工作树是否干净
 - `czy-all` 当前是否继续跟踪 `origin/czy-all`
-- `caozhiyuan/dev` 是否可 fetch / pull（若本地仍残留 `remotes/caozhiyuan/all`，可用 `git fetch caozhiyuan --prune` 清理）
+- `caozhiyuan/dev` 是否可 `git fetch caozhiyuan --prune`（若本地仍残留 `remotes/caozhiyuan/all`，可用 `git fetch caozhiyuan --prune` 清理；不要使用 `git pull`）
+
+### 依赖目录卫生：跨分支后先重建当前分支的本地依赖状态
+
+`node_modules` 是工作区级目录，不随 Git 分支自动切换。若你刚在 `czy-all` 或其他分支运行过 `bun install`，再切回 `dev` 后，当前 `node_modules` / ESLint project service / TypeScript 类型状态可能仍反映上一分支或旧安装状态。
+
+因此，在 `dev <- czy-all` 集成阶段运行 lint/typecheck/test/build 前，若出现“代码未改但类型型 lint 突然报错”、`@types/bun` / `bun:test` 类型异常、或分支切换后首次验证失败，先在当前分支运行：
+
+```bash
+git status --short
+bun install
+git status --short
+```
+
+判定规则：
+
+- 若 `bun install` 后 `package.json` / `bun.lock` 没变，且同一条验证命令从失败变为通过，优先判定为本地依赖目录/类型状态陈旧；不要为此提交无关代码修复。
+- 若 `bun install` 后同一错误仍存在，按真实代码或类型问题处理；不要继续把它归因于依赖目录卫生问题。
+- 若 `bun install` 修改了 `package.json` 或 `bun.lock`，先检查这些变更是否来自当前分支真实依赖更新；不要把上一分支的 lockfile 状态混进 `dev`。
+- `bun install` 只能用于恢复当前分支的本地依赖状态，不是让 `czy-all` 接受修复提交的理由；依赖相关修复提交仍只允许发生在 `dev <- czy-all` 集成阶段。
 
 再做一次方向检查（必须明确回答）：
 
@@ -96,22 +180,54 @@ git fetch caozhiyuan
 
 在 `czy-all` 上执行同步，但**不要改变 `czy-all` 的 tracking**。`czy-all` 只是同步落点，不是默认停留分支；完成这一段后应回到 `dev`。
 
+同步阶段只允许处理“如何把上游提交带进 `czy-all`”这个问题。若同步后测试、lint、build、typecheck 失败，不要在 `czy-all` 上修；把失败作为 PR 集成阶段需要处理的问题记录下来。
+
+在 `czy-all` 上只允许这些动作：
+
+- `git fetch`
+- `git status`
+- `git log`
+- `git merge --ff-only caozhiyuan/dev`，或明确的纯同步 merge commit
+- `git push origin czy-all`
+- PR 状态检查
+
+在 `czy-all` 上不允许运行后再修复：
+
+- `bun test`
+- `bun run lint:all`
+- `bun run build`
+- `bun run typecheck`
+- 任何会导致本地修复 commit 的命令链
+
 推荐做法：
 
 ```bash
 git checkout czy-all
-git pull --ff-only caozhiyuan dev
+git fetch caozhiyuan --prune
+git merge --ff-only caozhiyuan/dev
 ```
 
-若不是 fast-forward，再进入正常 merge / rebase 判断，但不要先改 upstream。
+若不是 fast-forward，且合并不产生内容冲突，只允许创建“纯同步 merge commit”把 `caozhiyuan/dev` 合入 `czy-all`。一旦有内容冲突，立即停止，不在 `czy-all` 上解；不要在 `czy-all` 上 rebase，不要 amend，不要重写已同步的上游提交。
+
+如果把 `caozhiyuan/dev` 合入 `czy-all` 时出现内容冲突，这不是常规的 PR 冲突处理场景；立即停止并报告“buffer 分支同步本身发生冲突”。不要在 `czy-all` 上解冲突，除非用户明确授权你修复/重建 `czy-all` buffer。
 
 ### 第三步：推送 `origin/czy-all`
 
-把本地 `czy-all` 推到当前仓库 fork：
+推送前确认 `czy-all` 没有本地修复提交：
+
+```bash
+git log --oneline caozhiyuan/dev..czy-all
+```
+
+若输出包含测试/lint/build/typecheck/skill/config 等本仓库修复提交，说明 `czy-all` 已被污染；停止并进入“污染恢复流程”，不要继续创建误导性 PR。
+
+确认无污染后，再把本地 `czy-all` 推到当前仓库 fork：
 
 ```bash
 git push origin czy-all
 ```
+
+push `origin/czy-all` 只表示 PR head 已更新，**不是工作完成**，也不表示 `dev` 已同步上游。
 
 ### 第四步：切回 `dev`
 
@@ -120,6 +236,8 @@ git push origin czy-all
 ```bash
 git checkout dev
 ```
+
+从这一步开始，冲突解决、测试修复、lint 修复、build 修复、typecheck 修复都应落在 `dev`。这正是 “best of both worlds” 的工作区：保留 `dev` 的本地意图，同时吸收 `czy-all` 带来的上游能力。
 
 ### 第五步：创建或确认 PR（`czy-all -> dev`）
 
@@ -160,9 +278,9 @@ gh pr view <number> --json mergeable,mergeStateStatus,statusCheckRollup,reviewDe
 - **无冲突但仍有阻塞项**：若 checks 失败/未完成，或 `reviewDecision` 仍阻塞，或 PR 仍是 draft，或还有其他 merge queue / review 阻塞项，把这些失败项或等待项明确告诉用户，不要把“已开 PR”误报成“已完成”。
 - **无冲突且已具备 merge 条件**：只有在 checks 已通过、review 不阻塞、PR 不是 draft，且 `mergeable` / `mergeStateStatus` 已明确表明可继续时，才明确告诉用户“现在已可执行最终 merge”，并询问是否继续。
 
-### 第七步：merge PR 到 `dev`
+### 第七步 A：PR 无冲突时通过 GitHub merge 到 `dev`
 
-PR 可合并时，除非用户已明确授权，否则不要擅自完成最终 merge。
+仅当 PR 无冲突、checks/review/draft/merge queue 均不阻塞，且 `mergeable` / `mergeStateStatus` 明确可继续时，才进入本步骤。除非用户已明确授权，否则不要擅自完成最终 merge。
 
 在执行最终 merge 之前，必须先说出这句话（verbatim preflight）：
 
@@ -184,7 +302,13 @@ merge 完成后，还要再次确认：
 - 当前分支仍是 `dev`
 - 工作树仍干净
 
-若 PR 有冲突，按本仓库约定在本地合并 PR：
+补充说明：若 PR 无冲突且通过 `gh pr merge` 完成远端 merge，应再执行一次 `git pull --ff-only origin dev`（或等价的 fetch + fast-forward 验证），不要把“远端已 merge”误报成“本地 dev 已同步”。
+
+### 第七步 B：PR 有冲突时本地 `dev <- czy-all` 合并
+
+仅当 PR 状态明确为 conflict / dirty，且用户知道将进入本地冲突处理流程时，才进入本步骤。本步骤不是在 `czy-all` 上修 PR，而是在 `dev` 上吸收 `czy-all`。
+
+按本仓库约定在本地合并 PR：
 
 ```bash
 git checkout dev
@@ -193,7 +317,17 @@ git merge --no-ff czy-all
 
 冲突仍按后文“逐块走 best of both worlds”处理；冲突解决应落在 `dev` 的 merge commit 中，不得在 `czy-all` 上提交“解决冲突”提交。
 
-验证通过后提交 merge commit（若 `git merge` 未自动提交）并推送：
+在提交 merge commit 或推送 `dev` 前，必须完成本仓库项目级验证门禁：当前分支必须是 `dev`；若验证失败，只能在当前 `dev <- czy-all` 工作区修复并重新验证，不得切回 `czy-all` 修。
+
+```bash
+git rev-parse --abbrev-ref HEAD
+bun run lint:all --fix
+bun run build
+bun test
+bun run typecheck
+```
+
+验证全部通过后，提交 merge commit（若 `git merge` 未自动提交）并推送：
 
 ```bash
 git push origin dev
@@ -207,7 +341,54 @@ gh pr view <number> --json state,mergedAt,mergeable,mergeStateStatus,headRefOid,
 
 若 GitHub 显示 PR `MERGED` 或 base 已包含 head，则本地解决 PR 冲突流程完成；若状态仍为 `UNKNOWN`，等待后重查；若仍 `CONFLICTING`，停止并报告实际状态。
 
-补充说明：若 PR 无冲突且通过 `gh pr merge` 完成远端 merge，应再执行一次 `git pull --ff-only origin dev`（或等价的 fetch + fast-forward 验证），不要把“远端已 merge”误报成“本地 dev 已同步”。
+## 污染恢复流程：如果本地修复误入 `czy-all`
+
+若发现 `czy-all` 上出现了测试/lint/build/typecheck/skill/config 等本仓库修复提交，不要把污染状态继续合入 `dev`。先恢复 `czy-all` 的 buffer 语义。
+
+1. 找到最后一个干净同步点：通常是最近一次“只把 `caozhiyuan/dev` 合入 `czy-all`”的 merge commit，或与 `caozhiyuan/dev` 对应的同步点。候选点必须是“纯同步 merge commit”或“上游某个 commit 的 fast-forward 落点”，不允许选普通本地修复 commit 作为干净点。推荐命令：
+
+```bash
+git log --first-parent --oneline czy-all -n 20
+git show --stat <candidate-sha>
+git show --no-patch --pretty=%P <candidate-sha>
+```
+
+候选点分两类验证：
+
+- fast-forward 落点：`git merge-base --is-ancestor <candidate-sha> caozhiyuan/dev` 必须为真。
+- 纯同步 merge commit：`git show --no-patch --pretty=%P <candidate-sha>` 必须显示一个 parent 来自 `czy-all` 旧 first-parent，另一个 parent 是/包含对应的 `caozhiyuan/dev` 同步点；且 `git log --oneline <candidate-sha>..czy-all` 中列出的后续提交必须正是要移除的污染提交。
+
+如果无法用上述证据说明候选点是干净同步点，停止并向用户报告，不要猜。
+
+2. 明确列出污染提交，并保存污染现场备份，例如：
+
+```bash
+git fetch origin --prune
+git rev-parse origin/czy-all
+git rev-parse czy-all
+git log --oneline <clean-sync-commit>..czy-all
+git branch backup/czy-all-polluted-$(date +%Y%m%d-%H%M%S) czy-all
+```
+
+3. 因为 `origin/czy-all` 可能已经被 push，重写远端前必须取得用户明确授权。没有授权，禁止执行 force push。
+4. 执行 force-with-lease 前，必须先说出这句话（verbatim preflight）：
+
+```text
+确认：你已明确授权将 origin/czy-all 从 <current-remote-sha> 回退/重写到 <clean-sync-sha>，目的是移除污染提交 <bad-sha-list>；授权原话：“...”。现在才执行 --force-with-lease。
+```
+
+若无法填入用户授权原话、当前远端 SHA、目标干净 SHA 或污染提交列表，禁止执行 force push。
+
+5. 获得授权后使用 safer force：
+
+```bash
+git checkout czy-all
+git reset --hard <clean-sync-commit>
+git push --force-with-lease origin czy-all
+```
+
+6. 重新检查 `czy-all -> dev` PR 是否更新到干净 head；若原 PR 已存在，确认它不再包含污染提交；若无 PR，再创建 PR。
+7. 切回 `dev`，从 `dev` 上重新执行 `git merge --no-ff czy-all`，所有冲突与验证修复都在 `dev` 上完成。
 
 ## 冲突处理：逐块走 “best of both worlds”
 
@@ -364,6 +545,11 @@ czy-all 侧：
 - 因为冲突多就一次性全文件接受单边
 - 把”跟踪谁”与”拉谁的内容”混为一谈
 - 未经用户明确要求，在 `czy-all` 上执行 `merge dev` / `rebase dev` 之类反向写入
+- 在 `czy-all` 上执行 `git pull`，或让 pull 隐式产生 merge/rebase
+- 把 PR 冲突当作 `czy-all` 同步冲突处理，并在 `czy-all` 上提交冲突解决
+- 在 `czy-all` 上跑过 `bun run lint:all --fix` / `bun test -u` / 任何会写盘的修复命令，并把结果 commit
+- 在错分支上 commit 后用 `git push -u origin czy-all` 强行落地
+- 把 `dev` 上 cherry-pick 的修复提交带到 `czy-all`，哪怕只是“小补丁”
 - PR 有冲突时，仍误以为只能在 GitHub 页面解决，而拒绝在本地 `dev <- czy-all` 后 push `dev` 让 PR 自动 merged
 - 把 `czy-all` 当作长期开发分支，写入与”同步 caozhiyuan/dev + 提 PR 到 dev”无关的改动
 - 没有先 push `origin/czy-all` 就开 PR
@@ -377,6 +563,7 @@ czy-all 侧：
 
 - 当前本地分支是 `dev`，而不是停留在 `czy-all`
 - `czy-all` 仍然跟踪 `origin/czy-all`
+- 在 push `czy-all` 之前以及结束前，运行 `git log --oneline caozhiyuan/dev..czy-all`，输出必须为空或仅包含纯同步 merge commit；任何非同步 commit 出现 = 立即进入污染恢复流程，不得继续 PR / merge
 - `caozhiyuan/dev` 的最新内容已经带进本地 `czy-all`
 - `origin/czy-all` 已推送
 - PR 已从 `czy-all` 指向 `dev`
