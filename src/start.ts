@@ -247,9 +247,9 @@ export const start = defineCommand({
     },
   },
   run({ args }) {
-    const rateLimitRaw = args["rate-limit"]
+    const parsedRateLimit = Number.parseInt(args["rate-limit"], 10)
     const rateLimit =
-      rateLimitRaw === undefined ? undefined : Number.parseInt(rateLimitRaw, 10)
+      Number.isNaN(parsedRateLimit) ? undefined : parsedRateLimit
 
     return runServer({
       port: Number.parseInt(args.port, 10),
