@@ -1,11 +1,11 @@
 ---
 name: best-of-both-worlds
-description: "This skill should be used when the user asks to sync upstream `caozhiyuan/dev` (previously `caozhiyuan/all`, now removed upstream) into the buffer branch `czy-all`, push `czy-all`, create/update a PR from `czy-all` to `dev`, or, if that PR conflicts, resolve conflicts only in a local `dev <- czy-all` integration merge and never on `czy-all`."
+description: "This skill should be used when the user asks to sync upstream `caozhiyuan/dev` (previously `caozhiyuan/all`, now removed upstream) into the buffer branch `czy-all`, push `czy-all`, create/update a PR from `czy-all` to `dev`, or, if that PR conflicts, analyze conflicts only in a local `dev <- czy-all` integration merge, require explicit user approval for each conflict block before editing it, and never resolve conflicts on `czy-all`."
 ---
 
 # Best of Both Worlds
 
-把 `caozhiyuan/dev` 的最新内容带到本仓库的 `czy-all`，再向本仓库 `dev` 发起 PR；若 PR 出现冲突，只能在本地 `dev <- czy-all` 集成工作区逐个冲突块分析，尽量取两边之长，不得在 `czy-all` 上解决 PR 冲突。
+把 `caozhiyuan/dev` 的最新内容带到本仓库的 `czy-all`，再向本仓库 `dev` 发起 PR；若 PR 出现冲突，只能在本地 `dev <- czy-all` 集成工作区逐个冲突块分析，逐块取得用户明确拍板后再编辑，尽量取两边之长，不得在 `czy-all` 上解决 PR 冲突。
 
 > **上游分支变更说明（2026-05）**：上游仓库 `caozhiyuan` 已经删除 `all` 分支，唯一的活跃分支是 `caozhiyuan/dev`。本 skill 中所有原来写作 `caozhiyuan/all` 的位置一律改用 `caozhiyuan/dev`。本地遗留的 `remotes/caozhiyuan/all` ref 是历史残留，请勿再用。
 
@@ -34,7 +34,7 @@ description: "This skill should be used when the user asks to sync upstream `cao
 - `git commit --amend` / `git rebase` / 重写上游同步提交
 - 任何不是来自 `caozhiyuan/dev` 的 commit
 
-这些动作的正确发生地点是 **`dev` 分支**，且必须在 `git merge --no-ff czy-all` 之后的 `dev <- czy-all` 集成工作区里完成，不是在 `czy-all`。
+这些动作的正确发生地点是 **`dev` 分支**，且必须在用户明确授权启动的 `git merge --no-ff --no-commit czy-all` 之后的 `dev <- czy-all` 集成工作区里完成，不是在 `czy-all`。
 
 ### 分支职责（硬规则）
 
@@ -75,7 +75,7 @@ description: "This skill should be used when the user asks to sync upstream `cao
 
 1. 先确保 `origin/czy-all` 已推送，且 PR 指向 `dev`。
 2. 若 PR 可直接通过 GitHub merge，则按 PR 状态和用户授权执行。
-3. 若 PR 有冲突，则在本地 `dev` 上执行 `git merge --no-ff czy-all`，逐块解决冲突，验证后 push `origin dev`。
+3. 若 PR 有冲突，则在本地 `dev` 上取得用户授权后执行 `git merge --no-ff --no-commit czy-all` 创建冲突分析工作区，逐块分析并逐块取得用户明确授权后才落地；全部冲突按用户决定解决并完成验证、取得最终 push 授权后，才可 push `origin dev`。
 4. GitHub 发现 `dev` 已包含 PR head 后，原 `czy-all -> dev` PR 会自动变为 merged/closed。
 
 这仍然是通过 PR 完成 `czy-all -> dev`，不是绕过 PR，也不是反向污染 `czy-all`。
@@ -91,9 +91,9 @@ description: "This skill should be used when the user asks to sync upstream `cao
 1. **保持 tracking 不乱改。** 除非用户明确要求，不要擅自把 `czy-all` 的 upstream 从 `origin/czy-all` 改到别的远端。
 2. **把“拉内容”和“改 tracking”分开。** 需要同步 `caozhiyuan/dev` 时，优先 `git fetch caozhiyuan --prune` 后 `git merge --ff-only caozhiyuan/dev`；若 fast-forward 不可用，只能做明确的纯同步 merge commit。不要顺手重写 upstream，不要让 `git pull` 隐式 rebase 或生成含本地修复的 merge。注意 `caozhiyuan/dev` 指的是上游 remote 的分支名，与本仓库的 `dev` 同名但不是同一分支。
 3. **合并方向固定。** 这条工作流里，PR 方向始终是 `czy-all -> dev`；PR 冲突时，本地解决方向是 `dev <- czy-all`。
-4. **冲突逐个解，不批量糊。** 出现 PR conflict 后，不要直接全选 ours/theirs，不要一次性大面积接受某一边。
+4. **冲突逐个问，不批量糊。** 出现 PR conflict 后，不要直接全选 ours/theirs，不要一次性大面积接受某一边；也不要在用户未确认前先编辑“显然正确”的块。
 5. **优先保留两边有效意图。** 目标不是“偏向哪边”，而是“best of both worlds”。
-6. **冲突决定权在用户。** agent 负责把每个冲突拆成可理解的选项、说明影响并执行用户决定；不要替用户拍板。
+6. **冲突决定权在用户。** agent 负责把每个冲突拆成可理解的选项、说明影响、给出推荐，并执行用户决定；不要替用户拍板。即使 agent 认为没有歧义、sub-agent 也同意，也必须等用户对当前块明确说 yes / 执行 / 选 A 后才能改。
 7. **先报数量，再解冲突。** agent 应先告诉用户一共有多少冲突文件、多少冲突块，再进入逐个处理。
 8. **处理过程中持续播报。** 每解决一块或推进到下一文件时，都要让用户知道当前进度，不要闷头解到最后。
 9. **先讲非冲突改动的价值。** 在进入冲突决策前，agent 应先告诉用户这批不冲突改动分别带来了什么功能变化、面向什么 use case。
@@ -162,7 +162,7 @@ git status --short
 
 - 本次是否在执行 `czy-all -> dev`？
 - 当前是否已创建或确认存在 `czy-all -> dev` PR？
-- 当前操作是否只会临时切到 `czy-all` 做同步，然后回到 `dev`；若要解决 PR 冲突，是否是在 `dev` 上执行 `git merge --no-ff czy-all`？
+- 当前操作是否只会临时切到 `czy-all` 做同步，然后回到 `dev`；若要解决 PR 冲突，是否是在 `dev` 上按第七步 B 执行用户授权的 `git merge --no-ff --no-commit czy-all`？
 - 当前操作是否会把 `dev` 反向写入 `czy-all`？
 
 若最后一问答案是“会”，立即停止；这不是本 skill 的流程。解决 PR 冲突时允许 `dev <- czy-all`，禁止 `czy-all <- dev`。
@@ -306,18 +306,50 @@ merge 完成后，还要再次确认：
 
 ### 第七步 B：PR 有冲突时本地 `dev <- czy-all` 合并
 
-仅当 PR 状态明确为 conflict / dirty，且用户知道将进入本地冲突处理流程时，才进入本步骤。本步骤不是在 `czy-all` 上修 PR，而是在 `dev` 上吸收 `czy-all`。
+仅当 PR 状态明确为 conflict / dirty，且用户明确授权“开始本地 `dev <- czy-all` 冲突分析 merge”时，才进入本步骤。本步骤不是在 `czy-all` 上修 PR，而是在 `dev` 上创建本地 merge/conflict 工作区来统计和分析冲突。
+
+进入本地 merge 前，必须先说出这句话（verbatim preflight）：
+
+```text
+确认：你已明确授权我在本地 dev 上执行 `git merge --no-ff --no-commit czy-all` 以生成冲突分析工作区（原话：“...”）。这不包含任何冲突块编辑、删除 marker、git add、验证、commit 或 push 授权。
+```
+
+若无法填入用户授权原话，则禁止执行本地 merge。
 
 按本仓库约定在本地合并 PR：
 
 ```bash
 git checkout dev
-git merge --no-ff czy-all
+git merge --no-ff --no-commit czy-all
 ```
 
-冲突仍按后文“逐块走 best of both worlds”处理；冲突解决应落在 `dev` 的 merge commit 中，不得在 `czy-all` 上提交“解决冲突”提交。
+若该命令没有产生冲突且 Git 提示可直接提交，仍然不要提交；先按第六步重新检查 PR 状态并向用户报告“本地 merge 未产生冲突”。报告后默认应执行 `git merge --abort` 退出本地 merge 工作区；是否回到第七步 A 走 GitHub merge，或改走其他收尾路径，必须由用户明示决定。未取得用户对后续路径的明确指示前，不得保留 staged 状态走 Y=0 汇总 + commit/push 路径。
 
-在提交 merge commit 或推送 `dev` 前，必须完成本仓库项目级验证门禁：当前分支必须是 `dev`；若验证失败，只能在当前 `dev <- czy-all` 工作区修复并重新验证，不得切回 `czy-all` 修。
+冲突仍按后文“逐块走 best of both worlds”处理；每个冲突块都必须先等用户明确拍板再落地。冲突解决应落在 `dev` 的 merge commit 中，不得在 `czy-all` 上提交“解决冲突”提交。
+
+在运行项目级验证前，必须先完成冲突块授权汇总门禁。汇总 preflight 未通过前，不得运行 `bun run lint:all --fix`、`bun run build`、`bun test`、`bun run typecheck` 中任何一条；它们是项目级验证，不是准备工作。执行前必须说出这句话（verbatim preflight）：
+
+```text
+确认：本次 merge 共 Y 个冲突块，每块的用户拍板原话如下：
+- 第 1 块（<file>:<hunk>）：原话“...”
+- 第 2 块（<file>:<hunk>）：原话“...”
+- ...
+现在才进入项目级验证。
+```
+
+若任一块无法填入用户拍板原话，说明还没有全部授权，禁止进入项目级验证。
+
+在提交 merge commit 或推送 `dev` 前，必须完成本仓库项目级验证门禁：当前分支必须是 `dev`。验证门禁只授权运行验证命令，不授权修复验证失败；若任一验证失败，必须停止，贴出失败摘要和相关 `git diff` / `git status --short`，不得切回 `czy-all` 修。
+
+任何为修复 `bun run lint:all --fix` / `bun run build` / `bun test` / `bun run typecheck` 失败而产生的代码、测试、lockfile、文档或配置改动，都必须先说明失败证据、拟改文件、拟改内容与风险，并取得用户明确授权后才能编辑。该授权不同于冲突块拍板，也不同于最终 commit/push 授权。
+
+执行修复编辑前，必须先说出这句话（verbatim preflight）：
+
+```text
+确认：验证 `<命令>` 失败，相关失败摘要：<paste>。拟修改文件：<list>，拟改内容摘要：<summary>，已知风险：<risk>。你已明确授权我按上述方案进行修复编辑（原话：“...”），现在才执行。本授权不包含再次运行验证、commit、push。
+```
+
+若无法填入失败摘要、拟改文件、拟改内容、风险或用户授权原话，禁止编辑。修复编辑完成后必须重新进入第七步 B 项目级验证门禁，重跑全部验证；不得跳验证直接走 commit/push 授权。
 
 ```bash
 git rev-parse --abbrev-ref HEAD
@@ -327,9 +359,26 @@ bun test
 bun run typecheck
 ```
 
-验证全部通过后，提交 merge commit（若 `git merge` 未自动提交）并推送：
+注意：`bun run lint:all --fix` 是写盘命令。它运行后必须执行 `git diff`，向用户明确展示自动改写了哪些内容，并说明“这些是 lint 自动产生的改动，不是你逐块拍板过的内容”。随后必须说出这句话（verbatim preflight）：
+
+```text
+确认：lint --fix 自动改写了以下文件：<list>，diff 已展示给你；其中触碰用户拍板范围外内容的文件：<list 或“无”>；你已明确授权将这些 lint 自动改动纳入本次 merge commit（原话：“...”），现在才进入下一步验证。
+```
+
+若 lint 自动改动触碰冲突文件、lockfile、文档或任何用户未确认的内容，必须暂停并让用户确认这些自动改动；不得把它们悄悄卷入 commit。若无法填入用户授权原话，禁止继续 build/test/typecheck、commit 或 push。
+
+所有冲突块都按用户逐块拍板落地、lint 自动改动已获确认、且验证全部通过后，必须停止并汇报结果。只有用户另行明确授权“创建 merge commit 并 push origin/dev”后，才可创建 merge commit 并推送。
+
+在 commit 或 push 前，必须先说出这句话（verbatim preflight）：
+
+```text
+确认：本次本地 merge `dev <- czy-all` 共解决 Y 块冲突，全部用户拍板原话已列出；项目级验证已全绿（lint/build/test/typecheck 均通过）；你已明确授权将 merge commit <sha 或待创建 merge commit> push 到 origin/dev（原话：“...”），现在才执行 commit/push。
+```
+
+若无法填入全部冲突块授权摘要、验证结果、merge commit SHA（或说明当前仍待创建）、用户最终 commit/push 授权原话，则禁止 commit / push。
 
 ```bash
+git commit
 git push origin dev
 ```
 
@@ -388,7 +437,7 @@ git push --force-with-lease origin czy-all
 ```
 
 6. 重新检查 `czy-all -> dev` PR 是否更新到干净 head；若原 PR 已存在，确认它不再包含污染提交；若无 PR，再创建 PR。
-7. 切回 `dev`，从 `dev` 上重新执行 `git merge --no-ff czy-all`，所有冲突与验证修复都在 `dev` 上完成。
+7. 切回 `dev` 后，不得直接执行旧式 merge 命令；必须重新回到“第七步 B：PR 有冲突时本地 `dev <- czy-all` 合并”，重新取得进入本地 merge 的用户授权，并使用 `git merge --no-ff --no-commit czy-all`。所有冲突、验证修复、commit/push 仍受第七步 B 与逐块冲突门禁约束。
 
 ## 冲突处理：逐块走 “best of both worlds”
 
@@ -406,7 +455,7 @@ git push --force-with-lease origin czy-all
 1. `dev` 这一边保留了什么意图？
 2. `czy-all` 这一边带来了什么新能力或修复？
 3. 两边是否能组合，而不是二选一？
-4. 如果不能自动判断，哪一点需要用户拍板？
+4. 我推荐哪一种，风险是什么，需要用户明确选哪一项？（固定需要用户拍板，不存在“agent 可自动判断所以直接执行”的情况）
 
 ### 决策权限规则
 
@@ -417,14 +466,20 @@ git push --force-with-lease origin czy-all
 - agent 可以指出哪种组合更像 “best of both worlds”
 - **但最终保留哪边、怎么拼，必须由用户拍板**
 - 如果用户还没拍板，agent 不要擅自完成该冲突块的最终取舍
+- **无歧义也要问。** “我能判断”“显然该组合”“只是 lockfile/文档/小块”都不是例外；每个冲突块都需要用户对当前块编号确认。
+- **不能先改后问。** 在用户确认前，不得把冲突文件改成推荐方案、不得删除 conflict marker、不得 `git add`、不得把该块标记 resolved、不得继续下一块。
 
 ### 执行门禁（强制，不可绕过）
 
-在对每个冲突块落地任何操作（写文件、标记已解决、进入下一块）之前，必须同时满足以下全部条件：
+本节只规定**块级门禁**：写文件、删除 conflict marker、标记 resolved、`git add -- <具体文件>`、进入下一块，必须等用户对当前块编号确认。
+
+验证和收尾另有独立门禁：所有块级授权完成后，必须先做冲突块授权汇总 preflight，才能进入项目级验证；commit / push 必须在验证通过后另行取得用户最终授权。任何单个块确认或全部块确认都不自动授权验证、commit 或 push。
+
+在对每个冲突块落地块级操作之前，必须同时满足以下全部条件：
 
 1. 主 agent 已给出本块的对比分析与推荐方案；
 2. sub-agent 已返回独立意见（若本轮启用了 sub-agent）；
-3. 用户对**当前块编号**给出明确确认（如”yes / agree / 执行方案 A”）。
+3. 用户对**当前块编号**给出明确确认（如”yes / agree / 执行方案 A”），且确认发生在本块分析之后。
 
 **三方对齐 = 信息齐全。用户拍板 = 唯一执行许可。两者不能混用。**
 
@@ -437,6 +492,22 @@ git push --force-with-lease origin czy-all
 ```
 
 若无法填入用户的原话，则还没有授权，禁止执行。
+
+**反例（明确违规）：**
+
+- 只说“我会合并两边意图”，然后直接编辑冲突文件。
+- 报告“3 个冲突文件”，但没有逐块等待用户选择就 `git add` / commit / push。
+- 认为 `bun.lock`、`package-lock.json`、文档冲突是机械冲突，所以自行取一边或重新生成。
+- 认为 “best of both worlds” 有明显答案，所以省略用户确认。
+
+**正确做法：**即使推荐方案明显，也要停在该块，等待用户确认后才执行。
+
+**`git add` 颗粒度规则：**
+
+- 每块拍板后，只允许标记该块所在的具体文件路径：`git add -- <该块所在文件>`。
+- 禁止使用 `git add .`、`git add -u`、`git add -A`、`git add <目录>`。
+- 全部冲突块解决完毕、进入第七步 B 验证阶段前，必须运行 `git status --short` 给用户看：“还剩 0 个 unmerged 路径，已 staged 的文件清单如下：...”。
+- 任何 staged 文件不在用户拍板清单内，立即停止；不能继续验证、commit 或 push。
 
 ### Sub-Agent 独立意见格式
 
@@ -488,7 +559,7 @@ czy-all 意图：
 推荐话术：
 
 ```text
-先说不冲突的部分：这批改动里，已有 A 个文件可以直接收下。
+先说不冲突的部分：这批改动里，已有 A 个文件不涉及冲突块，无需逐块拍板；但它们仍受 PR 状态、项目级验证、lint 自动改动复核、最终 commit/push 授权门禁约束。
 它们带来的变化主要是：
 1. <功能变化> —— 对应 <use case>
 2. <功能变化> —— 对应 <use case>
@@ -519,7 +590,9 @@ czy-all 侧：
 - 为什么这样是 best of both worlds
 
 需要用户确认：
-- 仅列真正有歧义的点
+- 固定列出当前块编号、推荐方案、风险
+- 即使无歧义，也必须请用户明确确认“按方案 A 执行”
+- 不得写“无需确认”，不得只列有歧义点
 ```
 
 ### 用户 brainstorming 规则
@@ -567,7 +640,7 @@ czy-all 侧：
 - `caozhiyuan/dev` 的最新内容已经带进本地 `czy-all`
 - `origin/czy-all` 已推送
 - PR 已从 `czy-all` 指向 `dev`
-- 若通过本地解决 PR 冲突，`dev` 已包含 `czy-all` head，已推送 `origin/dev`，且 PR 已自动变为 merged/closed
+- 若通过本地解决 PR 冲突，已记录用户对进入本地 merge、每个冲突块、lint 自动改动、验证后 commit/push 的明确授权原话；若验证一度失败，已记录用户对每次修复方案的明确授权原话，且修复后已重跑全部验证至全绿；`dev` 已包含 `czy-all` head，已推送 `origin/dev`，且 PR 已自动变为 merged/closed
 - 若有冲突，已逐块分析，而不是整边覆盖
 - 若无冲突，已向用户明确汇报 checks / merge 状态，并处理到“等待项已说明”或“最终 merge 已完成”这两个收尾之一
 
