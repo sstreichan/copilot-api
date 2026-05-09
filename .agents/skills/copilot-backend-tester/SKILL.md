@@ -64,7 +64,7 @@ x-request-id: <uuid>
 
 ## 脚本
 
-脚本位于 `.claude/skills/copilot-backend-tester/scripts/`。
+脚本位于 `.agents/skills/copilot-backend-tester/scripts/`；Claude 兼容入口 `.claude/skills/copilot-backend-tester` 是指向该目录的 symlink。
 
 ### test-messages.sh
 
