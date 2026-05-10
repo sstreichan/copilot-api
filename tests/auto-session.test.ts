@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test"
 
+import { state } from "../src/lib/state"
+
 type AutoSessionModule = typeof import("../src/lib/auto-session")
 
 type ModelsSessionResponse = {
@@ -42,6 +44,7 @@ describe("auto-session", () => {
   beforeEach(() => {
     const queue: Array<ModelsSessionResponse> = []
     ;(globalThis as TestGlobal).__AUTO_SESSION_QUEUE__ = queue
+    state.copilotToken = "dummy-auth-token-a"
 
     fetchMock = mock(() => {
       const currentQueue = getQueue()
@@ -121,7 +124,7 @@ describe("auto-session", () => {
     expect(token).toBe("token-refreshed")
   })
 
-  test("refreshes only after first use when near expiry", async () => {
+  test("refreshes before first covered request when prewarmed token is near expiry", async () => {
     const { getAutoSessionTokenForModel, prewarmAutoSession } =
       await loadAutoSessionModule()
 
@@ -141,10 +144,39 @@ describe("auto-session", () => {
     await prewarmAutoSession()
 
     const first = await getAutoSessionTokenForModel("gpt-5.3-codex")
-    expect(first).toBe("token-near-expiry")
+    expect(first).toBe("token-refreshed")
 
     const second = await getAutoSessionTokenForModel("gpt-5.3-codex")
     expect(second).toBe("token-refreshed")
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  test("refreshes cached session when Copilot auth token identity changes", async () => {
+    const { getAutoSessionTokenForModel, prewarmAutoSession } =
+      await loadAutoSessionModule()
+
+    getQueue().push(
+      {
+        available_models: ["gpt-5.3-codex"],
+        expires_at: Math.floor(Date.now() / 1000) + 3600,
+        session_token: "session-for-auth-a",
+      },
+      {
+        available_models: ["gpt-5.3-codex"],
+        expires_at: Math.floor(Date.now() / 1000) + 3600,
+        session_token: "session-for-auth-b",
+      },
+    )
+
+    await prewarmAutoSession()
+    const first = await getAutoSessionTokenForModel("gpt-5.3-codex")
+    expect(first).toBe("session-for-auth-a")
+
+    state.copilotToken = "dummy-auth-token-b"
+
+    const second = await getAutoSessionTokenForModel("gpt-5.3-codex")
+    expect(second).toBe("session-for-auth-b")
+    expect(fetchMock).toHaveBeenCalledTimes(2)
   })
 
   test("reuses cached token for covered model without extra refresh", async () => {

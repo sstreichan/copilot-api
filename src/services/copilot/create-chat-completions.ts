@@ -28,6 +28,8 @@ import {
   trackGhostTextShown,
 } from "~/services/telemetry/telemetry"
 
+import { retryAfterInvalidAutoModeSelector } from "./auto-session-retry"
+
 /**
  * Check if error response indicates a thinking block issue that can be
  * resolved by stripping thinking/reasoning fields and retrying.
@@ -235,11 +237,20 @@ export const createChatCompletions = async (
 
   // First attempt: passthrough unchanged
   consola.debug(`<-- model: ${payload.model}`)
-  const response = await fetch(`${copilotBaseUrl(state)}/chat/completions`, {
-    method: "POST",
+  const url = `${copilotBaseUrl(state)}/chat/completions`
+  const sendRequest = () =>
+    fetch(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(payload),
+    })
+
+  const response = await retryAfterInvalidAutoModeSelector(
+    await sendRequest(),
     headers,
-    body: JSON.stringify(payload),
-  })
+    payload.model,
+    sendRequest,
+  )
 
   logCopilotRateLimits(response.headers)
 

@@ -3,6 +3,7 @@ import fs from "node:fs/promises"
 import { setTimeout as delay } from "node:timers/promises"
 
 import { isOpencodeOauthApp } from "~/lib/api-config"
+import { invalidateAutoSession } from "~/lib/auto-session"
 import { PATHS } from "~/lib/paths"
 import { getCopilotToken } from "~/services/github/get-copilot-token"
 import { getCopilotUsage } from "~/services/github/get-copilot-usage"
@@ -43,7 +44,11 @@ function applyCopilotTokenMetadata(
     telemetry,
   } = metadata
 
+  const previousToken = state.copilotToken
   state.copilotToken = token
+  if (previousToken !== token) {
+    invalidateAutoSession()
+  }
   state.copilotApiUrl = endpoints?.api
   state.copilotTrackingId = tracking_id
   state.copilotTelemetryEnabled = telemetry === "enabled"
@@ -75,7 +80,11 @@ export const setupCopilotToken = async () => {
   if (isOpencodeOauthApp()) {
     if (!state.githubToken) throw new Error(`opencode token not found`)
 
+    const previousToken = state.copilotToken
     state.copilotToken = state.githubToken
+    if (previousToken !== state.copilotToken) {
+      invalidateAutoSession()
+    }
 
     consola.debug("GitHub Copilot token set from opencode auth token")
     if (state.showToken) {

@@ -28,6 +28,8 @@ import {
   trackGhostTextShown,
 } from "~/services/telemetry/telemetry"
 
+import { retryAfterInvalidAutoModeSelector } from "./auto-session-retry"
+
 export interface ResponsesPayload {
   model: string
   instructions?: string | null
@@ -442,11 +444,20 @@ export const createResponses = async (
 
   consola.debug(`<-- model: ${payload.model}`)
 
-  const response = await fetch(`${copilotBaseUrl(state)}/responses`, {
-    method: "POST",
+  const url = `${copilotBaseUrl(state)}/responses`
+  const sendRequest = () =>
+    fetch(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(payload),
+    })
+
+  const response = await retryAfterInvalidAutoModeSelector(
+    await sendRequest(),
     headers,
-    body: JSON.stringify(payload),
-  })
+    payload.model,
+    sendRequest,
+  )
 
   logCopilotRateLimits(response.headers)
 

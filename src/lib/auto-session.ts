@@ -2,11 +2,14 @@ import consola from "consola"
 
 import { getModelsSession } from "~/services/copilot/get-models-session"
 
+import { state } from "./state"
+
 interface AutoSessionCache {
   sessionToken?: string
   availableModels: Set<string>
   expiresAt: number
   hasBeenUsed: boolean
+  authToken?: string
 }
 
 const cache: AutoSessionCache = {
@@ -14,6 +17,7 @@ const cache: AutoSessionCache = {
   availableModels: new Set(),
   expiresAt: 0,
   hasBeenUsed: false,
+  authToken: undefined,
 }
 
 const FIVE_MINUTES_MS = 5 * 60 * 1000
@@ -24,9 +28,18 @@ const refreshAutoSession = async () => {
   cache.availableModels = new Set(session.available_models)
   cache.expiresAt = session.expires_at
   cache.hasBeenUsed = false
+  cache.authToken = state.copilotToken
   consola.info(
     `[auto-session] refreshed token, models=${cache.availableModels.size}`,
   )
+}
+
+export const invalidateAutoSession = (): void => {
+  cache.sessionToken = undefined
+  cache.availableModels = new Set()
+  cache.expiresAt = 0
+  cache.hasBeenUsed = false
+  cache.authToken = undefined
 }
 
 const shouldRefresh = (): boolean => {
@@ -34,8 +47,12 @@ const shouldRefresh = (): boolean => {
     return true
   }
 
+  if (cache.authToken !== state.copilotToken) {
+    return true
+  }
+
   const expiresSoon = cache.expiresAt * 1000 - Date.now() < FIVE_MINUTES_MS
-  return expiresSoon && cache.hasBeenUsed
+  return expiresSoon
 }
 
 export const prewarmAutoSession = async (): Promise<void> => {

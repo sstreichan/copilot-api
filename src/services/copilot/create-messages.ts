@@ -34,6 +34,8 @@ import {
   trackGhostTextShown,
 } from "~/services/telemetry/telemetry"
 
+import { retryAfterInvalidAutoModeSelector } from "./auto-session-retry"
+
 export interface CreateMessagesOptions {
   initiator?: "user" | "agent"
   anthropicBeta?: string
@@ -297,11 +299,19 @@ const sendWithSignatureRetry = async (
   headers: Record<string, string>,
   enhancedPayload: ReturnType<typeof buildEnhancedPayload>,
 ): Promise<Response> => {
-  const response = await fetch(url, {
-    method: "POST",
+  const sendRequest = () =>
+    fetch(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(enhancedPayload),
+    })
+
+  const response = await retryAfterInvalidAutoModeSelector(
+    await sendRequest(),
     headers,
-    body: JSON.stringify(enhancedPayload),
-  })
+    enhancedPayload.model,
+    sendRequest,
+  )
 
   if (response.ok) return response
 

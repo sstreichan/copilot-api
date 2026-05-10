@@ -22,6 +22,21 @@ state.accountType = "individual"
 
 // Helper to mock fetch
 let fetchMock: ReturnType<typeof mock>
+type FetchCall = [string, RequestInit]
+
+const findMessagesCall = (): FetchCall => {
+  const messagesCall = fetchMock.mock.calls.find((call) =>
+    (call[0] as string).includes("/v1/messages"),
+  )
+  expect(messagesCall).toBeDefined()
+  return messagesCall as FetchCall
+}
+
+const getMessagesHeaders = (): Record<string, string> =>
+  (findMessagesCall()[1] as { headers: Record<string, string> }).headers
+
+const getMessagesBody = (): string =>
+  (findMessagesCall()[1] as { body: string }).body
 
 beforeEach(() => {
   capturedModelCallId = undefined
@@ -82,7 +97,7 @@ test("calls /v1/messages endpoint", async () => {
   }
   await createMessages(payload)
   expect(fetchMock).toHaveBeenCalled()
-  const url = fetchMock.mock.calls[0][0] as string
+  const url = findMessagesCall()[0]
   expect(url).toContain("/v1/messages")
 })
 
@@ -93,9 +108,7 @@ test("sets X-Initiator to user by default", async () => {
     messages: [{ role: "user", content: "hi" }],
   }
   await createMessages(payload, { initiator: "user" })
-  const headers = (
-    fetchMock.mock.calls[0][1] as { headers: Record<string, string> }
-  ).headers
+  const headers = getMessagesHeaders()
   expect(headers["x-initiator"]).toBe("user")
 })
 
@@ -106,9 +119,7 @@ test("sets X-Initiator to agent when specified", async () => {
     messages: [{ role: "user", content: "hi" }],
   }
   await createMessages(payload, { initiator: "agent" })
-  const headers = (
-    fetchMock.mock.calls[0][1] as { headers: Record<string, string> }
-  ).headers
+  const headers = getMessagesHeaders()
   expect(headers["x-initiator"]).toBe("agent")
 })
 
@@ -143,9 +154,7 @@ test("forwards allowed anthropic-beta header when provided", async () => {
   await createMessages(payload, {
     anthropicBeta: "context-management-2025-06-27",
   })
-  const headers = (
-    fetchMock.mock.calls[0][1] as { headers: Record<string, string> }
-  ).headers
+  const headers = getMessagesHeaders()
   expect(headers["anthropic-beta"]).toBe("context-management-2025-06-27")
 })
 
@@ -158,9 +167,7 @@ test("filters unsupported anthropic-beta header when provided", async () => {
   await createMessages(payload, {
     anthropicBeta: "max-tokens-3-5-sonnet-2024-07-15",
   })
-  const headers = (
-    fetchMock.mock.calls[0][1] as { headers: Record<string, string> }
-  ).headers
+  const headers = getMessagesHeaders()
   expect(headers["anthropic-beta"]).toBeUndefined()
 })
 
@@ -171,9 +178,7 @@ test("does not include anthropic-beta header when not provided", async () => {
     messages: [{ role: "user", content: "hi" }],
   }
   await createMessages(payload)
-  const headers = (
-    fetchMock.mock.calls[0][1] as { headers: Record<string, string> }
-  ).headers
+  const headers = getMessagesHeaders()
   expect(headers["anthropic-beta"]).toBeUndefined()
 })
 
@@ -190,7 +195,7 @@ test("passes payload with forced temperature=1 to endpoint", async () => {
     temperature: 0.7, // This should be overridden to 1
   }
   await createMessages(payload)
-  const body = (fetchMock.mock.calls[0][1] as { body: string }).body
+  const body = getMessagesBody()
   const parsed = JSON.parse(body) as AnthropicMessagesPayload
   // temperature is forced to 1 for deep thinking
   expect(parsed.temperature).toBe(1)
@@ -251,7 +256,7 @@ test("does not enable adaptive thinking when tool_choice forces tool use", async
   }
 
   await createMessages(payload)
-  const body = (fetchMock.mock.calls[0][1] as { body: string }).body
+  const body = getMessagesBody()
   const parsed = JSON.parse(body) as AnthropicMessagesPayload
 
   expect(parsed.thinking).toBeUndefined()
@@ -294,7 +299,7 @@ test("preserves request output_config effort when adaptive thinking enabled", as
 
   await createMessages(payload)
 
-  const body = (fetchMock.mock.calls[0][1] as { body: string }).body
+  const body = getMessagesBody()
   const parsed = JSON.parse(body) as AnthropicMessagesPayload
 
   expect(parsed.output_config?.effort).toBe("medium")
@@ -430,9 +435,7 @@ test("sets copilot-vision-request header when payload contains image block", asy
     ],
   }
   await createMessages(payload)
-  const headers = (
-    fetchMock.mock.calls[0][1] as { headers: Record<string, string> }
-  ).headers
+  const headers = getMessagesHeaders()
   expect(headers["copilot-vision-request"]).toBe("true")
 })
 
@@ -476,9 +479,7 @@ test("sets copilot-vision-request header when tool_result contains nested image"
     ],
   }
   await createMessages(payload)
-  const headers = (
-    fetchMock.mock.calls[0][1] as { headers: Record<string, string> }
-  ).headers
+  const headers = getMessagesHeaders()
   expect(headers["copilot-vision-request"]).toBe("true")
 })
 
@@ -489,9 +490,7 @@ test("does not set copilot-vision-request header for text-only messages", async 
     messages: [{ role: "user", content: "Hello, how are you?" }],
   }
   await createMessages(payload)
-  const headers = (
-    fetchMock.mock.calls[0][1] as { headers: Record<string, string> }
-  ).headers
+  const headers = getMessagesHeaders()
   expect(headers["copilot-vision-request"]).toBeUndefined()
 })
 
@@ -504,9 +503,7 @@ test("includes X-Interaction-Id from state.interactionId (Wave 1/2)", async () =
     messages: [{ role: "user", content: "hi" }],
   }
   await createMessages(payload)
-  const headers = (
-    fetchMock.mock.calls[0][1] as { headers: Record<string, string> }
-  ).headers
+  const headers = getMessagesHeaders()
   expect(headers["x-interaction-id"]).toBe("test-interaction-id")
   // eslint-disable-next-line require-atomic-updates
   state.interactionId = originalInteractionId
@@ -519,9 +516,7 @@ test("X-Agent-Task-Id equals x-request-id (Wave 1/2)", async () => {
     messages: [{ role: "user", content: "hi" }],
   }
   await createMessages(payload)
-  const headers = (
-    fetchMock.mock.calls[0][1] as { headers: Record<string, string> }
-  ).headers
+  const headers = getMessagesHeaders()
   expect(headers["x-agent-task-id"]).toBe(headers["x-request-id"])
 })
 
@@ -544,8 +539,6 @@ test("X-Interaction-Type equals openai-intent (Wave 1/2)", async () => {
     messages: [{ role: "user", content: "hi" }],
   }
   await createMessages(payload)
-  const headers = (
-    fetchMock.mock.calls[0][1] as { headers: Record<string, string> }
-  ).headers
+  const headers = getMessagesHeaders()
   expect(headers["x-interaction-type"]).toBe(headers["openai-intent"])
 })
