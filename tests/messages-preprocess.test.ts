@@ -251,6 +251,66 @@ describe("mergeToolResultForClaude", () => {
     })
   })
 
+  test("lifts cache_control out of merged array tool_result content", () => {
+    const payload: AnthropicMessagesPayload = {
+      model: "claude-opus-4.6",
+      max_tokens: 128,
+      messages: [
+        {
+          role: "user",
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: "tool-1",
+              content: [
+                {
+                  type: "text",
+                  text: "tool output",
+                  cache_control: {
+                    type: "ephemeral",
+                    ttl: "1h",
+                  },
+                },
+              ],
+            },
+            {
+              type: "text",
+              text: "cached trailing text",
+              cache_control: {
+                type: "ephemeral",
+              },
+            },
+          ],
+        },
+      ],
+    }
+
+    mergeToolResultForClaude(payload)
+
+    expect(payload.messages[0]).toEqual({
+      role: "user",
+      content: [
+        {
+          type: "tool_result",
+          tool_use_id: "tool-1",
+          content: [
+            {
+              type: "text",
+              text: "tool output",
+            },
+            {
+              type: "text",
+              text: "cached trailing text",
+            },
+          ],
+          cache_control: {
+            type: "ephemeral",
+          },
+        },
+      ],
+    })
+  })
+
   test("appends all text blocks to the last tool_result when counts differ", () => {
     const payload: AnthropicMessagesPayload = {
       model: "claude-opus-4.6",

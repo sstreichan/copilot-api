@@ -370,6 +370,8 @@ export const copilotWebSocketHeaders = (
     "Copilot-Integration-Id": source("copilot-integration-id", "vscode-chat"),
   })
 
+  setPreparedHeader(headers, "host", preparedHeaders, "host")
+
   setPreparedHeader(
     headers,
     "Copilot-Vision-Request",

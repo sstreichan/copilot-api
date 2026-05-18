@@ -21,6 +21,7 @@ import type {
   AnthropicMessagesPayload,
   AnthropicTextBlock,
   AnthropicToolResultBlock,
+  AnthropicToolResultContentBlock,
   AnthropicUserContentBlock,
 } from "./anthropic-types"
 
@@ -185,16 +186,25 @@ const mergeContentWithText = (
   tr: AnthropicToolResultBlock,
   textBlock: AnthropicTextBlock,
 ): AnthropicToolResultBlock => {
+  const normalizedToolResult = normalizeToolResultContentCacheControl(tr)
+  const mergedToolResult = mergeToolResultCacheControl(normalizedToolResult, [
+    textBlock,
+  ])
+  const sanitizedTextBlock = stripContentBlockCacheControl(textBlock)
+
   if (typeof tr.content === "string") {
-    return { ...tr, content: `${tr.content}\n\n${textBlock.text}` }
+    return {
+      ...mergedToolResult,
+      content: `${tr.content}\n\n${textBlock.text}`,
+    }
   }
   // Unable to merge, discard other text blocks, wait for the next round of re-request
   if (hasToolRef(tr)) {
     return tr
   }
   return {
-    ...tr,
-    content: [...tr.content, textBlock],
+    ...mergedToolResult,
+    content: [...normalizedToolResult.content, sanitizedTextBlock],
   }
 }
 
@@ -202,15 +212,86 @@ const mergeContentWithTexts = (
   tr: AnthropicToolResultBlock,
   textBlocks: Array<AnthropicTextBlock>,
 ): AnthropicToolResultBlock => {
+  const normalizedToolResult = normalizeToolResultContentCacheControl(tr)
+  const mergedToolResult = mergeToolResultCacheControl(
+    normalizedToolResult,
+    textBlocks,
+  )
+  const sanitizedTextBlocks = textBlocks.map(stripContentBlockCacheControl)
+
   if (typeof tr.content === "string") {
     const appendedTexts = textBlocks.map((tb) => tb.text).join("\n\n")
-    return { ...tr, content: `${tr.content}\n\n${appendedTexts}` }
+    return {
+      ...mergedToolResult,
+      content: `${tr.content}\n\n${appendedTexts}`,
+    }
   }
   // Unable to merge, discard other text blocks, wait for the next round of re-request
   if (hasToolRef(tr)) {
     return tr
   }
-  return { ...tr, content: [...tr.content, ...textBlocks] }
+  return {
+    ...mergedToolResult,
+    content: [...normalizedToolResult.content, ...sanitizedTextBlocks],
+  }
+}
+
+const mergeToolResultCacheControl = (
+  tr: AnthropicToolResultBlock,
+  textBlocks: Array<AnthropicTextBlock>,
+): AnthropicToolResultBlock => {
+  const cacheControl = textBlocks
+    .map((block) => block.cache_control)
+    .findLast(
+      (candidate): candidate is AnthropicCacheControl =>
+        Boolean(candidate) && typeof candidate === "object",
+    )
+
+  if (cacheControl) {
+    return { ...tr, cache_control: { ...cacheControl } }
+  }
+
+  return tr.cache_control ?
+      { ...tr, cache_control: { ...tr.cache_control } }
+    : tr
+}
+
+const stripContentBlockCacheControl = (
+  block: AnthropicTextBlock,
+): AnthropicTextBlock => {
+  if (!block.cache_control) {
+    return block
+  }
+
+  return {
+    text: block.text,
+    type: "text",
+  }
+}
+
+const normalizeToolResultContentCacheControl = (
+  tr: AnthropicToolResultBlock,
+): AnthropicToolResultBlock & {
+  content: Array<AnthropicToolResultContentBlock>
+} => {
+  if (typeof tr.content === "string") {
+    return { ...tr, content: [{ type: "text", text: tr.content }] }
+  }
+
+  let cacheControl = tr.cache_control
+  const content = tr.content.map((block) => {
+    if (!("cache_control" in block) || !block.cache_control) {
+      return block
+    }
+
+    cacheControl = block.cache_control
+    const { cache_control: _cacheControl, ...rest } = block
+    return rest
+  })
+
+  return cacheControl ?
+      { ...tr, cache_control: cacheControl, content }
+    : { ...tr, content }
 }
 
 const mergeContentWithAttachments = (

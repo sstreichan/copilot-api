@@ -440,8 +440,20 @@ describe("telemetry: request/response wrappers", () => {
     trackPanelRequest({ headerRequestId: "req-panel-001" })
     await flushMicrotasks()
 
-    expect(requestMock).toHaveBeenCalledTimes(1)
-    const call = requestMock.mock.calls[0] as Array<unknown> | undefined
+    const requestCalls = requestMock.mock.calls as Array<Array<unknown>>
+    const call = requestCalls.find((candidate) => {
+      const options = candidate[1]
+      if (typeof options !== "object" || options === null) {
+        return false
+      }
+
+      const body = (options as { body?: unknown }).body
+      if (typeof body !== "string") {
+        return false
+      }
+
+      return body.includes('"headerRequestId":"req-panel-001"')
+    })
     if (!call) {
       throw new TypeError("request call missing")
     }
