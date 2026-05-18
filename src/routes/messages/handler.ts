@@ -9,6 +9,7 @@ import {
   getSmallModel,
   isMessagesApiEnabled,
   resolveAnthropicEffortForLog,
+  resolveMappedModel,
   shouldCompactUseSmallModel,
 } from "~/lib/config"
 import {
@@ -23,15 +24,18 @@ import { checkRateLimit } from "~/lib/rate-limit"
 import { state } from "~/lib/state"
 import { generateRequestIdFromPayload, getRootSessionId } from "~/lib/utils"
 import { handleProviderMessagesForProvider } from "~/routes/provider/messages/handler"
+import { getResponsesTransportForModel } from "~/routes/responses/utils"
 
-import { type AnthropicMessagesPayload } from "./anthropic-types"
+import type { AnthropicMessagesPayload } from "./anthropic-types"
 import {
   handleWithChatCompletions,
   handleWithMessagesApi,
   handleWithResponsesApi,
 } from "./api-flows"
 import {
+  applyLastMessageCacheControl,
   getCompactType,
+  getLastMessageContentCacheControl,
   mergeToolResultForClaude,
   sanitizeIdeTools,
   stripToolReferenceTurnBoundary,
@@ -49,6 +53,14 @@ export const messagesFlowHandlers = {
 
 export async function handleCompletion(c: Context) {
   const anthropicPayload = await c.req.json<AnthropicMessagesPayload>()
+  const requestedModel = anthropicPayload.model
+  anthropicPayload.model = resolveMappedModel(anthropicPayload.model)
+  if (anthropicPayload.model !== requestedModel) {
+    logger.debug(
+      `Resolved model mapping: ${requestedModel} -> ${anthropicPayload.model}`,
+    )
+  }
+
   const providerModelAlias = parseProviderModelAlias(anthropicPayload.model)
   if (providerModelAlias) {
     anthropicPayload.model = providerModelAlias.model
@@ -88,8 +100,12 @@ export async function handleCompletion(c: Context) {
   }
 
   if (compactType === 0) {
+    const lastMessageCacheControl = getLastMessageContentCacheControl(
+      anthropicPayload.messages.at(-1),
+    )
     stripToolReferenceTurnBoundary(anthropicPayload)
     mergeToolResultForClaude(anthropicPayload)
+    applyLastMessageCacheControl(anthropicPayload, lastMessageCacheControl)
   }
 
   const selectedModel = findEndpointModel(anthropicPayload.model)
@@ -129,7 +145,7 @@ export async function handleCompletion(c: Context) {
     )
   }
 
-  if (shouldUseResponsesApi(selectedModel)) {
+  if (shouldUseResponsesApi(selectedModel, compactType)) {
     return await messagesFlowHandlers.handleWithResponsesApi(
       c,
       anthropicPayload,
@@ -161,13 +177,13 @@ export async function handleCompletion(c: Context) {
   )
 }
 
-const RESPONSES_ENDPOINT = "/responses"
 const MESSAGES_ENDPOINT = "/v1/messages"
 
-const shouldUseResponsesApi = (selectedModel: Model | undefined): boolean => {
-  return (
-    selectedModel?.supported_endpoints?.includes(RESPONSES_ENDPOINT) ?? false
-  )
+const shouldUseResponsesApi = (
+  selectedModel: Model | undefined,
+  compactType: ReturnType<typeof getCompactType>,
+): boolean => {
+  return Boolean(getResponsesTransportForModel(selectedModel, { compactType }))
 }
 
 const shouldUseMessagesApi = (selectedModel: Model | undefined): boolean => {

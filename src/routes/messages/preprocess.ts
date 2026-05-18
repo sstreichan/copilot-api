@@ -13,6 +13,8 @@ import {
 import { getAnthropicEffortForModel } from "~/services/copilot/create-messages"
 
 import type {
+  AnthropicAssistantContentBlock,
+  AnthropicCacheControl,
   AnthropicDocumentBlock,
   AnthropicImageBlock,
   AnthropicMessage,
@@ -31,9 +33,74 @@ const IDE_GET_DIAGNOSTICS_DESCRIPTION =
 const PDF_FILE_READ_PREFIX = "PDF file read:"
 
 type AnthropicAttachmentBlock = AnthropicImageBlock | AnthropicDocumentBlock
+type AnthropicMessageContentBlock =
+  | AnthropicUserContentBlock
+  | AnthropicAssistantContentBlock
 type IndexedAttachment = {
   attachment: AnthropicAttachmentBlock
   order: number
+}
+
+type CacheControlContentBlock = AnthropicMessageContentBlock & {
+  cache_control?: AnthropicCacheControl | null
+}
+
+const hasCacheControlField = (
+  block: AnthropicMessageContentBlock,
+): block is CacheControlContentBlock =>
+  block.type !== "thinking" && block.type !== "redacted_thinking"
+
+const getBlockCacheControl = (
+  block: AnthropicMessageContentBlock | undefined,
+): AnthropicCacheControl | undefined => {
+  if (!block || !hasCacheControlField(block)) {
+    return undefined
+  }
+
+  const cacheControl = block.cache_control
+  if (!cacheControl || typeof cacheControl !== "object") {
+    return
+  }
+
+  return cacheControl
+}
+
+export const getLastMessageContentCacheControl = (
+  lastMessage: AnthropicMessage | undefined,
+): AnthropicCacheControl | undefined => {
+  if (!lastMessage || !Array.isArray(lastMessage.content)) {
+    return undefined
+  }
+
+  const cacheControl = getBlockCacheControl(lastMessage.content.at(-1))
+  return cacheControl ? { ...cacheControl } : undefined
+}
+
+// Apply the original last message tail's cache_control to the rewritten tail. If
+// the original tail was not marked, fall back to a default ephemeral marker.
+export const applyLastMessageCacheControl = (
+  anthropicPayload: AnthropicMessagesPayload,
+  lastMessageCacheControl: AnthropicCacheControl | undefined,
+): void => {
+  const cacheControl = lastMessageCacheControl ?? {
+    type: "ephemeral",
+  }
+
+  const lastMessage = anthropicPayload.messages.at(-1)
+  if (!lastMessage || !Array.isArray(lastMessage.content)) {
+    return
+  }
+
+  const lastBlock = lastMessage.content.at(-1)
+  if (
+    !lastBlock
+    || !hasCacheControlField(lastBlock)
+    || lastBlock.cache_control
+  ) {
+    return
+  }
+
+  lastBlock.cache_control = { ...cacheControl }
 }
 
 const getCompactCandidateText = (message: AnthropicMessage): string => {
@@ -489,13 +556,10 @@ const hasToolRef = (block: AnthropicToolResultBlock) => {
 const stripCacheControl = (payload: AnthropicMessagesPayload): void => {
   if (Array.isArray(payload.system)) {
     for (const block of payload.system) {
-      const systemBlock = block as AnthropicTextBlock & {
-        cache_control?: Record<string, unknown>
-      }
-      const cacheControl = systemBlock.cache_control
+      const cacheControl = block.cache_control
       if (cacheControl && typeof cacheControl === "object") {
         const { scope, ...rest } = cacheControl
-        systemBlock.cache_control = rest
+        block.cache_control = rest
       }
     }
   }

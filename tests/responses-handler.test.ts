@@ -26,11 +26,20 @@ import { attachResponseHeaders } from "~/lib/response-headers"
 import { state } from "~/lib/state"
 import { closeUsageStore } from "~/lib/token-usage"
 import { generateRequestIdFromPayload, getUUID } from "~/lib/utils"
-import { handleResponses } from "~/routes/responses/handler"
+import {
+  handleResponses,
+  responsesHandlerDependencies,
+} from "~/routes/responses/handler"
+import { responsesUtilsDependencies } from "~/routes/responses/utils"
 import { tokenUsageRoute } from "~/routes/token-usage/route"
 import * as createChatCompletionsModule from "~/services/copilot/create-chat-completions"
 import * as createMessagesModule from "~/services/copilot/create-messages"
 import * as createResponsesModule from "~/services/copilot/create-responses"
+
+const defaultResponsesHandlerDependencies = {
+  ...responsesHandlerDependencies,
+}
+const defaultResponsesUtilsDependencies = { ...responsesUtilsDependencies }
 
 const DB_PATH_ENV = "COPILOT_API_SQLITE_DB_PATH"
 
@@ -249,6 +258,7 @@ const createRoutingTestSpies = () => {
     createResponsesModule,
     "createResponses",
   ).mockResolvedValue(responseResult)
+  responsesHandlerDependencies.createResponses = createResponsesSpy
   const createChatCompletionsSpy = spyOn(
     createChatCompletionsModule,
     "createChatCompletions",
@@ -404,6 +414,7 @@ describe("handleResponses reasoning effort", () => {
       receivedOptions = options
       return Promise.resolve(responseResult)
     })
+    responsesHandlerDependencies.createResponses = createResponsesSpy
     rateLimitSpy = spyOn(rateLimitModule, "checkRateLimit").mockResolvedValue()
     getConfigSpy = spyOn(configModule, "getConfig").mockReturnValue(
       defaultConfig(),
@@ -436,6 +447,10 @@ describe("handleResponses reasoning effort", () => {
     state.models = originalModels
     infoSpy.mockRestore()
     createResponsesSpy.mockRestore()
+    Object.assign(
+      responsesHandlerDependencies,
+      defaultResponsesHandlerDependencies,
+    )
     rateLimitSpy.mockRestore()
     getConfigSpy.mockRestore()
     resolveEffortSpy.mockRestore()
@@ -746,6 +761,7 @@ describe("handleResponses streaming logs", () => {
       createResponsesModule,
       "createResponses",
     ).mockResolvedValue(responseResult)
+    responsesHandlerDependencies.createResponses = createResponsesSpy
     rateLimitSpy = spyOn(rateLimitModule, "checkRateLimit").mockResolvedValue()
     getConfigSpy = spyOn(configModule, "getConfig").mockReturnValue({
       ...configModule.getConfig(),
@@ -763,6 +779,10 @@ describe("handleResponses streaming logs", () => {
   afterEach(() => {
     state.models = originalModels
     createResponsesSpy.mockRestore()
+    Object.assign(
+      responsesHandlerDependencies,
+      defaultResponsesHandlerDependencies,
+    )
     rateLimitSpy.mockRestore()
     getConfigSpy.mockRestore()
     getPremiumInfoSpy.mockRestore()
@@ -1231,6 +1251,7 @@ describe("responses handler token usage", () => {
       createResponsesModule,
       "createResponses",
     ).mockImplementation(createResponsesMock)
+    responsesHandlerDependencies.createResponses = createResponsesMock
     getConfigSpy = spyOn(configModule, "getConfig").mockReturnValue(
       defaultConfig(),
     )
@@ -1249,6 +1270,82 @@ describe("responses handler token usage", () => {
     state.rateLimitWait = originalState.rateLimitWait
     state.lastRequestTimestamp = originalState.lastRequestTimestamp
     state.models = originalState.models
+    Object.assign(
+      responsesHandlerDependencies,
+      defaultResponsesHandlerDependencies,
+    )
+    Object.assign(responsesUtilsDependencies, defaultResponsesUtilsDependencies)
+  })
+
+  test("uses websocket transport by default for dual-endpoint models", async () => {
+    state.models = {
+      object: "list",
+      data: [
+        {
+          ...testModels.data[0],
+          supported_endpoints: ["/responses", "ws:/responses"],
+        },
+      ],
+    }
+    responsesUtilsDependencies.isResponsesApiWebSocketEnabled = () => true
+    createResponsesMock.mockImplementation(() =>
+      Promise.resolve(structuredClone(responseResult)),
+    )
+
+    const app = createApp()
+    const response = await app.request("/v1/responses", {
+      body: JSON.stringify({ input: "hello", model: "gpt-test" }),
+      headers: { "content-type": "application/json" },
+      method: "POST",
+    })
+
+    expect(response.status).toBe(200)
+    expect(createResponsesMock).toHaveBeenCalledTimes(1)
+    expect(createResponsesMock.mock.calls[0]?.[1]?.transport).toBe("websocket")
+  })
+
+  test("keeps HTTP transport for dual-endpoint models when websocket is disabled", async () => {
+    state.models = {
+      object: "list",
+      data: [
+        {
+          ...testModels.data[0],
+          supported_endpoints: ["/responses", "ws:/responses"],
+        },
+      ],
+    }
+    responsesUtilsDependencies.isResponsesApiWebSocketEnabled = () => false
+    createResponsesMock.mockImplementation(() =>
+      Promise.resolve(structuredClone(responseResult)),
+    )
+
+    const app = createApp()
+    const response = await app.request("/v1/responses", {
+      body: JSON.stringify({ input: "hello", model: "gpt-test" }),
+      headers: { "content-type": "application/json" },
+      method: "POST",
+    })
+
+    expect(response.status).toBe(200)
+    expect(createResponsesMock).toHaveBeenCalledTimes(1)
+    expect(createResponsesMock.mock.calls[0]?.[1]?.transport).toBe("http")
+  })
+
+  test("keeps HTTP transport when the selected model only supports /responses", async () => {
+    createResponsesMock.mockImplementation(() =>
+      Promise.resolve(structuredClone(responseResult)),
+    )
+
+    const app = createApp()
+    const response = await app.request("/v1/responses", {
+      body: JSON.stringify({ input: "hello", model: "gpt-test" }),
+      headers: { "content-type": "application/json" },
+      method: "POST",
+    })
+
+    expect(response.status).toBe(200)
+    expect(createResponsesMock).toHaveBeenCalledTimes(1)
+    expect(createResponsesMock.mock.calls[0]?.[1]?.transport).toBe("http")
   })
 
   test("records usage from failed streaming responses and falls back to interaction id", async () => {

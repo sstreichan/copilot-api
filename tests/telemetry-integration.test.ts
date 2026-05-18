@@ -46,6 +46,7 @@ function getMockConfig(): {
     telemetry: mockTelemetryEnabled,
     extraPrompts: {
       "gpt-5-codex": codexToolPrompt,
+      "gpt-5.4": "## Intermediary updates",
     },
     smallModel: "gpt-5-mini",
     modelReasoningEfforts: { "gpt-5-mini": "low" },

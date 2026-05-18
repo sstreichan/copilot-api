@@ -16,6 +16,7 @@ import { traceIdMiddleware } from "~/lib/trace"
 import {
   getInitiatorFromPayload,
   isClaudeModel,
+  messagesApiFlowDependencies,
 } from "~/routes/messages/api-flows"
 import { handleCompletion } from "~/routes/messages/handler"
 import { tokenUsageRoute } from "~/routes/token-usage/route"
@@ -238,6 +239,7 @@ describe("native handler", () => {
   let isMessagesApiEnabledSpy: ReturnType<
     typeof spyOn<typeof configModule, "isMessagesApiEnabled">
   >
+  const defaultMessagesApiFlowDependencies = { ...messagesApiFlowDependencies }
 
   beforeEach(() => {
     state.nativeMessages = true
@@ -253,6 +255,7 @@ describe("native handler", () => {
         headers: { "Content-Type": "application/json" },
       }),
     )
+    messagesApiFlowDependencies.createMessages = createMessagesSpy
     getPremiumInfoSpy = spyOn(loggerModule, "getPremiumInfo").mockResolvedValue(
       {
         remaining: 470,
@@ -292,6 +295,10 @@ describe("native handler", () => {
     state.nativeMessages = originalNative
     infoSpy.mockRestore()
     createMessagesSpy.mockRestore()
+    Object.assign(
+      messagesApiFlowDependencies,
+      defaultMessagesApiFlowDependencies,
+    )
     getPremiumInfoSpy.mockRestore()
     rateLimitSpy.mockRestore()
     effortSpy.mockRestore()

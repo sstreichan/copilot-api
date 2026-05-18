@@ -6,7 +6,11 @@ import { streamSSE } from "hono/streaming"
 import type { Model } from "~/services/copilot/get-models"
 
 import { awaitApproval } from "~/lib/approval"
-import { resolveEffortForLog } from "~/lib/config"
+import {
+  getConfig as getConfiguredConfig,
+  isResponsesApiWebSearchEnabled as isConfiguredResponsesApiWebSearchEnabled,
+  resolveEffortForLog,
+} from "~/lib/config"
 import {
   colorizeModel,
   createHandlerLogger,
@@ -17,7 +21,7 @@ import {
   writeStreamLog,
 } from "~/lib/logger"
 import { findEndpointModel } from "~/lib/models"
-import { checkRateLimit } from "~/lib/rate-limit"
+import { checkRateLimit as checkConfiguredRateLimit } from "~/lib/rate-limit"
 import {
   applyForwardableResponseHeaders,
   getAttachedResponseHeaders,
@@ -71,6 +75,7 @@ import {
 import { createStreamIdTracker, fixStreamIds } from "./stream-id-sync"
 import {
   applyResponsesApiContextManagement,
+  getResponsesTransportForModel,
   getResponsesRequestOptions,
 } from "./utils"
 
@@ -100,9 +105,15 @@ type CopilotResponsesContext = {
   sessionId: string
   recordUsage: ResponsesUsageRecorder
 }
+export const responsesHandlerDependencies = {
+  checkRateLimit: checkConfiguredRateLimit,
+  createResponses,
+  getConfig: getConfiguredConfig,
+  isResponsesApiWebSearchEnabled: isConfiguredResponsesApiWebSearchEnabled,
+}
 
 export const handleResponses = async (c: Context) => {
-  await checkRateLimit(state)
+  await responsesHandlerDependencies.checkRateLimit(state)
 
   const payload = await c.req.json<ResponsesPayload>()
   debugJson(logger, "Responses request payload:", payload)
@@ -391,6 +402,7 @@ const handleWithCopilotResponses = async ({
   debugJson(logger, "Translated Responses payload:", payload)
 
   const { vision, initiator } = getResponsesRequestOptions(payload)
+  const transport = getResponsesTransportForModel(selectedModel, {}) ?? "http"
 
   const effortForLog = ensureReasoningEffort(payload)
 
@@ -402,11 +414,12 @@ const handleWithCopilotResponses = async ({
     await awaitApproval()
   }
 
-  const response = await createResponses(payload, {
+  const response = await responsesHandlerDependencies.createResponses(payload, {
     vision,
     initiator,
     requestId,
     sessionId: sessionId,
+    transport,
   })
 
   if (isStreamingRequested(payload) && isAsyncIterable(response)) {

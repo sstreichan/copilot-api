@@ -1,4 +1,5 @@
 import consola from "consola"
+import { randomBytes } from "node:crypto"
 import fs from "node:fs"
 
 import { PATHS } from "./paths"
@@ -6,8 +7,10 @@ import { PATHS } from "./paths"
 export interface AppConfig {
   auth?: {
     apiKeys?: Array<string>
+    adminApiKey?: string
   }
   providers?: Record<string, ProviderConfig>
+  modelMappings?: Record<string, string>
   extraPrompts?: Record<string, string>
   smallModel?: string
   responsesApiContextManagementModels?: Array<string>
@@ -19,6 +22,7 @@ export interface AppConfig {
   compactUseSmallModel?: boolean
   telemetry?: boolean
   useMessagesApi?: boolean
+  useResponsesApiWebSocket?: boolean
   anthropicApiKey?: string
   useResponsesApiWebSearch?: boolean
   claudeTokenMultiplier?: number
@@ -90,6 +94,7 @@ const defaultConfig: AppConfig = {
     apiKeys: [],
   },
   providers: {},
+  modelMappings: {},
   extraPrompts: {
     "gpt-5-mini": gpt5ExplorationPrompt,
     "gpt-5.3-codex": gpt5CommentaryPrompt,
@@ -111,10 +116,40 @@ const defaultConfig: AppConfig = {
   useFunctionApplyPatch: true,
   compactUseSmallModel: true,
   useMessagesApi: true,
+  useResponsesApiWebSocket: true,
   useResponsesApiWebSearch: true,
 }
 
 let cachedConfig: AppConfig | null = null
+
+function normalizeAdminApiKey(adminApiKey: unknown): string | null {
+  if (typeof adminApiKey !== "string") {
+    if (adminApiKey !== undefined) {
+      consola.warn(
+        "Invalid auth.adminApiKey config. Expected a non-empty string.",
+      )
+    }
+    return null
+  }
+
+  const normalizedAdminApiKey = adminApiKey.trim()
+  if (!normalizedAdminApiKey) {
+    consola.warn(
+      "Invalid auth.adminApiKey config. Expected a non-empty string.",
+    )
+    return null
+  }
+
+  return normalizedAdminApiKey
+}
+
+function generateAdminApiKey(): string {
+  return randomBytes(32).toString("hex")
+}
+
+function isNodeError(error: unknown): error is NodeJS.ErrnoException {
+  return error instanceof Error && "code" in error
+}
 
 function ensureConfigFile(): void {
   try {
@@ -151,6 +186,33 @@ function readConfigFromDisk(): AppConfig {
     consola.error("Failed to read config file, using default config", error)
     return defaultConfig
   }
+}
+
+function readEditableConfigFromDisk(): AppConfig {
+  try {
+    const raw = fs.readFileSync(PATHS.CONFIG_PATH, "utf8")
+    if (!raw.trim()) {
+      return {}
+    }
+    return JSON.parse(raw) as AppConfig
+  } catch (error) {
+    if (isNodeError(error) && error.code === "ENOENT") {
+      return {}
+    }
+    if (error instanceof SyntaxError) {
+      throw new Error(`Config file is not valid JSON: ${PATHS.CONFIG_PATH}`)
+    }
+    throw error
+  }
+}
+
+function writeConfigToDisk(config: AppConfig): void {
+  fs.mkdirSync(PATHS.APP_DIR, { recursive: true })
+  fs.writeFileSync(
+    PATHS.CONFIG_PATH,
+    `${JSON.stringify(config, null, 2)}\n`,
+    "utf8",
+  )
 }
 
 function mergeDefaultConfig(config: AppConfig): {
@@ -193,18 +255,57 @@ function mergeDefaultConfig(config: AppConfig): {
   }
 }
 
+function ensureAdminApiKey(config: AppConfig): {
+  mergedConfig: AppConfig
+  changed: boolean
+} {
+  const normalizedAdminApiKey = normalizeAdminApiKey(config.auth?.adminApiKey)
+  if (normalizedAdminApiKey) {
+    if (config.auth?.adminApiKey === normalizedAdminApiKey) {
+      return { mergedConfig: config, changed: false }
+    }
+
+    return {
+      mergedConfig: {
+        ...config,
+        auth: {
+          ...(config.auth ?? {}),
+          adminApiKey: normalizedAdminApiKey,
+        },
+      },
+      changed: true,
+    }
+  }
+
+  const editableConfig = readEditableConfigFromDisk()
+  const { mergedConfig } = mergeDefaultConfig({
+    ...editableConfig,
+    auth: {
+      ...(editableConfig.auth ?? {}),
+      adminApiKey: generateAdminApiKey(),
+    },
+  })
+
+  return { mergedConfig, changed: true }
+}
+
 export function mergeConfigWithDefaults(): AppConfig {
   const config = readConfigFromDisk()
   const { mergedConfig, changed } = mergeDefaultConfig(config)
+  const {
+    mergedConfig: mergedConfigWithAdminApiKey,
+    changed: adminApiKeyChanged,
+  } = ensureAdminApiKey(mergedConfig)
+  const shouldPersistConfig = changed || adminApiKeyChanged
 
-  if (changed) {
+  if (shouldPersistConfig) {
     try {
-      fs.writeFileSync(
-        PATHS.CONFIG_PATH,
-        `${JSON.stringify(mergedConfig, null, 2)}\n`,
-        "utf8",
-      )
+      writeConfigToDisk(mergedConfigWithAdminApiKey)
     } catch (writeError) {
+      if (adminApiKeyChanged) {
+        throw writeError
+      }
+
       consola.warn(
         "Failed to write merged extraPrompts to config file",
         writeError,
@@ -212,18 +313,77 @@ export function mergeConfigWithDefaults(): AppConfig {
     }
   }
 
-  cachedConfig = mergedConfig
-  return mergedConfig
+  cachedConfig = mergedConfigWithAdminApiKey
+  return mergedConfigWithAdminApiKey
 }
 
 export function getConfig(): AppConfig {
-  cachedConfig ??= readConfigFromDisk()
+  cachedConfig ??= mergeDefaultConfig(readConfigFromDisk()).mergedConfig
   return cachedConfig
+}
+
+export function reloadConfig(): AppConfig {
+  return mergeConfigWithDefaults()
 }
 
 export function getExtraPromptForModel(model: string): string {
   const config = getConfig()
   return config.extraPrompts?.[model] ?? ""
+}
+
+export function getModelMappings(): Record<string, string> {
+  const config = getConfig()
+  const modelMappings = config.modelMappings
+  if (!modelMappings) {
+    return { ...(defaultConfig.modelMappings ?? {}) }
+  }
+
+  const validMappings: Record<string, string> = {}
+  for (const [sourceModel, targetModel] of Object.entries(modelMappings)) {
+    if (
+      !sourceModel
+      || typeof targetModel !== "string"
+      || targetModel.length === 0
+    ) {
+      continue
+    }
+    validMappings[sourceModel] = targetModel
+  }
+
+  return validMappings
+}
+
+function validateModelMappings(
+  modelMappings: Record<string, string>,
+): Record<string, string> {
+  const validatedMappings: Record<string, string> = {}
+  for (const [sourceModel, targetModel] of Object.entries(modelMappings)) {
+    if (!sourceModel || !targetModel) {
+      throw new Error(
+        "Each model mapping must use non-empty source and target values.",
+      )
+    }
+    validatedMappings[sourceModel] = targetModel
+  }
+
+  return validatedMappings
+}
+
+export function setModelMappings(
+  modelMappings: Record<string, string>,
+): Record<string, string> {
+  const nextConfig = {
+    ...readEditableConfigFromDisk(),
+    modelMappings: validateModelMappings(modelMappings),
+  }
+
+  writeConfigToDisk(nextConfig)
+  cachedConfig = reloadConfig()
+  return getModelMappings()
+}
+
+export function resolveMappedModel(model: string): string {
+  return getModelMappings()[model] ?? model
 }
 
 export function getSmallModel(): string {
@@ -386,6 +546,11 @@ export function listEnabledProviders(): Array<string> {
 export function isMessagesApiEnabled(): boolean {
   const config = getConfig()
   return config.useMessagesApi ?? true
+}
+
+export function isResponsesApiWebSocketEnabled(): boolean {
+  const config = getConfig()
+  return config.useResponsesApiWebSocket ?? true
 }
 
 export function getAnthropicApiKey(): string | undefined {
