@@ -280,6 +280,14 @@ describe("mergeToolResultForClaude", () => {
                 type: "ephemeral",
               },
             },
+            {
+              type: "image",
+              source: {
+                type: "base64",
+                media_type: "image/png",
+                data: "image-data",
+              },
+            },
           ],
         },
       ],
@@ -301,6 +309,14 @@ describe("mergeToolResultForClaude", () => {
             {
               type: "text",
               text: "cached trailing text",
+            },
+            {
+              type: "image",
+              source: {
+                type: "base64",
+                media_type: "image/png",
+                data: "image-data",
+              },
             },
           ],
           cache_control: {

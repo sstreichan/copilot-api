@@ -256,19 +256,6 @@ const mergeToolResultCacheControl = (
     : tr
 }
 
-const stripContentBlockCacheControl = (
-  block: AnthropicTextBlock,
-): AnthropicTextBlock => {
-  if (!block.cache_control) {
-    return block
-  }
-
-  return {
-    text: block.text,
-    type: "text",
-  }
-}
-
 const normalizeToolResultContentCacheControl = (
   tr: AnthropicToolResultBlock,
 ): AnthropicToolResultBlock & {
@@ -298,17 +285,33 @@ const mergeContentWithAttachments = (
   tr: AnthropicToolResultBlock,
   attachments: Array<AnthropicAttachmentBlock>,
 ): AnthropicToolResultBlock => {
+  const cleanAttachments = attachments.map(stripContentBlockCacheControl)
+
   if (typeof tr.content === "string") {
     return {
       ...tr,
-      content: [{ type: "text", text: tr.content }, ...attachments],
+      content: [{ type: "text", text: tr.content }, ...cleanAttachments],
     }
   }
 
   return {
     ...tr,
-    content: [...tr.content, ...attachments],
+    content: [...tr.content, ...cleanAttachments],
   }
+}
+
+const stripContentBlockCacheControl = <
+  T extends AnthropicToolResultContentBlock,
+>(
+  block: T,
+): T => {
+  if (!Object.hasOwn(block, "cache_control")) {
+    return block
+  }
+
+  const copy = { ...block }
+  delete copy.cache_control
+  return copy
 }
 
 const isAttachmentBlock = (

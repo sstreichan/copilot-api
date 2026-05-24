@@ -235,7 +235,6 @@ const testModels = {
 
 const defaultConfig = (): AppConfig => ({
   ...configModule.getConfig(),
-  useFunctionApplyPatch: true,
   modelReasoningEfforts: { "gpt-test": "high" },
 })
 
@@ -357,6 +356,30 @@ const restoreRoutingTestSpies = (
 
 beforeEach(async () => {
   await isolateTokenUsageStore()
+
+  state.copilotToken = "test-token"
+  state.manualApprove = false
+  state.verbose = false
+  state.rateLimitSeconds = undefined
+  state.rateLimitWait = false
+  state.lastRequestTimestamp = undefined
+  state.models = {
+    object: "list",
+    data: [
+      {
+        capabilities: {
+          limits: {
+            max_prompt_tokens: 128000,
+          },
+        },
+        id: "gpt-test",
+        supported_endpoints: ["/responses"],
+      },
+    ],
+  } as typeof state.models
+
+  responsesHandlerDependencies.checkRateLimit = async () => {}
+  responsesHandlerDependencies.isResponsesApiWebSearchEnabled = () => true
 })
 
 afterEach(async () => {
@@ -525,7 +548,6 @@ describe("handleResponses reasoning effort", () => {
   test("removes web_search tools when config disables them", async () => {
     getConfigSpy.mockReturnValue({
       ...configModule.getConfig(),
-      useFunctionApplyPatch: true,
       useResponsesApiWebSearch: false,
       modelReasoningEfforts: { "gpt-test": "high" },
     })
@@ -765,7 +787,6 @@ describe("handleResponses streaming logs", () => {
     rateLimitSpy = spyOn(rateLimitModule, "checkRateLimit").mockResolvedValue()
     getConfigSpy = spyOn(configModule, "getConfig").mockReturnValue({
       ...configModule.getConfig(),
-      useFunctionApplyPatch: true,
       modelReasoningEfforts: { "gpt-test": "high" },
     })
     getPremiumInfoSpy = spyOn(loggerModule, "getPremiumInfo").mockResolvedValue(
@@ -1346,6 +1367,44 @@ describe("responses handler token usage", () => {
     expect(response.status).toBe(200)
     expect(createResponsesMock).toHaveBeenCalledTimes(1)
     expect(createResponsesMock.mock.calls[0]?.[1]?.transport).toBe("http")
+  })
+
+  test("preserves custom apply_patch tools for Copilot Responses", async () => {
+    createResponsesMock.mockImplementation((payload: ResponsesPayload) =>
+      Promise.resolve({
+        ...structuredClone(responseResult),
+        model: payload.model,
+      }),
+    )
+    const applyPatchTool = {
+      type: "custom",
+      name: "apply_patch",
+      description: "Edit files with a patch",
+      format: {
+        type: "grammar",
+        syntax: "lark",
+        definition: "start: /.+/",
+      },
+    }
+
+    const app = createApp()
+    const response = await app.request("/v1/responses", {
+      body: JSON.stringify({
+        input: "hello",
+        model: "gpt-test",
+        tools: [applyPatchTool],
+      }),
+      headers: {
+        "content-type": "application/json",
+      },
+      method: "POST",
+    })
+
+    expect(response.status).toBe(200)
+    expect(createResponsesMock).toHaveBeenCalledTimes(1)
+    expect(createResponsesMock.mock.calls[0]?.[0].tools?.[0]).toEqual(
+      applyPatchTool,
+    )
   })
 
   test("records usage from failed streaming responses and falls back to interaction id", async () => {

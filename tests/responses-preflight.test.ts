@@ -3,12 +3,10 @@ import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test"
 import type { ResponsesPayload } from "~/services/copilot/create-responses"
 
 import * as configModule from "~/lib/config"
-import * as loggerModule from "~/lib/logger"
 import {
   preflightResponsesPayload,
   removeUnsupportedTools,
   removeWebSearchTool,
-  useFunctionApplyPatch,
 } from "~/routes/responses/preflight"
 
 const makePayload = (
@@ -20,73 +18,6 @@ const makePayload = (
     input: input ?? [],
     tools,
   }) as unknown as ResponsesPayload
-
-describe("useFunctionApplyPatch", () => {
-  let getConfigSpy: ReturnType<typeof spyOn<typeof configModule, "getConfig">>
-  let loggerSpy: ReturnType<
-    typeof spyOn<typeof loggerModule, "createHandlerLogger">
-  >
-
-  beforeEach(() => {
-    getConfigSpy = spyOn(configModule, "getConfig").mockReturnValue({
-      ...configModule.getConfig(),
-      useFunctionApplyPatch: true,
-    })
-    loggerSpy = spyOn(loggerModule, "createHandlerLogger").mockReturnValue({
-      debug: () => {},
-      info: () => {},
-      warn: () => {},
-      error: () => {},
-    } as unknown as ReturnType<typeof loggerModule.createHandlerLogger>)
-  })
-
-  afterEach(() => {
-    getConfigSpy.mockRestore()
-    loggerSpy.mockRestore()
-  })
-
-  it("rewrites apply_patch custom tool to function tool", () => {
-    const payload = makePayload([
-      { type: "custom", name: "apply_patch" },
-      { type: "custom", name: "other_tool" },
-    ] as ResponsesPayload["tools"])
-
-    useFunctionApplyPatch(payload)
-
-    const tools = payload.tools as Array<Record<string, unknown>>
-    expect(tools[0].type).toBe("function")
-    expect(tools[0].name).toBe("apply_patch")
-    expect(tools[0].description).toBe(
-      "Use the `apply_patch` tool to edit files",
-    )
-    expect(tools[0].strict).toBe(false)
-    const params = tools[0].parameters as Record<string, unknown>
-    expect(params.type).toBe("object")
-    // non-apply_patch custom tool is untouched
-    expect(tools[1].type).toBe("custom")
-  })
-
-  it("does not rewrite when useFunctionApplyPatch config is false", () => {
-    getConfigSpy.mockReturnValue({
-      ...configModule.getConfig(),
-      useFunctionApplyPatch: false,
-    })
-    const payload = makePayload([
-      { type: "custom", name: "apply_patch" },
-    ] as ResponsesPayload["tools"])
-
-    useFunctionApplyPatch(payload)
-
-    const tools = payload.tools as Array<Record<string, unknown>>
-    expect(tools[0].type).toBe("custom")
-  })
-
-  it("is a no-op when tools is missing", () => {
-    const payload = { model: "gpt-5", input: [] } as unknown as ResponsesPayload
-    useFunctionApplyPatch(payload)
-    expect(payload.tools).toBeUndefined()
-  })
-})
 
 describe("removeUnsupportedTools", () => {
   it("removes image_generation tools", () => {
@@ -133,16 +64,11 @@ describe("removeWebSearchTool", () => {
 })
 
 describe("preflightResponsesPayload", () => {
-  let getConfigSpy: ReturnType<typeof spyOn<typeof configModule, "getConfig">>
   let isWebSearchEnabledSpy: ReturnType<
     typeof spyOn<typeof configModule, "isResponsesApiWebSearchEnabled">
   >
 
   beforeEach(() => {
-    getConfigSpy = spyOn(configModule, "getConfig").mockReturnValue({
-      ...configModule.getConfig(),
-      useFunctionApplyPatch: true,
-    })
     isWebSearchEnabledSpy = spyOn(
       configModule,
       "isResponsesApiWebSearchEnabled",
@@ -150,11 +76,10 @@ describe("preflightResponsesPayload", () => {
   })
 
   afterEach(() => {
-    getConfigSpy.mockRestore()
     isWebSearchEnabledSpy.mockRestore()
   })
 
-  it("runs all 5 steps in order: apply_patch rewritten, image_generation removed, web_search kept when enabled", () => {
+  it("runs all 4 steps: unsupported tools removed, custom tools preserved, web_search kept when enabled", () => {
     const payload = makePayload([
       { type: "custom", name: "apply_patch" },
       { type: "image_generation" },
@@ -164,11 +89,8 @@ describe("preflightResponsesPayload", () => {
     preflightResponsesPayload(payload)
 
     const tools = payload.tools as Array<Record<string, unknown>>
-    // apply_patch rewritten
-    expect(tools.find((t) => t.name === "apply_patch")?.type).toBe("function")
-    // image_generation removed
+    expect(tools.find((t) => t.name === "apply_patch")?.type).toBe("custom")
     expect(tools.find((t) => t.type === "image_generation")).toBeUndefined()
-    // web_search kept because isResponsesApiWebSearchEnabled() = true
     expect(tools.find((t) => t.type === "web_search")).toBeDefined()
   })
 

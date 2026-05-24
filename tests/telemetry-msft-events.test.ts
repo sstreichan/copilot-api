@@ -38,7 +38,6 @@ function getMockConfig(): {
   extraPrompts: Record<string, string>
   smallModel: string
   modelReasoningEfforts: Record<string, string>
-  useFunctionApplyPatch: boolean
   compactUseSmallModel: boolean
 } {
   return {
@@ -49,7 +48,6 @@ function getMockConfig(): {
     },
     smallModel: "gpt-5-mini",
     modelReasoningEfforts: { "gpt-5-mini": "low" },
-    useFunctionApplyPatch: true,
     compactUseSmallModel: true,
   }
 }

@@ -14,6 +14,10 @@ export interface State {
   sku?: string
   organizationList?: Array<string>
   enterpriseList?: Array<number>
+  codexAccessToken?: string
+  codexRefreshToken?: string
+  codexExpiresAt?: number
+  codexAccountId?: string
 
   accountType: string
   models?: ModelsResponse

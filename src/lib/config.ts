@@ -18,7 +18,6 @@ export interface AppConfig {
     string,
     "none" | "minimal" | "low" | "medium" | "high" | "xhigh"
   >
-  useFunctionApplyPatch?: boolean
   compactUseSmallModel?: boolean
   telemetry?: boolean
   useMessagesApi?: boolean
@@ -38,8 +37,11 @@ export interface ModelConfig {
   toolContentSupportType?: Array<ToolContentSupportType>
 }
 
-export type ProviderAuthType = "authorization" | "x-api-key"
-export type ProviderType = "anthropic" | "openai-compatible"
+export type ProviderAuthType = "authorization" | "oauth2" | "x-api-key"
+export type ProviderType =
+  | "anthropic"
+  | "openai-compatible"
+  | "openai-responses"
 export type ToolContentSupportType = "array" | "image" | "pdf"
 
 export interface ProviderConfig {
@@ -113,7 +115,6 @@ const defaultConfig: AppConfig = {
     "gpt-5.4": "xhigh",
     "gpt-5.5": "xhigh",
   },
-  useFunctionApplyPatch: true,
   compactUseSmallModel: true,
   useMessagesApi: true,
   useResponsesApiWebSocket: true,
@@ -269,7 +270,7 @@ function ensureAdminApiKey(config: AppConfig): {
       mergedConfig: {
         ...config,
         auth: {
-          ...(config.auth ?? {}),
+          ...config.auth,
           adminApiKey: normalizedAdminApiKey,
         },
       },
@@ -281,7 +282,7 @@ function ensureAdminApiKey(config: AppConfig): {
   const { mergedConfig } = mergeDefaultConfig({
     ...editableConfig,
     auth: {
-      ...(editableConfig.auth ?? {}),
+      ...editableConfig.auth,
       adminApiKey: generateAdminApiKey(),
     },
   })
@@ -335,7 +336,7 @@ export function getModelMappings(): Record<string, string> {
   const config = getConfig()
   const modelMappings = config.modelMappings
   if (!modelMappings) {
-    return { ...(defaultConfig.modelMappings ?? {}) }
+    return { ...defaultConfig.modelMappings }
   }
 
   const validMappings: Record<string, string> = {}
@@ -462,7 +463,7 @@ export function normalizeProviderBaseUrl(url: string): string {
 function getDefaultProviderAuthType(
   providerType: ProviderType,
 ): ProviderAuthType {
-  return providerType === "openai-compatible" ? "authorization" : "x-api-key"
+  return providerType === "anthropic" ? "x-api-key" : "authorization"
 }
 
 export function resolveProviderAuthType(
@@ -470,12 +471,24 @@ export function resolveProviderAuthType(
   authType: string | undefined,
   providerType: ProviderType,
 ): ProviderAuthType {
+  const defaultAuthType = getDefaultProviderAuthType(providerType)
   if (authType === undefined) {
-    return getDefaultProviderAuthType(providerType)
+    return defaultAuthType
   }
 
   if (authType === "x-api-key") {
     return "x-api-key"
+  }
+
+  if (authType === "oauth2") {
+    if (providerName === "codex") {
+      return authType
+    }
+
+    consola.warn(
+      `Provider ${providerName} has authType 'oauth2', which is only supported by the builtin codex provider, falling back to ${defaultAuthType}`,
+    )
+    return defaultAuthType
   }
 
   if (authType === "authorization") {
@@ -483,9 +496,55 @@ export function resolveProviderAuthType(
   }
 
   consola.warn(
-    `Provider ${providerName} has invalid authType '${authType}', falling back to ${getDefaultProviderAuthType(providerType)}`,
+    `Provider ${providerName} has invalid authType '${authType}', falling back to ${defaultAuthType}`,
   )
-  return getDefaultProviderAuthType(providerType)
+  return defaultAuthType
+}
+
+function isProviderApiKeyRequired(
+  providerName: string,
+  authType: ProviderAuthType,
+): boolean {
+  return !(providerName === "codex" && authType === "oauth2")
+}
+
+export function getRawProviderConfig(name: string): ProviderConfig | null {
+  const providerName = name.trim()
+  if (!providerName) {
+    return null
+  }
+
+  const config = getConfig()
+  return config.providers?.[providerName] ?? null
+}
+
+export function setProviderConfig(
+  name: string,
+  provider: ProviderConfig,
+): ProviderConfig {
+  const providerName = name.trim()
+  if (!providerName) {
+    throw new Error("Provider name must be a non-empty string")
+  }
+
+  if (isReservedProviderName(providerName)) {
+    throw new Error(
+      `Provider ${providerName} is reserved and cannot be configured in config.providers`,
+    )
+  }
+
+  const editableConfig = readEditableConfigFromDisk()
+  const nextConfig = {
+    ...editableConfig,
+    providers: {
+      ...editableConfig.providers,
+      [providerName]: provider,
+    },
+  }
+
+  writeConfigToDisk(nextConfig)
+  cachedConfig = reloadConfig()
+  return getRawProviderConfig(providerName) ?? provider
 }
 
 export function getProviderConfig(name: string): ResolvedProviderConfig | null {
@@ -494,8 +553,14 @@ export function getProviderConfig(name: string): ResolvedProviderConfig | null {
     return null
   }
 
-  const config = getConfig()
-  const provider = config.providers?.[providerName]
+  if (isReservedProviderName(providerName)) {
+    consola.warn(
+      `Provider ${providerName} is reserved and cannot be configured in config.providers`,
+    )
+    return null
+  }
+
+  const provider = getRawProviderConfig(providerName)
   if (!provider) {
     return null
   }
@@ -505,7 +570,11 @@ export function getProviderConfig(name: string): ResolvedProviderConfig | null {
   }
 
   const type = provider.type ?? "anthropic"
-  if (type !== "anthropic" && type !== "openai-compatible") {
+  if (
+    type !== "anthropic"
+    && type !== "openai-compatible"
+    && type !== "openai-responses"
+  ) {
     consola.warn(
       `Provider ${providerName} is ignored because type '${type}' is not supported`,
     )
@@ -513,15 +582,22 @@ export function getProviderConfig(name: string): ResolvedProviderConfig | null {
   }
 
   const baseUrl = normalizeProviderBaseUrl(provider.baseUrl ?? "")
-  const apiKey = (provider.apiKey ?? "").trim()
   const authType = resolveProviderAuthType(
     providerName,
     provider.authType,
     type,
   )
-  if (!baseUrl || !apiKey) {
+  const apiKey = (provider.apiKey ?? "").trim()
+  const missingFields = [
+    ...(!baseUrl ? ["baseUrl"] : []),
+    ...(isProviderApiKeyRequired(providerName, authType) && !apiKey ?
+      ["apiKey"]
+    : []),
+  ]
+
+  if (missingFields.length > 0) {
     consola.warn(
-      `Provider ${providerName} is enabled but missing baseUrl or apiKey`,
+      `Provider ${providerName} is enabled but missing ${missingFields.join(" or ")}`,
     )
     return null
   }
@@ -541,6 +617,10 @@ export function listEnabledProviders(): Array<string> {
   const config = getConfig()
   const providerNames = Object.keys(config.providers ?? {})
   return providerNames.filter((name) => getProviderConfig(name) !== null)
+}
+
+export function isReservedProviderName(name: string): boolean {
+  return name.trim() === "copilot"
 }
 
 export function isMessagesApiEnabled(): boolean {

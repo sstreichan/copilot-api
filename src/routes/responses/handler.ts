@@ -21,12 +21,14 @@ import {
   writeStreamLog,
 } from "~/lib/logger"
 import { findEndpointModel } from "~/lib/models"
+import { parseProviderModelAlias } from "~/lib/provider-model"
 import { checkRateLimit as checkConfiguredRateLimit } from "~/lib/rate-limit"
 import {
   applyForwardableResponseHeaders,
   getAttachedResponseHeaders,
   jsonWithForwardedHeaders,
 } from "~/lib/response-headers"
+import { handleProviderResponsesForProvider } from "~/routes/provider/responses/handler"
 import { state } from "~/lib/state"
 import {
   createCopilotTokenUsageRecorder,
@@ -113,10 +115,19 @@ export const responsesHandlerDependencies = {
 }
 
 export const handleResponses = async (c: Context) => {
-  await responsesHandlerDependencies.checkRateLimit(state)
-
   const payload = await c.req.json<ResponsesPayload>()
+
+  const providerModelAlias = parseProviderModelAlias(payload.model)
+  if (providerModelAlias) {
+    payload.model = providerModelAlias.model
+    return await handleProviderResponsesForProvider(c, {
+      payload,
+      provider: providerModelAlias.provider,
+    })
+  }
+
   debugJson(logger, "Responses request payload:", payload)
+  await responsesHandlerDependencies.checkRateLimit(state)
 
   const stableSessionKey = getStableSessionKeyFromResponsesPayload(payload, c)
   if (!payload.prompt_cache_key?.trim() && stableSessionKey) {
@@ -161,6 +172,21 @@ export const handleResponses = async (c: Context) => {
 
   // Path A: model supports /responses → native Copilot Responses API
   if (selectedModel.supported_endpoints?.includes(RESPONSES_ENDPOINT)) {
+    const responsesTransport = getResponsesTransportForModel(selectedModel)
+    if (!responsesTransport) {
+      return c.json(
+        {
+          error: {
+            message: `Model '${payload.model}' is not supported by /v1/responses`,
+            type: "invalid_request_error",
+            code: "model_not_found",
+            param: "model",
+          },
+        },
+        400,
+      )
+    }
+
     return handleWithCopilotResponses({
       c,
       payload,
