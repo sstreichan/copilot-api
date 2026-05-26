@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, expect, mock, test } from "bun:test"
 
 import type { ResponsesResult } from "../src/services/copilot/create-responses"
+import { getAttachedPremiumInfo } from "../src/lib/logger"
+import { getAttachedResponseHeaders } from "../src/lib/response-headers"
 
 type ListenerEvent = {
   data?: string
@@ -24,6 +26,7 @@ class MockWebSocket {
   static failOpen = false
   static failOpenEvent: ListenerEvent | null = null
   static instances: Array<MockWebSocket> = []
+  static quotaSnapshots: Record<string, unknown> | undefined
 
   readonly sent: Array<string> = []
   readonly init: { dispatcher?: unknown; headers?: Record<string, string> }
@@ -93,6 +96,7 @@ class MockWebSocket {
     const parsed = JSON.parse(latestSent) as { model: string }
     this.emit("message", {
       data: JSON.stringify({
+        copilot_quota_snapshots: MockWebSocket.quotaSnapshots,
         response: createResponsesResult(
           parsed.model,
           `resp-${this.sent.length}`,
@@ -149,6 +153,12 @@ const fetchMock = mock((url: string | URL | Request) => {
     typeof url === "string" ? url
     : url instanceof URL ? url.toString()
     : url.url
+  if (target.includes("telemetry")) {
+    return Promise.resolve(
+      new Response('{"itemsReceived":1,"itemsAccepted":1}', { status: 200 }),
+    )
+  }
+
   if (target.endsWith("/models/session")) {
     return Promise.resolve(
       new Response(
@@ -218,6 +228,7 @@ beforeEach(() => {
   MockWebSocket.failOpen = false
   MockWebSocket.failOpenEvent = null
   MockWebSocket.instances = []
+  MockWebSocket.quotaSnapshots = undefined
   requestMock.mockClear()
   fetchMock.mockClear()
   ;(globalThis as { fetch: typeof fetch }).fetch =
@@ -234,6 +245,7 @@ afterEach(() => {
   MockWebSocket.closeAfterComplete = false
   MockWebSocket.failOpen = false
   MockWebSocket.failOpenEvent = null
+  MockWebSocket.quotaSnapshots = undefined
   for (const websocket of MockWebSocket.instances) {
     websocket.close()
   }
@@ -277,6 +289,43 @@ test("Responses websocket open failure includes the underlying reason", async ()
   expect((thrown as Error).message).toBe(
     "Failed to create responses websocket: tls handshake failed",
   )
+})
+
+test("Responses websocket non-stream attaches quota headers synthesized from completed event snapshots", async () => {
+  MockWebSocket.quotaSnapshots = {
+    premium_interactions: {
+      entitlement: "300",
+      overage_count: 0,
+      overage_permitted: true,
+      percent_remaining: 16.2,
+      reset_date: "2026-06-01T00:00:00Z",
+    },
+  }
+
+  const response = await createResponses(
+    {
+      input: "hello",
+      model: "gpt-test",
+    },
+    {
+      initiator: "user",
+      requestId: "request-1",
+      transport: "websocket",
+      vision: false,
+    },
+  )
+
+  const headers = getAttachedResponseHeaders(response)
+  expect(headers?.get("x-quota-snapshot-premium_interactions")).toContain(
+    "ent=300",
+  )
+  expect(headers?.get("x-quota-snapshot-premium_interactions")).toContain(
+    "rem=16.2",
+  )
+  expect(getAttachedPremiumInfo(response)).toEqual({
+    remaining: 48.6,
+    total: 300,
+  })
 })
 
 test("Responses websocket pool separates different request IDs", async () => {

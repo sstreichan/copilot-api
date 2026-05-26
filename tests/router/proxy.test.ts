@@ -185,6 +185,51 @@ describe("router discovery and proxy helpers", () => {
     })
     expect(logs).toEqual(["PROXY ERROR → :4141: connect ECONNREFUSED"])
   })
+
+  test("proxyTo observes quota snapshots from streaming SSE without changing the body", async () => {
+    const observedSnapshots: Array<unknown> = []
+    const sseBody = [
+      'event: response.output_text.delta\ndata: {"type":"response.output_text.delta","delta":"hello"}\n\n',
+      'event: response.completed\ndata: {"type":"response.completed","copilot_quota_snapshots":{"premium_interactions":{"entitlement":"300","overage_count":0,"overage_permitted":true,"percent_remaining":16.2,"reset_date":"2026-06-01T00:00:00Z"}},"response":{"id":"resp_1","usage":null}}\n\n',
+    ].join("")
+    const fetchImpl = createFetchStub(() =>
+      Promise.resolve(
+        new Response(sseBody, {
+          headers: { "content-type": "text/event-stream; charset=utf-8" },
+        }),
+      ),
+    )
+    const req = new Request("http://router.local/v1/responses", {
+      method: "POST",
+      body: '{"model":"gpt-5.5","stream":true}',
+    })
+
+    const res = await proxyTo({
+      port: 4141,
+      context: {
+        body: '{"model":"gpt-5.5","stream":true}',
+        req,
+        url: new URL(req.url),
+      },
+      logger: () => {},
+      fetchImpl,
+      onQuotaSnapshots: (quotaSnapshots) =>
+        observedSnapshots.push(quotaSnapshots),
+    })
+
+    expect(await res.text()).toBe(sseBody)
+    expect(observedSnapshots).toEqual([
+      {
+        premium_interactions: {
+          entitlement: "300",
+          overage_count: 0,
+          overage_permitted: true,
+          percent_remaining: 16.2,
+          reset_date: "2026-06-01T00:00:00Z",
+        },
+      },
+    ])
+  })
 })
 
 // eslint-disable-next-line max-lines-per-function
@@ -331,6 +376,46 @@ describe("router handler cooldown semantics", () => {
       weeklyRateLimit: {
         remaining: 74.9,
         resetAt: "2026-04-27T00:00:00Z",
+      },
+    })
+  })
+
+  test("router handler captures streaming response quota snapshots into header snapshot", async () => {
+    const state = createState()
+    state.modelToPorts.set("gpt-5.5", [4141])
+    const fetchImpl = createFetchStub(() =>
+      Promise.resolve(
+        new Response(
+          [
+            'event: response.created\ndata: {"type":"response.created"}\n\n',
+            'event: response.completed\ndata: {"type":"response.completed","copilot_quota_snapshots":{"premium_interactions":{"entitlement":"300","overage_count":0,"overage_permitted":true,"percent_remaining":16.2,"reset_date":"2026-06-01T00:00:00Z"},"5Hour-Session-RateLimits":{"entitlement":"0","overage_count":0,"overage_permitted":false,"percent_remaining":76.6,"reset_date":"2026-05-26T18:23:09Z"},"Weekly-Session-RateLimits":{"entitlement":"0","overage_count":0,"overage_permitted":false,"percent_remaining":82.6,"reset_date":"2026-06-01T00:00:00Z"}},"response":{"id":"resp_1","usage":null}}\n\n',
+          ].join(""),
+          {
+            headers: { "content-type": "text/event-stream" },
+          },
+        ),
+      ),
+    )
+    const handler = createRouterHandlerForTest({
+      state,
+      fetchImpl,
+    })
+
+    const res = await handler(
+      createRouterRequest('{"model":"gpt-5.5","stream":true}'),
+    )
+
+    expect(res.status).toBe(200)
+    await res.text()
+    expect(state.portHeaderSnapshots.get(4141)).toEqual({
+      premiumUsage: { used: 251.4, total: 300 },
+      sessionRateLimit: {
+        remaining: 76.6,
+        resetAt: "2026-05-26T18:23:09Z",
+      },
+      weeklyRateLimit: {
+        remaining: 82.6,
+        resetAt: "2026-06-01T00:00:00Z",
       },
     })
   })

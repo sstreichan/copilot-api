@@ -206,6 +206,7 @@ export interface AnthropicMessageDeltaEvent {
     stop_reason?: AnthropicResponse["stop_reason"]
     stop_sequence?: string | null
   }
+  copilot_quota_snapshots?: unknown
   usage?: {
     input_tokens?: number
     output_tokens: number

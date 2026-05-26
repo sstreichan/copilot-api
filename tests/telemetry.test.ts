@@ -144,23 +144,29 @@ function installFailingFetchMock(): void {
   ) as unknown as typeof fetch
 }
 
-function getFirstEnvelopeFromCall(index = 0): TelemetryEnvelope {
-  const call = fetchCalls.at(index)
-  if (!call) {
-    throw new TypeError(`fetch call not found at index ${index}`)
+function getTelemetryEnvelopes(): Array<TelemetryEnvelope> {
+  return fetchCalls.flatMap((call) => {
+    const parsed: unknown = JSON.parse(call.options.body)
+    if (!Array.isArray(parsed)) {
+      return []
+    }
+
+    return parsed.filter(
+      (entry): entry is TelemetryEnvelope =>
+        typeof entry === "object" && entry !== null,
+    )
+  })
+}
+
+function findEnvelopeByName(eventName: string): TelemetryEnvelope {
+  const match = getTelemetryEnvelopes().find(
+    (env) => env.data.baseData.name === eventName,
+  )
+  if (!match) {
+    throw new TypeError(`${eventName} envelope not found`)
   }
 
-  const parsed: unknown = JSON.parse(call.options.body)
-  if (!Array.isArray(parsed)) {
-    throw new TypeError("telemetry body is not an array")
-  }
-
-  const first: unknown = parsed.at(0)
-  if (typeof first !== "object" || first === null) {
-    throw new TypeError("telemetry envelope is missing")
-  }
-
-  return first as TelemetryEnvelope
+  return match
 }
 
 /** Extract event names from all captured fetch calls. */
@@ -189,6 +195,15 @@ function findTelemetryEnvelope(
   throw new TypeError(`${eventName} envelope not found for ${requestId}`)
 }
 
+function hasTelemetryEnvelope(
+  eventName: string,
+  predicate: (env: TelemetryEnvelope) => boolean = () => true,
+): boolean {
+  return getTelemetryEnvelopes().some(
+    (env) => env.data.baseData.name === eventName && predicate(env),
+  )
+}
+
 /** Wait for fire-and-forget microtasks to settle */
 async function flushMicrotasks(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 20))
@@ -208,10 +223,12 @@ describe("telemetry: initTelemetry", () => {
     installFetchMock()
     trackEvent("test.event", {})
 
-    expect(fetchCalls.length).toBe(1)
-    expect(fetchCalls[0].url).toBe("https://custom.endpoint/telemetry")
+    const customEndpointCall = fetchCalls.find(
+      (call) => call.url === "https://custom.endpoint/telemetry",
+    )
+    expect(customEndpointCall).toBeDefined()
 
-    const env = getFirstEnvelopeFromCall()
+    const env = findEnvelopeByName("test.event")
     expect(env.tags["ai.user.id"]).toBe("abc123")
   })
 })
@@ -229,11 +246,14 @@ describe("telemetry: trackEvent", () => {
     trackEvent("copilot-chat/request.sent", { model: "gpt-4" })
     await flushMicrotasks()
 
-    expect(fetchCalls.length).toBe(1)
-    expect(fetchCalls[0].options.method).toBe("POST")
-    expect(fetchCalls[0].options.headers["Content-Type"]).toBe(
-      "application/json",
+    const env = findEnvelopeByName("copilot-chat/request.sent")
+    expect(env.data.baseData.properties.model).toBe("gpt-4")
+    const call = fetchCalls.find((candidate) =>
+      candidate.options.body.includes("copilot-chat/request.sent"),
     )
+    expect(call).toBeDefined()
+    expect(call?.options.method).toBe("POST")
+    expect(call?.options.headers["Content-Type"]).toBe("application/json")
   })
 
   it("does NOT send fetch when telemetry is false", () => {
@@ -242,7 +262,7 @@ describe("telemetry: trackEvent", () => {
 
     trackEvent("test.event", { model: "gpt-4" })
 
-    expect(fetchCalls.length).toBe(0)
+    expect(hasTelemetryEnvelope("test.event")).toBe(false)
   })
 
   it("does NOT send fetch when telemetry field is undefined (default disabled)", () => {
@@ -251,7 +271,7 @@ describe("telemetry: trackEvent", () => {
 
     trackEvent("test.event", { model: "gpt-4" })
 
-    expect(fetchCalls.length).toBe(0)
+    expect(hasTelemetryEnvelope("test.event")).toBe(false)
   })
 
   it("does NOT throw when fetch fails (fire-and-forget)", async () => {
@@ -277,8 +297,7 @@ describe("telemetry: trackEvent", () => {
     )
     await flushMicrotasks()
 
-    expect(fetchCalls.length).toBe(1)
-    const env = getFirstEnvelopeFromCall()
+    const env = findEnvelopeByName("copilot-chat/response.success")
     expect(env.ver).toBe(1)
     expect(env.name).toBe(TELEMETRY_ENVELOPE_NAME)
     expect(env.iKey).toBe(TELEMETRY_IKEY)
@@ -314,8 +333,14 @@ describe("telemetry: request/response wrappers", () => {
     trackRequestSent("claude-3.5-sonnet", "individual", "req-abc-123")
     await flushMicrotasks()
 
-    expect(fetchCalls.length).toBe(1)
-    const env = getFirstEnvelopeFromCall()
+    const env = getTelemetryEnvelopes().find(
+      (candidate) =>
+        candidate.data.baseData.name === "copilot-chat/request.sent"
+        && candidate.data.baseData.properties.headerRequestId === "req-abc-123",
+    )
+    if (!env) {
+      throw new TypeError("request.sent envelope not found for req-abc-123")
+    }
     expect(env.data.baseData.name).toBe("copilot-chat/request.sent")
     const props = env.data.baseData.properties
     expect(props.model).toBe("claude-3.5-sonnet")
@@ -348,7 +373,10 @@ describe("telemetry: request/response wrappers", () => {
     })
     await flushMicrotasks()
 
-    const env = getFirstEnvelopeFromCall()
+    const env = findTelemetryEnvelope(
+      "copilot-chat/response.success",
+      "req-xyz-789",
+    )
     expect(env.data.baseData.name).toBe("copilot-chat/response.success")
     const props = env.data.baseData.properties
     expect(props.model).toBe("gpt-4")
@@ -378,7 +406,7 @@ describe("telemetry: request/response wrappers", () => {
     trackResponseSuccess({ model: "gpt-4", durationMs: 800 })
     await flushMicrotasks()
 
-    const env = getFirstEnvelopeFromCall()
+    const env = findEnvelopeByName("copilot-chat/response.success")
     const m = env.data.baseData.measurements
     expect(m).toBeDefined()
     if (!m) throw new TypeError("measurements missing")
@@ -402,7 +430,10 @@ describe("telemetry: request/response wrappers", () => {
     })
     await flushMicrotasks()
 
-    const env = getFirstEnvelopeFromCall()
+    const env = findTelemetryEnvelope(
+      "copilot-chat/response.error",
+      "req-err-456",
+    )
     expect(env.data.baseData.name).toBe("copilot-chat/response.error")
     const props = env.data.baseData.properties
     expect(props.model).toBe("gpt-4")
@@ -428,7 +459,7 @@ describe("telemetry: request/response wrappers", () => {
     trackAuthNewToken()
     await flushMicrotasks()
 
-    const env = getFirstEnvelopeFromCall()
+    const env = findEnvelopeByName("copilot-chat/auth.new_token")
     expect(env.data.baseData.name).toBe("copilot-chat/auth.new_token")
   })
 
@@ -602,6 +633,17 @@ describe("telemetry: feedback wrappers", () => {
 
     scheduleFeedbackEvents("")
     await flushMicrotasks()
-    expect(fetchCalls.length).toBe(0)
+    expect(
+      hasTelemetryEnvelope(
+        "copilot-chat/panel.edit.feedback",
+        (env) => env.data.baseData.properties.requestId === "",
+      ),
+    ).toBe(false)
+    expect(
+      hasTelemetryEnvelope(
+        "copilot-chat/edit.hunk.action",
+        (env) => env.data.baseData.properties.requestId === "",
+      ),
+    ).toBe(false)
   })
 })

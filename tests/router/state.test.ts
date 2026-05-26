@@ -340,3 +340,64 @@ describe("router state helpers", () => {
     expect(state.sessionBindings.size).toBe(0)
   })
 })
+
+describe("updateUpstreamHeaderSnapshot last-known-good", () => {
+  test("merges by field so a later null header does not clobber a prior good snapshot", async () => {
+    const { updateUpstreamHeaderSnapshot } = await import("../../router/state")
+    const state = createState()
+
+    // First request returns full quota + session + weekly headers.
+    const goodHeaders = new Headers({
+      "x-quota-snapshot-premium_interactions":
+        "ent=300&ov=0.0&ovPerm=false&rem=29.7&rst=2026-05-01T00%3A00%3A00Z",
+      "x-usage-ratelimit-session":
+        "ent=0&ov=0.0&ovPerm=false&rem=5.7&rst=2026-04-21T06%3A35%3A37Z",
+      "x-usage-ratelimit-weekly":
+        "ent=0&ov=0.0&ovPerm=false&rem=74.9&rst=2026-04-27T00%3A00%3A00Z",
+    })
+    updateUpstreamHeaderSnapshot(state, 4141, goodHeaders)
+
+    // Subsequent request (e.g., streaming response, WS-backed responses)
+    // returns no quota headers at all. Snapshot must keep the prior values.
+    updateUpstreamHeaderSnapshot(state, 4141, new Headers())
+
+    const snapshot = state.portHeaderSnapshots.get(4141)
+    expect(snapshot?.premiumUsage).toEqual({ used: 210.9, total: 300 })
+    expect(snapshot?.sessionRateLimit).toEqual({
+      remaining: 5.7,
+      resetAt: "2026-04-21T06:35:37Z",
+    })
+    expect(snapshot?.weeklyRateLimit).toEqual({
+      remaining: 74.9,
+      resetAt: "2026-04-27T00:00:00Z",
+    })
+  })
+
+  test("overwrites individual fields when a fresh non-null value is provided", async () => {
+    const { updateUpstreamHeaderSnapshot } = await import("../../router/state")
+    const state = createState()
+
+    updateUpstreamHeaderSnapshot(
+      state,
+      4141,
+      new Headers({
+        "x-quota-snapshot-premium_interactions":
+          "ent=300&ov=0.0&ovPerm=false&rem=50.0&rst=2026-05-01T00%3A00%3A00Z",
+      }),
+    )
+
+    updateUpstreamHeaderSnapshot(
+      state,
+      4141,
+      new Headers({
+        "x-quota-snapshot-premium_interactions":
+          "ent=300&ov=0.0&ovPerm=false&rem=10.0&rst=2026-05-01T00%3A00%3A00Z",
+      }),
+    )
+
+    expect(state.portHeaderSnapshots.get(4141)?.premiumUsage).toEqual({
+      used: 270,
+      total: 300,
+    })
+  })
+})

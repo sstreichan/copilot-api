@@ -6,6 +6,7 @@ import {
   getHeaderValue,
   isRecord,
   parseUpstreamHeaderSnapshot,
+  parseUpstreamQuotaSnapshots,
   parseInstances,
   parseModelFromBody,
   parseModelIds,
@@ -217,6 +218,61 @@ describe("router/lib pure helpers", () => {
           "x-usage-ratelimit-weekly": "rem=-1&rst=2026-04-27T00%3A00%3A00Z",
         }),
       ),
+    ).toEqual({
+      premiumUsage: null,
+      sessionRateLimit: null,
+      weeklyRateLimit: null,
+    })
+  })
+
+  test("parseUpstreamQuotaSnapshots reads websocket response quota snapshots", () => {
+    expect(
+      parseUpstreamQuotaSnapshots({
+        premium_interactions: {
+          entitlement: "300",
+          overage_count: 0,
+          overage_permitted: true,
+          percent_remaining: 16.2,
+          reset_date: "2026-06-01T00:00:00Z",
+        },
+        "5Hour-Session-RateLimits": {
+          entitlement: "0",
+          overage_count: 0,
+          overage_permitted: false,
+          percent_remaining: 76.6,
+          reset_date: "2026-05-26T18:23:09Z",
+        },
+        "Weekly-Session-RateLimits": {
+          entitlement: "0",
+          overage_count: 0,
+          overage_permitted: false,
+          percent_remaining: 82.6,
+          reset_date: "2026-06-01T00:00:00Z",
+        },
+      }),
+    ).toEqual({
+      premiumUsage: { used: 251.4, total: 300 },
+      sessionRateLimit: {
+        remaining: 76.6,
+        resetAt: "2026-05-26T18:23:09Z",
+      },
+      weeklyRateLimit: {
+        remaining: 82.6,
+        resetAt: "2026-06-01T00:00:00Z",
+      },
+    })
+  })
+
+  test("parseUpstreamQuotaSnapshots ignores malformed snapshots", () => {
+    expect(
+      parseUpstreamQuotaSnapshots({
+        premium_interactions: {
+          entitlement: "300",
+          overage_count: 0,
+          percent_remaining: 120,
+          reset_date: "2026-06-01T00:00:00Z",
+        },
+      }),
     ).toEqual({
       premiumUsage: null,
       sessionRateLimit: null,

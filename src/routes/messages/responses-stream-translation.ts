@@ -505,17 +505,20 @@ const handleResponseCompleted = (
     hasToolCall: state.hasToolCall,
     toolSearchName: state.toolSearchName,
   })
-  events.push(
-    {
-      type: "message_delta",
-      delta: {
-        stop_reason: anthropic.stop_reason,
-        stop_sequence: anthropic.stop_sequence,
-      },
-      usage: anthropic.usage,
+  const messageDelta: AnthropicStreamEventData = {
+    type: "message_delta",
+    delta: {
+      stop_reason: anthropic.stop_reason,
+      stop_sequence: anthropic.stop_sequence,
     },
-    { type: "message_stop" },
-  )
+    usage: anthropic.usage,
+  }
+
+  if ("copilot_quota_snapshots" in rawEvent) {
+    messageDelta.copilot_quota_snapshots = rawEvent.copilot_quota_snapshots
+  }
+
+  events.push(messageDelta, { type: "message_stop" })
   state.messageCompleted = true
   return events
 }

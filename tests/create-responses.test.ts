@@ -589,3 +589,75 @@ describe("createResponses websocket helpers", () => {
     expect(mainKey).toContain("request-1")
   })
 })
+
+describe("buildHeadersFromQuotaSnapshots", () => {
+  test("synthesizes upstream-shaped headers from WebSocket quota snapshots", async () => {
+    const { buildHeadersFromQuotaSnapshots } = await import(
+      "../src/services/copilot/create-responses"
+    )
+
+    const headers = buildHeadersFromQuotaSnapshots({
+      premium_interactions: {
+        entitlement: "300",
+        percent_remaining: 16.2,
+        overage_permitted: true,
+        overage_count: 0,
+        reset_date: "2026-06-01T00:00:00Z",
+      },
+      "5Hour-Session-RateLimits": {
+        entitlement: "0",
+        percent_remaining: 12.3,
+        overage_permitted: false,
+        overage_count: 0,
+        reset_date: "2026-05-26T18:00:00Z",
+      },
+      "Weekly-Session-RateLimits": {
+        entitlement: "0",
+        percent_remaining: 80.4,
+        overage_permitted: false,
+        overage_count: 0,
+        reset_date: "2026-06-01T00:00:00Z",
+      },
+    })
+
+    const premium = headers.get("x-quota-snapshot-premium_interactions")
+    expect(premium).not.toBeNull()
+    expect(premium).toContain("ent=300")
+    expect(premium).toContain("rem=16.2")
+    expect(premium).toContain("rst=2026-06-01T00%3A00%3A00Z")
+
+    const session = headers.get("x-usage-ratelimit-session")
+    expect(session).not.toBeNull()
+    expect(session).toContain("rem=12.3")
+
+    const weekly = headers.get("x-usage-ratelimit-weekly")
+    expect(weekly).not.toBeNull()
+    expect(weekly).toContain("rem=80.4")
+  })
+
+  test("returns an empty Headers when no snapshots are present", async () => {
+    const { buildHeadersFromQuotaSnapshots } = await import(
+      "../src/services/copilot/create-responses"
+    )
+    const headers = buildHeadersFromQuotaSnapshots(undefined)
+    expect([...headers.keys()]).toEqual([])
+  })
+
+  test("ignores malformed snapshot entries without throwing", async () => {
+    const { buildHeadersFromQuotaSnapshots } = await import(
+      "../src/services/copilot/create-responses"
+    )
+    const headers = buildHeadersFromQuotaSnapshots({
+      broken: { not_a_snapshot: true },
+      premium_interactions: {
+        entitlement: "1500",
+        percent_remaining: 5,
+        overage_permitted: false,
+        overage_count: 0,
+        reset_date: "2026-06-01T00:00:00Z",
+      },
+    } as unknown as Record<string, unknown>)
+    expect(headers.get("x-quota-snapshot-broken")).toBeNull()
+    expect(headers.get("x-quota-snapshot-premium_interactions")).not.toBeNull()
+  })
+})

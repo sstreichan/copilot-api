@@ -198,6 +198,58 @@ describe("translateResponsesStreamEvent tool calls", () => {
     expect(state.hasToolCall).toBe(true)
   })
 
+  test("preserves quota snapshots on terminal message delta", () => {
+    const state = createResponsesStreamState()
+
+    const events = translateResponsesStreamEvent(
+      {
+        type: "response.completed",
+        sequence_number: 1,
+        copilot_quota_snapshots: {
+          premium_interactions: {
+            entitlement: "1500",
+            overage_count: 0,
+            overage_permitted: true,
+            percent_remaining: 16.1,
+            reset_date: "2026-06-01T00:00:00Z",
+          },
+        },
+        response: {
+          id: "resp-1",
+          object: "response",
+          created_at: 0,
+          model: "gpt-5.5",
+          output: [],
+          output_text: "",
+          status: "completed",
+          usage: null,
+          error: null,
+          incomplete_details: null,
+          instructions: null,
+          metadata: null,
+          parallel_tool_calls: false,
+          temperature: null,
+          tool_choice: null,
+          tools: [],
+          top_p: null,
+        },
+      } as ResponseCompletedEvent,
+      state,
+    )
+
+    const messageDelta = events.find((event) => event.type === "message_delta")
+    expect(messageDelta).toMatchObject({
+      type: "message_delta",
+      copilot_quota_snapshots: {
+        premium_interactions: {
+          entitlement: "1500",
+          percent_remaining: 16.1,
+          reset_date: "2026-06-01T00:00:00Z",
+        },
+      },
+    })
+  })
+
   test("uses namespace as streamed function call tool name", () => {
     const state = createResponsesStreamState()
 

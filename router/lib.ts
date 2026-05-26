@@ -206,6 +206,93 @@ export function parseUpstreamHeaderSnapshot(
   }
 }
 
+interface CopilotQuotaSnapshotFields {
+  entitlement: number
+  overage: number
+  remainingPercent: number
+  resetAt: string
+}
+
+const parseCopilotQuotaSnapshot = (
+  value: unknown,
+): CopilotQuotaSnapshotFields | null => {
+  if (!isRecord(value)) {
+    return null
+  }
+
+  const entitlement =
+    typeof value.entitlement === "string" ?
+      Number(value.entitlement)
+    : Number.NaN
+  const remainingPercent =
+    typeof value.percent_remaining === "number" ?
+      value.percent_remaining
+    : Number.NaN
+  const overage =
+    typeof value.overage_count === "number" ? value.overage_count : Number.NaN
+  const resetAt = typeof value.reset_date === "string" ? value.reset_date : null
+
+  if (
+    !Number.isFinite(entitlement)
+    || !Number.isFinite(remainingPercent)
+    || !Number.isFinite(overage)
+    || entitlement < 0
+    || remainingPercent < 0
+    || remainingPercent > 100
+    || overage < 0
+    || !resetAt
+    || Number.isNaN(Date.parse(resetAt))
+  ) {
+    return null
+  }
+
+  return { entitlement, overage, remainingPercent, resetAt }
+}
+
+export function parseUpstreamQuotaSnapshots(
+  value: unknown,
+): UpstreamHeaderSnapshot {
+  const snapshot: UpstreamHeaderSnapshot = {
+    premiumUsage: null,
+    sessionRateLimit: null,
+    weeklyRateLimit: null,
+  }
+
+  if (!isRecord(value)) {
+    return snapshot
+  }
+
+  const premium = parseCopilotQuotaSnapshot(value.premium_interactions)
+  if (premium) {
+    const used =
+      premium.overage > 0 ?
+        premium.entitlement + premium.overage
+      : premium.entitlement
+        - (premium.entitlement * premium.remainingPercent) / 100
+    if (Number.isFinite(used) && used >= 0) {
+      snapshot.premiumUsage = { used, total: premium.entitlement }
+    }
+  }
+
+  const session = parseCopilotQuotaSnapshot(value["5Hour-Session-RateLimits"])
+  if (session) {
+    snapshot.sessionRateLimit = {
+      remaining: session.remainingPercent,
+      resetAt: session.resetAt,
+    }
+  }
+
+  const weekly = parseCopilotQuotaSnapshot(value["Weekly-Session-RateLimits"])
+  if (weekly) {
+    snapshot.weeklyRateLimit = {
+      remaining: weekly.remainingPercent,
+      resetAt: weekly.resetAt,
+    }
+  }
+
+  return snapshot
+}
+
 export function getBindingKey(
   sessionId: string | null,
   agent: string,

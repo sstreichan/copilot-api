@@ -6,6 +6,7 @@ import {
   getHeaderValue,
   isRecord,
   parseUpstreamHeaderSnapshot,
+  parseUpstreamQuotaSnapshots,
   parseModelFromBody,
   parseModelIds,
   parseModelObjects,
@@ -89,6 +90,7 @@ export interface ProxyToOptions {
   context: ProxyContext
   logger: (line: string) => void
   fetchImpl?: typeof fetch
+  onQuotaSnapshots?: (quotaSnapshots: unknown) => void
 }
 
 export interface DashboardHandlerOptions {
@@ -128,12 +130,52 @@ const EMPTY_UPSTREAM_HEADER_SNAPSHOT: UpstreamHeaderSnapshot = {
   weeklyRateLimit: null,
 }
 
+export function mergeUpstreamHeaderSnapshot(
+  previous: UpstreamHeaderSnapshot | undefined,
+  next: UpstreamHeaderSnapshot,
+): UpstreamHeaderSnapshot {
+  if (!previous) {
+    return next
+  }
+
+  return {
+    premiumUsage: next.premiumUsage ?? previous.premiumUsage,
+    sessionRateLimit: next.sessionRateLimit ?? previous.sessionRateLimit,
+    weeklyRateLimit: next.weeklyRateLimit ?? previous.weeklyRateLimit,
+  }
+}
+
 export function updateUpstreamHeaderSnapshot(
   state: StickyRouterState,
   port: number,
   headers: Headers,
 ) {
-  state.portHeaderSnapshots.set(port, parseUpstreamHeaderSnapshot(headers))
+  const next = parseUpstreamHeaderSnapshot(headers)
+  updateUpstreamSnapshot(state, port, next)
+}
+
+export function updateUpstreamSnapshot(
+  state: StickyRouterState,
+  port: number,
+  next: UpstreamHeaderSnapshot,
+) {
+  const previous = state.portHeaderSnapshots.get(port)
+  state.portHeaderSnapshots.set(
+    port,
+    mergeUpstreamHeaderSnapshot(previous, next),
+  )
+}
+
+export function updateUpstreamQuotaSnapshot(
+  state: StickyRouterState,
+  port: number,
+  quotaSnapshots: unknown,
+) {
+  updateUpstreamSnapshot(
+    state,
+    port,
+    parseUpstreamQuotaSnapshots(quotaSnapshots),
+  )
 }
 
 export function getRemainingCooldownMs(
@@ -494,6 +536,69 @@ export function getInstanceName(
   return state.portToInstance.get(port)?.name || `:${port}`
 }
 
+function observeResponsesSseQuotaSnapshots(
+  body: ReadableStream<Uint8Array> | null,
+  onQuotaSnapshots?: (quotaSnapshots: unknown) => void,
+): ReadableStream<Uint8Array> | null {
+  if (!body || !onQuotaSnapshots) {
+    return body
+  }
+
+  const decoder = new TextDecoder()
+  let buffered = ""
+
+  const inspectEvent = (eventText: string) => {
+    const data = eventText
+      .split(/\r?\n/u)
+      .filter((line) => line.startsWith("data:"))
+      .map((line) => line.slice("data:".length).trimStart())
+      .join("\n")
+
+    if (!data || data === "[DONE]") {
+      return
+    }
+
+    try {
+      const parsed = JSON.parse(data) as { copilot_quota_snapshots?: unknown }
+      if (parsed.copilot_quota_snapshots) {
+        onQuotaSnapshots(parsed.copilot_quota_snapshots)
+      }
+    } catch {
+      return
+    }
+  }
+
+  const inspectText = (text: string, flush = false) => {
+    buffered += text
+
+    for (;;) {
+      const separator = buffered.search(/\r?\n\r?\n/u)
+      if (separator === -1) break
+      const eventText = buffered.slice(0, separator)
+      const separatorLength = buffered[separator] === "\r" ? 4 : 2
+      buffered = buffered.slice(separator + separatorLength)
+      inspectEvent(eventText)
+    }
+
+    if (flush && buffered.trim()) {
+      inspectEvent(buffered)
+      buffered = ""
+    }
+  }
+
+  return body.pipeThrough(
+    new TransformStream<Uint8Array, Uint8Array>({
+      transform(chunk, controller) {
+        inspectText(decoder.decode(chunk, { stream: true }))
+        controller.enqueue(chunk)
+      },
+      flush() {
+        inspectText(decoder.decode(), true)
+      },
+    }),
+  )
+}
+
 export async function proxyTo(options: ProxyToOptions): Promise<Response> {
   const { port, context, logger } = options
   const fetchImpl = options.fetchImpl ?? fetch
@@ -509,7 +614,15 @@ export async function proxyTo(options: ProxyToOptions): Promise<Response> {
       body: req.method !== "GET" && req.method !== "HEAD" ? body : undefined,
     })
 
-    return new Response(upstream.body, {
+    const responseBody =
+      upstream.headers.get("content-type")?.includes("text/event-stream") ?
+        observeResponsesSseQuotaSnapshots(
+          upstream.body,
+          options.onQuotaSnapshots,
+        )
+      : upstream.body
+
+    return new Response(responseBody, {
       status: upstream.status,
       headers: upstream.headers,
     })
@@ -709,6 +822,8 @@ async function handleNoModelRequest(
     context: { body: request.bodyText, req: request.req, url: request.url },
     logger: runtime.logger,
     fetchImpl: runtime.fetchImpl,
+    onQuotaSnapshots: (quotaSnapshots) =>
+      updateUpstreamQuotaSnapshot(runtime.state, port, quotaSnapshots),
   })
   applyCooldownOn429(runtime, proxied, {
     port,
@@ -777,6 +892,8 @@ async function handleModelRequest(
     context: { body: request.bodyText, req: request.req, url: request.url },
     logger: runtime.logger,
     fetchImpl: runtime.fetchImpl,
+    onQuotaSnapshots: (quotaSnapshots) =>
+      updateUpstreamQuotaSnapshot(runtime.state, result.port, quotaSnapshots),
   })
   applyCooldownOn429(runtime, proxied, {
     port: result.port,
