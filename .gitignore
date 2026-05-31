@@ -10,6 +10,9 @@ node_modules/
 # eslint cache
 .eslintcache
 
+# local code graph index
+.codegraph/
+
 # build output
 dist/
 
