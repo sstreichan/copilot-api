@@ -4,7 +4,10 @@ import type { AnthropicMessagesPayload } from "~/routes/messages/anthropic-types
 import type { ChatCompletionsPayload } from "~/services/copilot/create-chat-completions"
 import type { ResponsesPayload } from "~/services/copilot/create-responses"
 
-import { prewarmAutoSession } from "../src/lib/auto-session"
+import {
+  invalidateAutoSession,
+  prewarmAutoSession,
+} from "../src/lib/auto-session"
 import { HTTPError } from "../src/lib/error"
 import { state } from "../src/lib/state"
 import { createChatCompletions } from "../src/services/copilot/create-chat-completions"
@@ -157,6 +160,7 @@ const createMessagesSuccess = (id: string) =>
   new Response(JSON.stringify({ id }), { status: 200 })
 
 beforeEach(() => {
+  invalidateAutoSession()
   const queue: Array<ModelsSessionResponse> = []
   ;(
     globalThis as unknown as {
@@ -179,6 +183,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  invalidateAutoSession()
   mock.restore()
 })
 

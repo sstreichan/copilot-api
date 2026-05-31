@@ -1,4 +1,4 @@
-import { test, expect, describe, mock, afterEach } from "bun:test"
+import { test, expect, describe, mock, beforeEach, afterEach } from "bun:test"
 
 import {
   clearSmartAgentCache,
@@ -9,6 +9,20 @@ import {
   shouldUseAgentMode,
   getSmartAgentDecision,
 } from "../src/services/github/get-copilot-usage"
+
+const originalGithubToken = state.githubToken
+
+beforeEach(() => {
+  state.githubToken = "test-github-token"
+  state.forceAgent = false
+  clearSmartAgentCache()
+})
+
+afterEach(() => {
+  state.githubToken = originalGithubToken
+  state.forceAgent = false
+  clearSmartAgentCache()
+})
 
 describe("shouldUseAgentMode", () => {
   // MECE test categories:

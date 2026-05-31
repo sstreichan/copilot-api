@@ -30,6 +30,7 @@ describe("setupCopilotToken metadata", () => {
   afterEach(() => {
     stopCopilotRefreshLoop()
     mock.restore()
+    state.copilotTelemetryEnabled = undefined
     if (originalOauthApp === undefined) {
       delete process.env.COPILOT_API_OAUTH_APP
     } else {

@@ -1,15 +1,18 @@
 import { createHash } from "node:crypto"
 
+import { events, type ServerSentEventMessage } from "fetch-event-stream"
+
 import type {
+  CreateResponsesReturn,
   ResponsesPayload,
-  ResponsesResult,
   ResponseErrorEvent,
-  ResponseStreamEvent,
+  ResponsesResult,
+  ResponsesStream,
   ResponsesTransport,
 } from "~/services/copilot/create-responses"
 
-import { logCodexRateLimitsEvent } from "~/lib/codex-rate-limit"
 import { isResponsesApiWebSocketEnabled as isConfiguredResponsesApiWebSocketEnabled } from "~/lib/config"
+import { HTTPError } from "~/lib/error"
 import { state } from "~/lib/state"
 import {
   createPooledWebSocketStream,
@@ -24,24 +27,7 @@ type CodexResponsesWebSocketPayload = ResponsesPayload & {
   type: "response.create"
 }
 
-type ServerSentEventChunk = {
-  data?: string
-  event?: string
-  id?: number | string
-}
-
-type CodexResponsesWebSocketChunk = ServerSentEventChunk
-
-type StandardizedCodexResponsesChunk = {
-  chunk: ServerSentEventChunk
-  event: ResponseStreamEvent | null
-}
-
-interface CodexResponsesStandardStreamOptions {
-  onClose?: () => void | Promise<void>
-  onChunk?: (chunk: ServerSentEventChunk) => void | Promise<void>
-  onEvent?: (event: ResponseStreamEvent) => void | Promise<void>
-}
+type ServerSentEventChunk = ServerSentEventMessage
 
 type CodexResponsesWebSocketRequest =
   PooledWebSocketRequest<CodexResponsesWebSocketPayload>
@@ -66,23 +52,6 @@ const STRIPPED_CODEX_REQUEST_HEADERS = new Set([
 ])
 
 const STRIPPED_CODEX_WEBSOCKET_HEADERS = new Set(["accept", "content-type"])
-
-const CODEX_RESPONSE_STATUSES = new Set([
-  "completed",
-  "incomplete",
-  "failed",
-  "cancelled",
-  "queued",
-  "in_progress",
-])
-
-type CodexResponseStatus =
-  | "completed"
-  | "incomplete"
-  | "failed"
-  | "cancelled"
-  | "queued"
-  | "in_progress"
 
 const requireCodexAuthContext = (): {
   accessToken: string
@@ -130,6 +99,9 @@ export function buildCodexResponsesHeaders(
   for (const [headerName, headerValue] of requestHeaders) {
     const headerNameLower = headerName.toLowerCase()
     if (STRIPPED_CODEX_REQUEST_HEADERS.has(headerNameLower)) {
+      continue
+    }
+    if (headerNameLower.includes("trace")) {
       continue
     }
     headers.set(headerName, headerValue)
@@ -226,7 +198,7 @@ export async function forwardCodexResponses(
   options: {
     transport?: ResponsesTransport
   } = {},
-): Promise<Response> {
+): Promise<CreateResponsesReturn> {
   const normalizedPayload: ResponsesPayload = {
     ...payload,
     store: false,
@@ -236,24 +208,32 @@ export async function forwardCodexResponses(
     metadata: undefined,
   }
 
-  if (
-    normalizedPayload.stream
-    && resolveCodexResponsesTransport(options.transport) === "websocket"
-  ) {
-    return await forwardCodexResponsesOverWebSocket(
+  const transport = resolveCodexResponsesTransport(options.transport)
+  if (normalizedPayload.stream && transport === "websocket") {
+    return forwardCodexResponsesOverWebSocket(
       normalizedPayload,
       requestHeaders,
       baseUrl,
     )
   }
 
-  return await fetch(resolveCodexResponsesUrl(baseUrl), {
+  const response = await fetch(resolveCodexResponsesUrl(baseUrl), {
     method: "POST",
     headers: buildCodexResponsesHeaders(requestHeaders, {
       stream: normalizedPayload.stream,
     }),
     body: JSON.stringify(normalizedPayload),
   })
+
+  if (!response.ok) {
+    throw new HTTPError("Failed to create codex responses", response)
+  }
+
+  if (normalizedPayload.stream) {
+    return events(response)
+  }
+
+  return (await response.json()) as ResponsesResult
 }
 
 const buildCodexResponsesWebSocketPoolKey = (
@@ -289,46 +269,47 @@ const buildCodexResponsesWebSocketPoolKey = (
     .join("|")
 }
 
-const forwardCodexResponsesOverWebSocket = async (
+const forwardCodexResponsesOverWebSocket = (
   payload: ResponsesPayload,
   requestHeaders: Headers,
   baseUrl: string,
-): Promise<Response> => {
+): ResponsesStream => {
   const websocketRequest = prepareCodexResponsesWebSocketRequest(
     payload,
     requestHeaders,
     baseUrl,
   )
-  const stream = createCodexResponsesWebSocketStream(websocketRequest)
 
-  if (payload.stream) {
-    return createCodexResponsesWebSocketProxyResponse(stream)
-  }
-
-  const response = await consumeCodexResponsesWebSocketStream(stream)
-  return new Response(JSON.stringify(response), {
-    headers: {
-      "content-type": "application/json; charset=utf-8",
-    },
-    status: 200,
-  })
+  return createCodexResponsesWebSocketStream(websocketRequest)
 }
 
 const createCodexResponsesWebSocketStream = (
   request: CodexResponsesWebSocketRequest,
-): AsyncIterable<CodexResponsesWebSocketChunk> =>
-  createPooledWebSocketStream(request, {
-    createChunk: createCodexResponsesWebSocketStreamChunk,
-    isTerminalChunk: isTerminalCodexResponsesWebSocketChunk,
-    openErrorMessage: "Failed to create codex responses websocket",
-    streamErrorMessage: "Codex responses websocket stream error",
-    terminalChunkMissingMessage:
-      "Codex responses websocket ended without a terminal response",
-  })
+): ResponsesStream =>
+  createCodexResponsesSafeStream(
+    createPooledWebSocketStream(request, {
+      createChunk: createCodexResponsesWebSocketStreamChunk,
+      isTerminalChunk: isTerminalCodexResponsesWebSocketChunk,
+      openErrorMessage: "Failed to create codex responses websocket",
+      streamErrorMessage: "Codex responses websocket stream error",
+      terminalChunkMissingMessage:
+        "Codex responses websocket ended without a terminal response",
+    }),
+  )
+
+const createCodexResponsesSafeStream = async function* (
+  source: AsyncIterable<ServerSentEventChunk>,
+): AsyncGenerator<ServerSentEventChunk, void, unknown> {
+  try {
+    yield* source
+  } catch (error) {
+    yield createResponsesErrorServerSentEventChunk(getErrorMessage(error))
+  }
+}
 
 const createCodexResponsesWebSocketStreamChunk = (
   data: string,
-): CodexResponsesWebSocketChunk => {
+): ServerSentEventChunk => {
   if (data === "[DONE]") {
     return { data }
   }
@@ -350,7 +331,7 @@ const createCodexResponsesWebSocketStreamChunk = (
 }
 
 const isTerminalCodexResponsesWebSocketChunk = (
-  chunk: CodexResponsesWebSocketChunk,
+  chunk: ServerSentEventChunk,
 ): boolean => {
   if (!chunk.data || chunk.data === "[DONE]") {
     return false
@@ -360,7 +341,6 @@ const isTerminalCodexResponsesWebSocketChunk = (
     const parsed = JSON.parse(chunk.data) as { type?: unknown }
     return (
       parsed.type === "response.completed"
-      || parsed.type === "response.done"
       || parsed.type === "response.failed"
       || parsed.type === "response.incomplete"
       || parsed.type === "error"
@@ -368,195 +348,6 @@ const isTerminalCodexResponsesWebSocketChunk = (
   } catch {
     return false
   }
-}
-
-const consumeCodexResponsesWebSocketStream = async (
-  stream: AsyncIterable<CodexResponsesWebSocketChunk>,
-): Promise<ResponsesResult> => {
-  for await (const chunk of stream) {
-    if (!chunk.data || chunk.data === "[DONE]") {
-      continue
-    }
-
-    const event = JSON.parse(chunk.data) as {
-      message?: unknown
-      response?: ResponsesResult
-      type?: unknown
-    }
-    if (event.type === "error") {
-      throw new Error(
-        typeof event.message === "string" ?
-          event.message
-        : "Codex responses websocket returned an error event",
-      )
-    }
-
-    if (
-      (event.type === "response.completed" || event.type === "response.done")
-      && event.response
-    ) {
-      return event.response
-    }
-
-    if (
-      (event.type === "response.failed" || event.type === "response.incomplete")
-      && event.response
-    ) {
-      return event.response
-    }
-  }
-
-  throw new Error("Codex responses websocket ended without a terminal response")
-}
-
-const createCodexResponsesWebSocketProxyResponse = (
-  stream: AsyncIterable<CodexResponsesWebSocketChunk>,
-): Response => {
-  return new Response(
-    createServerSentEventStream(normalizeCodexResponsesWebSocketStream(stream)),
-    {
-      headers: {
-        "cache-control": "no-cache",
-        "content-type": "text/event-stream; charset=utf-8",
-      },
-      status: 200,
-    },
-  )
-}
-
-export const createStandardizedCodexResponsesEventStream = (
-  source: AsyncIterable<ServerSentEventChunk>,
-  options: CodexResponsesStandardStreamOptions = {},
-): ReadableStream<Uint8Array> => {
-  return createServerSentEventStream(
-    normalizeCodexResponsesStandardStream(source, options),
-  )
-}
-
-const normalizeCodexResponsesWebSocketStream = async function* (
-  stream: AsyncIterable<CodexResponsesWebSocketChunk>,
-): AsyncIterable<CodexResponsesWebSocketChunk> {
-  for await (const chunk of stream) {
-    yield normalizeCodexResponsesProxyChunk(chunk)
-  }
-}
-
-const normalizeCodexResponsesStandardStream = async function* (
-  stream: AsyncIterable<ServerSentEventChunk>,
-  options: CodexResponsesStandardStreamOptions,
-): AsyncIterable<ServerSentEventChunk> {
-  try {
-    for await (const chunk of stream) {
-      const normalized = normalizeCodexResponsesStandardChunk(chunk)
-      await options.onChunk?.(normalized.chunk)
-      if (normalized.event) {
-        await options.onEvent?.(normalized.event)
-      }
-
-      yield normalized.chunk
-    }
-  } finally {
-    await options.onClose?.()
-  }
-}
-
-const normalizeCodexResponsesProxyChunk = (
-  chunk: CodexResponsesWebSocketChunk,
-): CodexResponsesWebSocketChunk => {
-  if (!chunk.data || chunk.data === "[DONE]") {
-    return chunk
-  }
-
-  try {
-    const parsed = JSON.parse(chunk.data) as { type?: unknown }
-    if (parsed.type !== "response.completed") {
-      return chunk
-    }
-
-    return {
-      ...chunk,
-      data: JSON.stringify({
-        ...parsed,
-        type: "response.done",
-      }),
-      event: "response.done",
-    }
-  } catch {
-    return chunk
-  }
-}
-
-const normalizeCodexResponsesStandardChunk = (
-  chunk: ServerSentEventChunk,
-): StandardizedCodexResponsesChunk => {
-  if (!chunk.data || chunk.data === "[DONE]") {
-    return {
-      chunk,
-      event: null,
-    }
-  }
-
-  try {
-    const parsed = JSON.parse(chunk.data) as Record<string, unknown>
-    logCodexRateLimitsEvent(parsed)
-    const normalized = normalizeCodexResponsesEvent(parsed)
-    if (!normalized) {
-      return {
-        chunk,
-        event: null,
-      }
-    }
-
-    return {
-      chunk: {
-        ...chunk,
-        data: JSON.stringify(normalized),
-        event: normalized.type,
-      },
-      event: normalized,
-    }
-  } catch {
-    return {
-      chunk,
-      event: null,
-    }
-  }
-}
-
-const createServerSentEventStream = (
-  source: AsyncIterable<ServerSentEventChunk>,
-): ReadableStream<Uint8Array> => {
-  const encoder = new TextEncoder()
-  const iterator = source[Symbol.asyncIterator]()
-
-  return new ReadableStream<Uint8Array>({
-    async cancel() {
-      await iterator.return?.()
-    },
-    async pull(controller) {
-      try {
-        const result: IteratorResult<ServerSentEventChunk> =
-          await iterator.next()
-        if (result.done) {
-          controller.close()
-          return
-        }
-
-        controller.enqueue(
-          encoder.encode(serializeServerSentEvent(result.value)),
-        )
-      } catch (error) {
-        controller.enqueue(
-          encoder.encode(
-            serializeServerSentEvent(
-              createResponsesErrorServerSentEventChunk(getErrorMessage(error)),
-            ),
-          ),
-        )
-        controller.close()
-      }
-    },
-  })
 }
 
 const createResponsesErrorServerSentEventChunk = (
@@ -576,26 +367,6 @@ const createResponsesErrorServerSentEventChunk = (
   }
 }
 
-const serializeServerSentEvent = (chunk: ServerSentEventChunk): string => {
-  const lines: Array<string> = []
-
-  if (chunk.id) {
-    lines.push(`id: ${chunk.id}`)
-  }
-
-  if (chunk.event) {
-    lines.push(`event: ${chunk.event}`)
-  }
-
-  if (chunk.data !== undefined) {
-    for (const line of String(chunk.data).split(/\r?\n/u)) {
-      lines.push(`data: ${line}`)
-    }
-  }
-
-  return `${lines.join("\n")}\n\n`
-}
-
 const getErrorMessage = (error: unknown): string => {
   if (error instanceof Error && error.message) {
     return error.message
@@ -605,60 +376,3 @@ const getErrorMessage = (error: unknown): string => {
 }
 
 const encodePoolKeyPart = (value: string): string => encodeURIComponent(value)
-
-function normalizeCodexResponseStatus(
-  status: unknown,
-): CodexResponseStatus | undefined {
-  return typeof status === "string" && CODEX_RESPONSE_STATUSES.has(status) ?
-      (status as CodexResponseStatus)
-    : undefined
-}
-
-function normalizeCodexResponseRecord(
-  eventRecord: Record<string, unknown>,
-): Record<string, unknown> {
-  const response = eventRecord.response
-  if (!response || typeof response !== "object") {
-    return eventRecord
-  }
-
-  const normalizedStatus = normalizeCodexResponseStatus(
-    (response as { status?: unknown }).status,
-  )
-  if (!normalizedStatus) {
-    return eventRecord
-  }
-
-  return {
-    ...eventRecord,
-    response: {
-      ...response,
-      status: normalizedStatus,
-    },
-  }
-}
-
-export function normalizeCodexResponsesEvent(
-  event: unknown,
-): ResponseStreamEvent | null {
-  if (!event || typeof event !== "object") {
-    return null
-  }
-
-  const eventRecord = normalizeCodexResponseRecord(
-    event as Record<string, unknown>,
-  )
-  const type = eventRecord.type
-  if (typeof type !== "string") {
-    return null
-  }
-
-  if (type === "response.done") {
-    return {
-      ...eventRecord,
-      type: "response.completed",
-    } as ResponseStreamEvent
-  }
-
-  return eventRecord as unknown as ResponseStreamEvent
-}

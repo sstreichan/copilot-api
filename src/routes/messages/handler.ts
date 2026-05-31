@@ -37,6 +37,7 @@ import {
   getCompactType,
   getLastMessageContentCacheControl,
   mergeToolResultForClaude,
+  normalizeSystemMessages,
   sanitizeIdeTools,
   stripToolReferenceTurnBoundary,
 } from "./preprocess"
@@ -70,10 +71,13 @@ export async function handleCompletion(c: Context) {
     })
   }
 
+  debugJson(logger, "Anthropic request payload:", anthropicPayload)
+
+  normalizeSystemMessages(anthropicPayload)
+
   await checkRateLimit(state)
 
   const originalModel = anthropicPayload.model
-  debugJson(logger, "Anthropic request payload:", anthropicPayload)
 
   const compactType = getCompactType(anthropicPayload)
   if (compactType !== 0) {

@@ -1,8 +1,6 @@
 import { afterEach, beforeEach, expect, mock, test } from "bun:test"
 
 import type { ResponsesResult } from "../src/services/copilot/create-responses"
-import { getAttachedPremiumInfo } from "../src/lib/logger"
-import { getAttachedResponseHeaders } from "../src/lib/response-headers"
 
 type ListenerEvent = {
   data?: string
@@ -289,43 +287,6 @@ test("Responses websocket open failure includes the underlying reason", async ()
   expect((thrown as Error).message).toBe(
     "Failed to create responses websocket: tls handshake failed",
   )
-})
-
-test("Responses websocket non-stream attaches quota headers synthesized from completed event snapshots", async () => {
-  MockWebSocket.quotaSnapshots = {
-    premium_interactions: {
-      entitlement: "300",
-      overage_count: 0,
-      overage_permitted: true,
-      percent_remaining: 16.2,
-      reset_date: "2026-06-01T00:00:00Z",
-    },
-  }
-
-  const response = await createResponses(
-    {
-      input: "hello",
-      model: "gpt-test",
-    },
-    {
-      initiator: "user",
-      requestId: "request-1",
-      transport: "websocket",
-      vision: false,
-    },
-  )
-
-  const headers = getAttachedResponseHeaders(response)
-  expect(headers?.get("x-quota-snapshot-premium_interactions")).toContain(
-    "ent=300",
-  )
-  expect(headers?.get("x-quota-snapshot-premium_interactions")).toContain(
-    "rem=16.2",
-  )
-  expect(getAttachedPremiumInfo(response)).toEqual({
-    remaining: 48.6,
-    total: 300,
-  })
 })
 
 test("Responses websocket pool separates different request IDs", async () => {

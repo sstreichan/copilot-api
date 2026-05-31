@@ -11,6 +11,7 @@ import consola from "consola"
 
 import {
   getAutoSessionTokenForModel,
+  invalidateAutoSession,
   prewarmAutoSession,
 } from "../src/lib/auto-session"
 
@@ -24,6 +25,7 @@ const createResponse = (payload: ModelsSessionResponse) =>
   new Response(JSON.stringify(payload), { status: 200 })
 
 beforeEach(() => {
+  invalidateAutoSession()
   const queue: Array<ModelsSessionResponse> = []
   ;(
     globalThis as unknown as { __AUTO_SESSION_QUEUE__?: typeof queue }
@@ -53,6 +55,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  invalidateAutoSession()
   mock.restore()
 })
 

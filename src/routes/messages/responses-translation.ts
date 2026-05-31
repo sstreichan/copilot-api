@@ -107,7 +107,7 @@ export const translateAnthropicMessagesToResponsesPayload = (
     toolUseNameById: new Map(),
   }
 
-  for (const message of payload.messages) {
+  for (const message of payload.messages as Array<AnthropicMessage>) {
     input.push(
       ...translateMessage(message, payload.model, applyPhase, translationState),
     )
@@ -841,7 +841,9 @@ const mapOutputToAnthropicContent = (
   options?: ResponsesToAnthropicOptions,
 ): Array<AnthropicAssistantContentBlock> => {
   const contentBlocks: Array<AnthropicAssistantContentBlock> = []
-
+  if (!output) {
+    output = []
+  }
   for (const item of output) {
     switch (item.type) {
       case "reasoning": {
@@ -1082,7 +1084,7 @@ const mapResponsesStopReason = (
   const { status, incomplete_details: incompleteDetails } = response
 
   if (status === "completed") {
-    if (response.output.length === 0) {
+    if (!response.output || response.output.length === 0) {
       return options?.hasToolCall ? "tool_use" : "end_turn"
     }
 

@@ -6,6 +6,7 @@ import {
   applyLastMessageCacheControl,
   getLastMessageContentCacheControl,
   mergeToolResultForClaude,
+  normalizeSystemMessages,
   prepareMessagesApiPayload,
   sanitizeIdeTools,
   stripToolReferenceTurnBoundary,
@@ -14,15 +15,199 @@ import {
 // Mock config to provide modelReasoningEfforts for test models
 await mock.module("~/lib/config", () => ({
   getConfig: () => ({
+    extraPrompts: {
+      "gpt-5.4": "## Intermediary updates",
+    },
     modelReasoningEfforts: {
       "gpt-5.4": "xhigh",
     },
   }),
+  getExtraPromptForModel: (model: string) =>
+    model === "gpt-5.4" ? "## Intermediary updates" : "",
   getReasoningEffortForModel: (model: string) => {
     const efforts: Record<string, string> = { "gpt-5.4": "xhigh" }
     return efforts[model] ?? "high"
   },
 }))
+
+describe("normalizeSystemMessages", () => {
+  test("merges system string content into the previous message", () => {
+    const payload: AnthropicMessagesPayload = {
+      model: "claude-opus-4.6",
+      max_tokens: 128,
+      messages: [
+        {
+          role: "user",
+          content: "hello",
+        },
+        {
+          role: "system",
+          content: "follow the repo style",
+        },
+        {
+          role: "assistant",
+          content: "working on it",
+        },
+      ],
+    }
+
+    normalizeSystemMessages(payload)
+
+    expect(payload.system).toBeUndefined()
+    expect(payload.messages).toEqual([
+      {
+        role: "user",
+        content:
+          "<system-reminder>\nfollow the repo style\n</system-reminder>\n\nhello",
+      },
+      {
+        role: "assistant",
+        content: "working on it",
+      },
+    ])
+  })
+
+  test("moves leading system messages to payload.system and appends block content to the previous array message", () => {
+    const payload: AnthropicMessagesPayload = {
+      model: "claude-opus-4.6",
+      max_tokens: 128,
+      messages: [
+        {
+          role: "system",
+          content: "leading system prompt",
+        },
+        {
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text: "hello",
+            },
+          ],
+        },
+        {
+          role: "system",
+          content: [
+            {
+              type: "text",
+              text: "follow the repo style",
+            },
+          ],
+        },
+      ],
+    }
+
+    normalizeSystemMessages(payload)
+
+    expect(payload.system).toBe(
+      "<system-reminder>\nleading system prompt\n</system-reminder>",
+    )
+    expect(payload.messages).toEqual([
+      {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: "<system-reminder>\nfollow the repo style\n</system-reminder>",
+          },
+          {
+            type: "text",
+            text: "hello",
+          },
+        ],
+      },
+    ])
+  })
+
+  test("inserts system text after tool_result blocks in user array content", () => {
+    const payload: AnthropicMessagesPayload = {
+      model: "claude-opus-4.6",
+      max_tokens: 128,
+      messages: [
+        {
+          role: "user",
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: "tool-1",
+              content: "tool output",
+            },
+            {
+              type: "text",
+              text: "hello",
+            },
+          ],
+        },
+        {
+          role: "system",
+          content: "follow the repo style",
+        },
+      ],
+    }
+
+    normalizeSystemMessages(payload)
+
+    expect(payload.messages).toEqual([
+      {
+        role: "user",
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: "tool-1",
+            content: "tool output",
+          },
+          {
+            type: "text",
+            text: "<system-reminder>\nfollow the repo style\n</system-reminder>",
+          },
+          {
+            type: "text",
+            text: "hello",
+          },
+        ],
+      },
+    ])
+  })
+
+  test("splits SubagentStart hook additional first line into its own content block", () => {
+    const payload: AnthropicMessagesPayload = {
+      model: "claude-opus-4.6",
+      max_tokens: 128,
+      messages: [
+        {
+          role: "user",
+          content: "hello",
+        },
+        {
+          role: "system",
+          content: "SubagentStart hook additional\nextra reminder",
+        },
+      ],
+    }
+
+    normalizeSystemMessages(payload)
+
+    expect(payload.messages).toEqual([
+      {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: "<system-reminder>\nSubagentStart hook additional\n</system-reminder>",
+          },
+          {
+            type: "text",
+            text: "<system-reminder>\nextra reminder\n</system-reminder>",
+          },
+          {
+            type: "text",
+            text: "hello",
+          },
+        ],
+      },
+    ])
+  })
+})
 
 describe("mergeToolResultForClaude", () => {
   test("removes tool reference turn boundaries before merging", () => {
@@ -930,6 +1115,65 @@ describe("prepareMessagesApiPayload", () => {
       display: "summarized",
     })
     expect(payload.output_config).toEqual({ effort: "max" })
+  })
+
+  test("sets summarized display for Claude versions at least 4.7", () => {
+    const models = [
+      "claude-opus-4.7",
+      "claude-opus-4.8",
+      "claude-opus-4.10",
+      "claude-opus-4-7-20260101",
+      "claude-sonnet-4.7",
+    ]
+
+    for (const model of models) {
+      const payload: AnthropicMessagesPayload = {
+        model,
+        max_tokens: 128,
+        messages: [{ role: "user", content: "hello" }],
+        thinking: {
+          type: "enabled",
+          budget_tokens: 1024,
+        },
+      }
+
+      prepareMessagesApiPayload(payload, {
+        capabilities: {
+          supports: {
+            adaptive_thinking: true,
+          },
+        },
+      } as never)
+
+      expect(payload.thinking).toEqual({
+        type: "adaptive",
+        display: "summarized",
+      })
+    }
+  })
+
+  test("does not force summarized display for Claude versions before 4.7", () => {
+    const payload: AnthropicMessagesPayload = {
+      model: "claude-opus-4.6",
+      max_tokens: 128,
+      messages: [{ role: "user", content: "hello" }],
+      thinking: {
+        type: "enabled",
+        budget_tokens: 1024,
+      },
+    }
+
+    prepareMessagesApiPayload(payload, {
+      capabilities: {
+        supports: {
+          adaptive_thinking: true,
+        },
+      },
+    } as never)
+
+    expect(payload.thinking).toEqual({
+      type: "adaptive",
+    })
   })
 
   test("does not enable adaptive thinking when tool choice forces tool use", () => {

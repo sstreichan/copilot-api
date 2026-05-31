@@ -411,6 +411,36 @@ describe("Error path", () => {
   })
 })
 
+test("uses HTTP when websocket transport is requested without stream=true", async () => {
+  const payload: ResponsesPayload = {
+    input: "hello",
+    model: "gpt-test",
+    stream: false,
+  }
+
+  const response = await createResponses(payload, {
+    initiator: "user",
+    requestId: "request-1",
+    transport: "websocket",
+    vision: false,
+  })
+
+  expect(fetchMock).toHaveBeenCalledTimes(1)
+  expect(response).toMatchObject({
+    error: null,
+    id: "resp-123",
+    incomplete_details: null,
+    output: [
+      {
+        content: [{ text: "ok", type: "output_text" }],
+        role: "assistant",
+        type: "message",
+      },
+    ],
+    usage: { input_tokens: 10, output_tokens: 5 },
+  })
+})
+
 describe("createResponses websocket helpers", () => {
   test("builds the first websocket frame as response.create", () => {
     const payload = {
@@ -457,7 +487,7 @@ describe("createResponses websocket helpers", () => {
       "Copilot-Integration-Id": "vscode-chat",
       "Copilot-Vision-Request": "true",
       "Editor-Device-Id": "device-1",
-      "Editor-Plugin-Version": "copilot-chat/0.47.1",
+      "Editor-Plugin-Version": "copilot-chat/0.50.1",
       "Editor-Version": "vscode/1.120.0",
       host: "api.githubcopilot.com",
       "OpenAI-Intent": "conversation-agent",
@@ -587,77 +617,5 @@ describe("createResponses websocket helpers", () => {
     expect(new Set([mainKey, subagentKey, otherModelKey]).size).toBe(3)
     expect(mainKey).toContain("gpt-test")
     expect(mainKey).toContain("request-1")
-  })
-})
-
-describe("buildHeadersFromQuotaSnapshots", () => {
-  test("synthesizes upstream-shaped headers from WebSocket quota snapshots", async () => {
-    const { buildHeadersFromQuotaSnapshots } = await import(
-      "../src/services/copilot/create-responses"
-    )
-
-    const headers = buildHeadersFromQuotaSnapshots({
-      premium_interactions: {
-        entitlement: "300",
-        percent_remaining: 16.2,
-        overage_permitted: true,
-        overage_count: 0,
-        reset_date: "2026-06-01T00:00:00Z",
-      },
-      "5Hour-Session-RateLimits": {
-        entitlement: "0",
-        percent_remaining: 12.3,
-        overage_permitted: false,
-        overage_count: 0,
-        reset_date: "2026-05-26T18:00:00Z",
-      },
-      "Weekly-Session-RateLimits": {
-        entitlement: "0",
-        percent_remaining: 80.4,
-        overage_permitted: false,
-        overage_count: 0,
-        reset_date: "2026-06-01T00:00:00Z",
-      },
-    })
-
-    const premium = headers.get("x-quota-snapshot-premium_interactions")
-    expect(premium).not.toBeNull()
-    expect(premium).toContain("ent=300")
-    expect(premium).toContain("rem=16.2")
-    expect(premium).toContain("rst=2026-06-01T00%3A00%3A00Z")
-
-    const session = headers.get("x-usage-ratelimit-session")
-    expect(session).not.toBeNull()
-    expect(session).toContain("rem=12.3")
-
-    const weekly = headers.get("x-usage-ratelimit-weekly")
-    expect(weekly).not.toBeNull()
-    expect(weekly).toContain("rem=80.4")
-  })
-
-  test("returns an empty Headers when no snapshots are present", async () => {
-    const { buildHeadersFromQuotaSnapshots } = await import(
-      "../src/services/copilot/create-responses"
-    )
-    const headers = buildHeadersFromQuotaSnapshots(undefined)
-    expect([...headers.keys()]).toEqual([])
-  })
-
-  test("ignores malformed snapshot entries without throwing", async () => {
-    const { buildHeadersFromQuotaSnapshots } = await import(
-      "../src/services/copilot/create-responses"
-    )
-    const headers = buildHeadersFromQuotaSnapshots({
-      broken: { not_a_snapshot: true },
-      premium_interactions: {
-        entitlement: "1500",
-        percent_remaining: 5,
-        overage_permitted: false,
-        overage_count: 0,
-        reset_date: "2026-06-01T00:00:00Z",
-      },
-    } as unknown as Record<string, unknown>)
-    expect(headers.get("x-quota-snapshot-broken")).toBeNull()
-    expect(headers.get("x-quota-snapshot-premium_interactions")).not.toBeNull()
   })
 })

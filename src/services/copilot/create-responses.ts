@@ -520,7 +520,7 @@ export const createResponses = async (
   const effectiveTransport =
     compactType === COMPACT_REQUEST ? "http" : transport
 
-  if (effectiveTransport === "websocket") {
+  if (payload.stream === true && effectiveTransport === "websocket") {
     const websocketRequest = prepareResponsesWebSocketRequest(
       payload,
       headers,
@@ -530,17 +530,7 @@ export const createResponses = async (
       },
     )
     const stream = createPooledResponsesWebSocketStream(websocketRequest)
-
-    if (payload.stream) {
-      return stream
-    }
-
-    const outcome = await consumeResponsesWebSocketStream(stream)
-    const wsHeaders = buildHeadersFromQuotaSnapshots(outcome.quotaSnapshots)
-    return attachResponseHeaders(
-      attachPremiumInfo(outcome.result, getPremiumInfoFromHeaders(wsHeaders)),
-      wsHeaders,
-    )
+    return stream
   }
 
   return await createHttpResponses(payload, headers, {
@@ -794,101 +784,4 @@ const isTerminalResponsesStreamChunk = (chunk: { data?: string }): boolean => {
   } catch {
     return false
   }
-}
-
-interface WebSocketResponsesOutcome {
-  result: ResponsesResult
-  quotaSnapshots: Record<string, CopilotQuotaSnapshot> | undefined
-}
-
-const consumeResponsesWebSocketStream = async (
-  stream: ResponsesStream,
-): Promise<WebSocketResponsesOutcome> => {
-  let quotaSnapshots: Record<string, CopilotQuotaSnapshot> | undefined
-  for await (const chunk of stream) {
-    if (!chunk.data || chunk.data === "[DONE]") {
-      continue
-    }
-
-    const event = JSON.parse(chunk.data) as ResponseStreamEvent
-    if (event.type === "error") {
-      throw new Error(event.message)
-    }
-
-    if (event.type === "response.completed") {
-      quotaSnapshots = event.copilot_quota_snapshots ?? quotaSnapshots
-    }
-
-    if (
-      event.type === "response.completed"
-      || event.type === "response.failed"
-      || event.type === "response.incomplete"
-    ) {
-      return { result: event.response, quotaSnapshots }
-    }
-  }
-
-  throw new Error("Responses websocket ended without a terminal response")
-}
-
-// Synthesize HTTP-style quota / rate-limit headers from a Copilot WebSocket
-// `copilot_quota_snapshots` payload so downstream consumers (router dashboard,
-// premium-info parsers) continue to see the same shape they get over HTTP.
-const QUOTA_SNAPSHOT_HEADER_PREFIX = "x-quota-snapshot-"
-const formatQuotaSnapshotValue = (snapshot: CopilotQuotaSnapshot): string => {
-  const params = new URLSearchParams()
-  params.set("ent", snapshot.entitlement)
-  params.set("ov", String(snapshot.overage_count))
-  params.set("ovPerm", String(snapshot.overage_permitted))
-  params.set("rem", String(snapshot.percent_remaining))
-  params.set("rst", snapshot.reset_date)
-  return params.toString()
-}
-
-export const buildHeadersFromQuotaSnapshots = (
-  quotaSnapshots: Record<string, unknown> | undefined,
-): Headers => {
-  const headers = new Headers()
-  if (!quotaSnapshots) {
-    return headers
-  }
-
-  for (const [rawKey, value] of Object.entries(quotaSnapshots)) {
-    if (!value || typeof value !== "object") continue
-    const candidate = value as Partial<CopilotQuotaSnapshot> & {
-      reset_date?: unknown
-      percent_remaining?: unknown
-      entitlement?: unknown
-      overage_count?: unknown
-      overage_permitted?: unknown
-    }
-    if (
-      typeof candidate.entitlement !== "string"
-      || typeof candidate.percent_remaining !== "number"
-      || typeof candidate.reset_date !== "string"
-      || typeof candidate.overage_count !== "number"
-      || typeof candidate.overage_permitted !== "boolean"
-    ) {
-      continue
-    }
-    const snapshot = candidate as CopilotQuotaSnapshot
-    const formatted = formatQuotaSnapshotValue(snapshot)
-
-    // Mirror upstream HTTP shape: snapshot keys map to either an
-    // x-quota-snapshot-<name> header or a x-usage-ratelimit-<name> header
-    // depending on whether the upstream surfaces them as quota or rate-limit
-    // axes. We honor both naming families so downstream parsing (premium info,
-    // router dashboard) sees a consistent header set.
-    if (rawKey === "5Hour-Session-RateLimits") {
-      headers.set("x-usage-ratelimit-session", formatted)
-      continue
-    }
-    if (rawKey === "Weekly-Session-RateLimits") {
-      headers.set("x-usage-ratelimit-weekly", formatted)
-      continue
-    }
-    headers.set(`${QUOTA_SNAPSHOT_HEADER_PREFIX}${rawKey}`, formatted)
-  }
-
-  return headers
 }
