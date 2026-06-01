@@ -4,7 +4,80 @@
 
 在 2026 年 6 月重新验证 GitHub Copilot 从 premium quota / premium interactions 计费向 GitHub AI Credits / token-based billing 迁移后，真实 Copilot backend、usage API 与 VS Code Copilot 插件源码是否已经对齐。
 
-本交接文件用于未来 agent 复现 2026 年 5 月底的检查流程，并在 6 月对同一批账号和后端端口重新测试。
+本交接文件用于未来 agent 复现 2026 年 5 月底的检查流程，并在 6 月对同一批账号和后端端口重新测试。记录重点是可复用结论与下一轮判读依据，不保存流水账式操作过程。
+
+
+## 2026-06-02 复测结论
+
+结论：**已经部分 rollout，且比 2026-05-28 明显前进**。
+
+已验证事实：
+
+- `.vendor/vscode` 已更新到 VS Code 主仓库 `57aca5e8fdd82f329405161a407d231174e40608`，提交时间 `2026-06-01T16:58:21+02:00`。
+- VS Code Copilot 插件源码继续包含并使用 token-based / AI Credits 相关字段：
+  - `token_based_billing`：`extensions/copilot/src/platform/authentication/node/copilotTokenManager.ts` 与 `extensions/copilot/src/platform/authentication/common/copilotToken.ts`。
+  - `billing.token_prices` 与 `model_picker_price_category`：`extensions/copilot/src/platform/endpoint/node/chatEndpoint.ts`、`modelMetadataFetcher.ts`、cloud/CLI session provider。
+  - `copilot_usage.total_nano_aiu`：messages / responses API、SSE processor、request logger、OpenTelemetry attributes、chat quota service。
+- 真实 backend `/v1/models` 已返回 `billing.token_prices` 与 `model_picker_price_category`。
+- 真实 backend `/v1/responses` 成功请求已返回 `usage.copilot_usage.total_nano_aiu`：
+  - 4142 business / `gpt-5.5`：HTTP 200，`copilot_usage.total_nano_aiu=53500000`。
+  - 4146 individual / `gpt-5.4-mini`：HTTP 200，`copilot_usage.total_nano_aiu=8025000`。
+- usage API `https://api.github.com/copilot_internal/user` 三个账号均返回 `token_based_billing=true`，且 `quota_snapshots.chat/completions/premium_interactions` 内也均有 `token_based_billing=true`。
+- usage API body 仍未返回顶层 `copilot_usage`、`total_nano_aiu`、`nano_aiu` 或 `aiu` 字段；这些 AIU 成本字段目前在模型响应 usage 中出现。
+
+因此，2026-06-02 的判断是：
+
+- **模型 catalog / VS Code 插件 / 成功的模型响应：AI Credits / token-based billing 已经 rollout。**
+- **usage API：已出现 `token_based_billing=true`，但仍主要保留旧的 `quota_snapshots` 形态；未见 usage API 直接返回累计 AIU 用量字段。**
+- **4145 individual 当前 quota exhausted，无法用 `gpt-5.4-mini` 完成成功响应验证，但 usage API 与 catalog 字段已经显示 token-based billing 形态。**
+
+### 2026-06-02 后端与 usage 摘要
+
+| 端口 | 账号类型 | catalog 观察 | 真实请求 | usage API | 判断 |
+|---|---|---|---|---|---|
+| 4142 | business | `gpt-5.4-mini`、`gpt-5.5` enabled；均有 `billing.token_prices` 与 `model_picker_price_category` | `/v1/responses` + `gpt-5.5` 返回 200；响应含 `copilot_usage.total_nano_aiu=53500000` | `token_based_billing=true`；premium remaining 约 4462/10000 | 已 rollout |
+| 4145 | individual / free educational quota | `gpt-5.4-mini`、`claude-haiku-4.5` enabled；catalog 有 token prices / price category | `/v1/responses` + `gpt-5.4-mini` 返回 402 `quota_exceeded`，reset `2026-07-01` | `token_based_billing=true`；premium remaining 为负，overage_count=4 | 字段已 rollout，但账号无可用 quota |
+| 4146 | individual / monthly subscriber quota | `gpt-5.4-mini`、`claude-sonnet-4.6`、`claude-haiku-4.5` enabled；catalog 有 token prices / price category | `/v1/responses` + `gpt-5.4-mini` 返回 200；响应含 `copilot_usage.total_nano_aiu=8025000` | `token_based_billing=true`；premium remaining 约 944/1500 | 已 rollout |
+
+### Business shared pool 与 overage 判读
+
+4142 / 4143 / 4144 三个同一企业组织下的 business 账号 usage API 形态如下。三者同属同一 billing entity，`premium_interactions.entitlement=10000`，但 `remaining` 不同，因此这个 endpoint 暴露的是每个用户当前的 quota snapshot，不是公司 shared pool 总量。
+
+| 端口 | has_quota | entitlement | remaining | quota_remaining | percent_remaining | overage_permitted | overage_count | reset |
+|---|---|---:|---:|---:|---:|---|---:|---|
+| 4142 | `true` | 10000 | 4462 | 4462.8 | 44.6 | `true` | 0 | 2026-07-01 |
+| 4143 | `true` | 10000 | 4484 | 4484.3 | 44.8 | `true` | 0 | 2026-07-01 |
+| 4144 | `true` | 10000 | 3157 | 3157.7 | 31.5 | `true` | 0 | 2026-07-01 |
+
+保守判读：
+
+- `entitlement=10000` 不应再写成“该账号绝对最多只能用 10000”。源码证据只能证明客户端把它当作当前 premium / credits bucket 的 quota 上限。它可能来自企业 user-level budget、迁移期策略或其他内部配置；目前无法确认后台来源。
+- `overage_permitted=true` 表示当前 bucket 用完后允许进入 additional usage / overage；`overage_count=0` 只说明这三个账号还未进入 overage。
+- Business / Enterprise 是否真正 blocked，优先看 `has_quota=false` 或实际请求返回 402 / `quota_exceeded`。VS Code workbench 代码也把 managed plan 的 `hasQuota === false` 作为 org budget blocked 的权威信号。
+- 4142 / 4143 / 4144 当前 `has_quota=true`、`remaining>0`、`overage_count=0`，所以还不能实测“remaining 归零后能超多少”。下一轮应等其中一个账号 `remaining=0` 后继续请求，观察是否仍返回 200、`overage_count` 是否增长、以及何时出现 `has_quota=false` 或 402。
+- 官方文档仍说明 Copilot Business 的 included AI credits 是按 seat 贡献到 billing entity shared pool；`copilot_internal/user` 不暴露 shared pool 总剩余、enterprise/cost-center budget、paid usage policy 或 overage hard cap。因此无法从该 endpoint 推出公司池深度或 10000 之后还能用多少。
+
+### 2026-06-02 字段观察
+
+已出现：
+
+- `billing.token_prices`：模型 catalog。
+- `model_picker_price_category`：模型 catalog。
+- `token_based_billing=true`：usage API 顶层与每个 `quota_snapshots.*`。
+- `usage.copilot_usage.total_nano_aiu`：成功的 `/v1/responses` body。
+- `x-quota-snapshot-premium_interactions`：成功 responses header 仍存在。
+
+未见或未在本轮确认：
+
+- usage API 顶层累计 `copilot_usage`。
+- usage API 顶层累计 `total_nano_aiu` / `nano_aiu` / `aiu`。
+- 4145 的成功模型响应 AIU 字段，因为该账号本轮返回 402 quota exceeded。
+
+### 下一轮复测重点
+
+- 等 4142 / 4143 / 4144 任一账号的 `premium_interactions.remaining` 归零后继续发请求，确认是否仍返回 200。
+- 观察归零后的 `overage_count` 是否增长、`has_quota` 是否保持 `true`、以及何时出现 `has_quota=false` 或 402 / `quota_exceeded`。
+- 若需要解释“10000 后还能用多少”，必须拿到 org / enterprise billing budget 视图，或通过归零后的连续请求实测；当前 `copilot_internal/user` 不能给出 overage hard cap。
 
 ## 背景结论（截至 2026-05-28）
 
