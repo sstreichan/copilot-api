@@ -16,9 +16,7 @@
 >
 > 3. **内置 `codex` provider：** 执行一次 `npx @jeffreycao/copilot-api@latest auth login --provider codex` 后，AI gateway 会自动持久化并刷新 Codex OAuth 凭据。
 >
-> 4. **通过 codex 使用时请关闭 multi agent：** 如果你是通过 GitHub Copilot 使用 codex，请关闭 multi agent。当前 Copilot 会按最后一条消息是否为 user role 对 codex 流量计费，而这部分逻辑尚未调整。
->
-> 5. **注意事项：** README 顶部移除的 GitHub Copilot warning 见 [GitHub Copilot 安全提示](./NOTICE.md#github-copilot-security-notice)。
+> 4. **注意事项：** README 顶部移除的 GitHub Copilot warning 见 [GitHub Copilot 安全提示](./NOTICE.md#github-copilot-security-notice)。
 
 ---
 
@@ -94,7 +92,7 @@ https://github.com/caozhiyuan/copilot-api/releases
 
 下载对应平台的安装包后，在应用内登录、选择端口并启动服务，再把你的客户端指向应用里显示的本地端点即可。发布版桌面应用使用随包内置的 Electron 运行时，正常使用不需要额外安装 Node.js；token usage 历史记录会在该内置运行时支持 SQLite 时启用。
 
-桌面应用里的高级配置页会通过 `GET/POST /admin/config/model-mappings` 读写模型映射。它使用的是 `auth.adminApiKey`，不是普通的 `auth.apiKeys`；应用会在服务启动并自动生成该 key 后，直接从 `config.json` 读取它来发起请求。
+桌面应用里的高级配置页会通过 `GET/POST /admin/config/model-mappings` 读写这份共享的模型映射。同一份映射会统一作用于 `POST /v1/messages`、`POST /v1/messages/count_tokens`、`POST /v1/responses` 和 `POST /v1/chat/completions`，不再按接口区分。它使用的是 `auth.adminApiKey`，不是普通的 `auth.apiKeys`；应用会在服务启动并自动生成该 key 后，直接从 `config.json` 读取它来发起请求。
 
 ### 桌面应用截图
 
@@ -197,14 +195,7 @@ Copilot API 现在使用子命令结构，主要命令包括：
         "enabled": true,
         "baseUrl": "your-base-url",
         "apiKey": "sk-your-provider-key",
-        "authType": "x-api-key",
-        "adjustInputTokens": false,
-        "models": {
-          "kimi-k2.5": {
-            "temperature": 1,
-            "topP": 0.95
-          }
-        }
+        "authType": "x-api-key"
       },
       "dashscope": {
         "type": "openai-compatible",
@@ -218,8 +209,7 @@ Copilot API 现在使用子命令结构，主要命令包括：
             "topK": 20,
             "extraBody": {
               "preserve_thinking": true
-            },
-            "contextCache": true
+            }
           },
           "glm-5.1": {
             "temperature": 0.7,
@@ -240,7 +230,7 @@ Copilot API 现在使用子命令结构，主要命令包括：
       "gpt-5.4": "<built-in commentary prompt>"
     },
     "smallModel": "gpt-5-mini",
-    "responsesApiContextManagementModels": [],
+    "useResponsesApiContextManagement": true,
     "modelReasoningEfforts": {
       "gpt-5-mini": "low",
       "gpt-5.3-codex": "xhigh",
@@ -254,7 +244,7 @@ Copilot API 现在使用子命令结构，主要命令包括：
   ```
 - **auth.apiKeys：** 用于普通非 admin 路由的 API key。支持多个 key 轮换使用。请求可通过 `x-api-key: <key>` 或 `Authorization: Bearer <key>` 进行认证。若为空或省略，则普通路由的认证会被禁用。
 - **auth.adminApiKey：** 仅用于 `/admin/*` 路由的单个 admin key。若未配置，服务会在启动时自动生成一个随机 key，并回写到 `config.json`。它同样使用 `x-api-key` 或 `Authorization: Bearer` 这两种头，但普通 `auth.apiKeys` 不能访问 `/admin/*`。
-- **modelMappings：** 用于顶层 `POST /v1/messages` 和 `POST /v1/messages/count_tokens` 请求的精确 `sourceModel -> targetModel` 重写映射。省略该字段或保留为 `{}` 时，不会做模型重写。`source` 和 `target` 都必须是非空字符串。`target` 可以是普通模型 ID，也可以是 `provider/model` 形式的别名，例如 `dashscope/qwen3.6-plus`；重写发生在 provider alias 解析之前。`GET/POST /admin/config/model-mappings` 管理接口读写的也只有这个字段。
+- **modelMappings：** 用于顶层 `POST /v1/messages`、`POST /v1/messages/count_tokens`、`POST /v1/responses` 和 `POST /v1/chat/completions` 请求的精确 `sourceModel -> targetModel` 重写映射，这几类接口共用同一份规则。省略该字段或保留为 `{}` 时，不会做模型重写。`source` 和 `target` 都必须是非空字符串。`target` 可以是普通模型 ID，也可以是 `provider/model` 形式的别名，例如 `dashscope/qwen3.6-plus`；重写发生在 provider alias 解析之前。这些映射不再按接口区分。`GET/POST /admin/config/model-mappings` 管理接口读写的也只有这个字段。
 - **extraPrompts：** `model -> prompt` 的映射。把 Anthropic 风格请求翻译给 Copilot 时，会将其附加到第一条 system prompt 后面。你可以借此为不同模型注入护栏或指引。缺失的默认项会自动补齐，但不会覆盖你自定义的 prompt。内置的 `gpt-5.3-codex` 和 `gpt-5.4` prompt 会启用带阶段感知的 commentary，让模型在工具调用或更深层推理前先发出简短的用户可见进度说明。
 - **providers：** 全局上游 provider 映射。每个 provider key（例如 `dashscope`）都会变成一个路由前缀（`/dashscope/v1/messages`）。支持 `type: "anthropic"`、`type: "openai-compatible"` 和 `type: "openai-responses"`。顶层客户端也可以在 `/v1/messages`、`/v1/messages/count_tokens` 和 `/v1/responses` 中使用 `model: "dashscope/model-id"`；AI gateway 会在转发上游前移除 `dashscope/` 前缀。`GET /v1/models` 不聚合 provider 模型；provider 模型列表请使用 `GET /dashscope/v1/models`。
   - `enabled`：可选，若省略则默认为 `true`。
@@ -271,7 +261,7 @@ Copilot API 现在使用子命令结构，主要命令包括：
     - `supportPdf`：可选，控制该模型是否支持 PDF/document content。默认 `false`，不支持时会把 PDF 转成提示文本；设为 `true` 时会把 PDF/document 转成 OpenAI Chat Completions 的 file part。
     - `toolContentSupportType`：可选，配置该模型的 tool result content 支持能力，值为 `array`、`image`、`pdf` 的数组。provider 侧未配置时默认只发送 string tool content。若 `supportPdf` 为 `true` 但这里不包含 `pdf`，tool result 里的 file part 会被转成 user role 消息。Copilot 主链路不使用这个 provider 默认，仍按 array + image 且不支持 PDF 的能力处理。
 - **smallModel：** 无工具预热消息的回退模型（例如 Claude Code 的探测请求）；默认是 `gpt-5-mini`。
-- **responsesApiContextManagementModels：** 需要启用 Responses API `context_management` 压缩指令的 GPT 模型 ID 列表。默认是 `[]`，需要你显式开启。一个不错的起点是 `["gpt-5-mini", "gpt-5.3-codex", "gpt-5.4-mini", "gpt-5.4"]`。启用后，请求体会带上 `context_management`，并在后续轮次中仅保留最新的压缩承载内容。实际压缩由服务端完成，看起来会在 usage 接近模型 `maxPromptTokens` 的约 90% 时开始，因此特别适合长任务场景。实践中 `compact_threshold` 似乎也是服务端固定的，所以在本项目中修改它目前不会改变压缩行为。当前该优化仅面向 GPT 系模型。
+- **useResponsesApiContextManagement：** 当为 `true` 时，代理会为 Responses API 附加 `context_management` 压缩指令。默认值为 `true`。如需全局关闭，可设为 `false`。启用后，请求体会带上 `context_management`，并在后续轮次中仅保留最新的压缩承载内容，因此特别适合长任务场景。
 - **modelReasoningEfforts：** 按模型配置发送到 Copilot Responses API 的 `reasoning.effort`。可选值包括 `none`、`minimal`、`low`、`medium`、`high` 和 `xhigh`。若某模型未配置，则默认使用 `high`。
 - **useMessagesApi：** 当为 `true` 时，支持 Copilot 原生 `/v1/messages` 的 Claude 系模型会走 Messages API；否则回退到 `/chat/completions`。设为 `false` 可禁用 Messages API 路由，始终使用 `/chat/completions`。默认值为 `true`。
 - **useResponsesApiWebSocket：** 当为 `true` 时，Responses API 请求会优先对声明了 `ws:/responses` 的模型使用 Copilot websocket transport；仅声明 `/responses` 的模型仍走 HTTP。设为 `false` 可禁用 websocket 路由，并在模型支持 `/responses` 时使用 HTTP `/responses`。默认值为 `true`。
@@ -524,14 +514,14 @@ npx @jeffreycao/copilot-api@latest --oauth-app=opencode start
             "output": ["text"]
           },
           "limit": {
-            "context": 272000,
+            "context": 300000,
             "output": 128000
           }
         },
         "gpt-5-mini": {
           "name": "gpt-5-mini",
           "limit": {
-            "context": 128000,
+            "context": 200000,
             "output": 64000
           }
         },
@@ -543,7 +533,7 @@ npx @jeffreycao/copilot-api@latest --oauth-app=opencode start
             "output": ["text"]
           },
           "limit": {
-            "context": 128000,
+            "context": 200000,
             "output": 32000
           },
           "options": {

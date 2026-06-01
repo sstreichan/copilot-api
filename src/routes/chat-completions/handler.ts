@@ -3,6 +3,7 @@ import type { Context } from "hono"
 import { streamSSE, type SSEMessage } from "hono/streaming"
 
 import { awaitApproval } from "~/lib/approval"
+import { resolveMappedModel } from "~/lib/config"
 import {
   createHandlerLogger,
   debugJson,
@@ -33,9 +34,17 @@ import {
 const logger = createHandlerLogger("chat-completions-handler")
 
 export async function handleCompletion(c: Context) {
+  let payload = await c.req.json<ChatCompletionsPayload>()
+  const requestedModel = payload.model
+  payload.model = resolveMappedModel(payload.model)
+  if (payload.model !== requestedModel) {
+    logger.debug(
+      `Resolved model mapping: ${requestedModel} -> ${payload.model}`,
+    )
+  }
+
   await checkRateLimit(state)
 
-  let payload = await c.req.json<ChatCompletionsPayload>()
   debugJsonTail(logger, "Request payload:", { value: payload, tailLength: 400 })
 
   // Find the selected model

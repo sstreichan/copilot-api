@@ -10,7 +10,9 @@ import {
   getConfig as getConfiguredConfig,
   isResponsesApiWebSearchEnabled as isConfiguredResponsesApiWebSearchEnabled,
   resolveEffortForLog,
+  resolveMappedModel,
 } from "~/lib/config"
+import { HTTPError } from "~/lib/error"
 import {
   colorizeModel,
   createHandlerLogger,
@@ -38,6 +40,7 @@ import {
   normalizeResponsesUsage,
   type UsageTokens,
 } from "~/lib/token-usage"
+import type { SubagentMarker } from "~/lib/subagent"
 import {
   generateRequestIdFromPayload,
   getRootSessionIdFromResponsesPayload,
@@ -57,7 +60,6 @@ import {
   type ResponsesResult,
   type ResponseStreamEvent,
 } from "~/services/copilot/create-responses"
-import { HTTPError } from "~/lib/error"
 
 import type { AnthropicStreamEventData } from "../messages/anthropic-types"
 
@@ -109,6 +111,7 @@ type CopilotResponsesContext = {
   requestId: string
   sessionId: string
   recordUsage: ResponsesUsageRecorder
+  subagentMarker: SubagentMarker | null
 }
 export const responsesHandlerDependencies = {
   checkRateLimit: checkConfiguredRateLimit,
@@ -119,6 +122,13 @@ export const responsesHandlerDependencies = {
 
 export const handleResponses = async (c: Context) => {
   const payload = await c.req.json<ResponsesPayload>()
+  const requestedModel = payload.model
+  payload.model = resolveMappedModel(payload.model)
+  if (payload.model !== requestedModel) {
+    logger.debug(
+      `Resolved model mapping: ${requestedModel} -> ${payload.model}`,
+    )
+  }
 
   const providerModelAlias = parseProviderModelAlias(payload.model)
   if (providerModelAlias) {
@@ -137,21 +147,33 @@ export const handleResponses = async (c: Context) => {
     payload.prompt_cache_key = stableSessionKey
   }
 
+  const subagentMarker = getCodexResponsesSubagentMarker(c)
+  if (subagentMarker) {
+    debugJson(logger, "Detected Codex subagent headers:", subagentMarker)
+  }
+
   const rootSessionId = getRootSessionIdFromResponsesPayload(payload, c)
   logger.debug("Extracted root session ID:", rootSessionId)
 
+  const incomingSessionId =
+    subagentMarker ? getIncomingResponsesSessionId(c) : undefined
+
+  // subagent 的 incoming session（裸 header 值）需经 getUUID 规整；否则用
+  // dev 的 rootSessionId（getRootSessionIdFromResponsesPayload 内部已 getUUID）
+  const sessionSeed =
+    incomingSessionId ? getUUID(incomingSessionId) : rootSessionId
   const requestId = generateRequestIdFromPayload(
     { messages: payload.input },
-    rootSessionId,
+    sessionSeed,
   )
   logger.debug("Generated request ID:", requestId)
 
-  const sessionId = rootSessionId ?? getUUID(requestId)
-  logger.debug("Extracted session ID:", sessionId)
-
+  const fallbackSessionId = sessionSeed ?? getUUID(requestId)
+  logger.debug("Extracted session ID:", fallbackSessionId)
+  const sessionId = fallbackSessionId
   const recordUsage = createCopilotTokenUsageRecorder({
     endpoint: "responses",
-    fallbackSessionId: sessionId,
+    fallbackSessionId,
     model: payload.model,
   })
 
@@ -197,6 +219,7 @@ export const handleResponses = async (c: Context) => {
       requestId,
       sessionId,
       recordUsage,
+      subagentMarker,
     })
   }
 
@@ -422,6 +445,7 @@ const handleWithCopilotResponses = async ({
   requestId,
   sessionId,
   recordUsage,
+  subagentMarker,
 }: CopilotResponsesContext) => {
   const sanitizedImageCount = sanitizeOversizedInputImages(
     payload,
@@ -440,7 +464,9 @@ const handleWithCopilotResponses = async ({
 
   debugJson(logger, "Translated Responses payload:", payload)
 
-  const { vision, initiator } = getResponsesRequestOptions(payload)
+  const { vision, initiator: inferredInitiator } =
+    getResponsesRequestOptions(payload)
+  const initiator = subagentMarker ? "agent" : inferredInitiator
   const transport = getResponsesTransportForModel(selectedModel, {}) ?? "http"
 
   const effortForLog = ensureReasoningEffort(payload)
@@ -456,8 +482,9 @@ const handleWithCopilotResponses = async ({
   const responseOptions = {
     vision,
     initiator,
+    subagentMarker,
     requestId,
-    sessionId: sessionId,
+    sessionId,
     transport,
   }
   let response: Awaited<ReturnType<typeof createResponses>>
@@ -787,3 +814,40 @@ const extractAnthropicSSEData = (rawEvent: string): string => {
 
 const parseAnthropicSSEData = (data: string): AnthropicStreamEventData =>
   JSON.parse(data) as AnthropicStreamEventData
+
+const getIncomingResponsesSessionId = (c: Context): string | undefined =>
+  getTrimmedHeader(c, "session-id") ?? getTrimmedHeader(c, "x-session-id")
+
+const codexSubagentHeaderValues = new Set([
+  "collab_spawn",
+  "compact",
+  "memory_consolidation",
+  "review",
+])
+
+const getCodexResponsesSubagentMarker = (c: Context): SubagentMarker | null => {
+  const agentType = getTrimmedHeader(c, "x-openai-subagent")
+  if (!agentType || !codexSubagentHeaderValues.has(agentType)) {
+    return null
+  }
+
+  const threadId = getTrimmedHeader(c, "thread-id")
+  const rootSessionId = getIncomingResponsesSessionId(c)
+  const parentThreadId = getTrimmedHeader(c, "x-codex-parent-thread-id")
+  if (!threadId && !rootSessionId && !parentThreadId) {
+    return null
+  }
+
+  const agentId = threadId ?? parentThreadId ?? rootSessionId ?? agentType
+
+  return {
+    agent_id: agentId,
+    agent_type: agentType,
+    session_id: threadId ?? rootSessionId ?? agentId,
+  }
+}
+
+const getTrimmedHeader = (c: Context, name: string): string | undefined => {
+  const value = c.req.header(name)?.trim()
+  return value || undefined
+}

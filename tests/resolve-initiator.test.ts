@@ -93,7 +93,7 @@ describe("resolveInitiatorWithSmartAgent", () => {
 
     clearSmartAgentCache()
 
-    const result = await resolveInitiatorWithSmartAgent("user")
+    const result = await resolveInitiatorWithSmartAgent("user", earlyMonth)
     expect(result.initiator).toBe("user")
     expect(result.decision?.forceAgent).toBe(false)
   })

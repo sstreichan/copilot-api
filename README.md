@@ -16,9 +16,7 @@ English | [简体中文](./README.zh-CN.md)
 >
 > 3. **Built-in `codex` provider:** Run `npx @jeffreycao/copilot-api@latest auth login --provider codex` once and the gateway will persist and refresh Codex OAuth credentials automatically.
 >
-> 4. **Disable multi agent when using codex:** If you're using codex via GitHub Copilot, disable multi agent. Copilot currently charges codex traffic based on whether the last message is a user role, and that billing logic has not been adjusted.
->
-> 5. **Note:** See [GitHub Copilot Security Notice](./NOTICE.md#github-copilot-security-notice) for the warning removed from the README header.
+> 4. **Note:** See [GitHub Copilot Security Notice](./NOTICE.md#github-copilot-security-notice) for the warning removed from the README header.
 
 ---
 
@@ -94,7 +92,7 @@ https://github.com/caozhiyuan/copilot-api/releases
 
 Download the installer for your platform, sign in inside the app, choose a port, start the server, then point your client at the local endpoint shown in the app. Packaged desktop builds use the bundled Electron runtime, so normal desktop usage does not require installing Node.js separately. Token usage history is enabled when that bundled runtime supports SQLite.
 
-The desktop app's Advanced Config page reads and writes model mappings through `GET/POST /admin/config/model-mappings`. It uses `auth.adminApiKey` instead of the regular `auth.apiKeys`, and the app reads that key directly from `config.json` after the server has generated it on startup.
+The desktop app's Advanced Config page reads and writes the shared model mappings through `GET/POST /admin/config/model-mappings`. The same mappings apply across `POST /v1/messages`, `POST /v1/messages/count_tokens`, `POST /v1/responses`, and `POST /v1/chat/completions` instead of being split per interface. It uses `auth.adminApiKey` instead of the regular `auth.apiKeys`, and the app reads that key directly from `config.json` after the server has generated it on startup.
 
 ### Desktop App Screenshots
 
@@ -195,14 +193,7 @@ The following command line options are available for the `start` command:
         "enabled": true,
         "baseUrl": "your-base-url",
         "apiKey": "sk-your-provider-key",
-        "authType": "x-api-key",
-        "adjustInputTokens": false,
-        "models": {
-          "kimi-k2.5": {
-            "temperature": 1,
-            "topP": 0.95
-          }
-        }
+        "authType": "x-api-key"
       },
       "dashscope": {
         "type": "openai-compatible",
@@ -216,8 +207,7 @@ The following command line options are available for the `start` command:
             "topK": 20,
             "extraBody": {
               "preserve_thinking": true
-            },
-            "contextCache": true
+            }
           },
           "glm-5.1": {
             "temperature": 0.7,
@@ -238,7 +228,7 @@ The following command line options are available for the `start` command:
       "gpt-5.4": "<built-in commentary prompt>"
     },
     "smallModel": "gpt-5-mini",
-    "responsesApiContextManagementModels": [],
+    "useResponsesApiContextManagement": true,
     "modelReasoningEfforts": {
       "gpt-5-mini": "low",
       "gpt-5.3-codex": "xhigh",
@@ -252,7 +242,7 @@ The following command line options are available for the `start` command:
   ```
 - **auth.apiKeys:** API keys used for request authentication on non-admin routes. Supports multiple keys for rotation. Requests can authenticate with either `x-api-key: <key>` or `Authorization: Bearer <key>`. If empty or omitted, authentication for non-admin routes is disabled.
 - **auth.adminApiKey:** Single admin key used only for `/admin/*` routes. If missing, the server generates a random key at startup and writes it back to `config.json`. Requests use the same `x-api-key` or `Authorization: Bearer` headers, but regular `auth.apiKeys` never grant access to `/admin/*`.
-- **modelMappings:** Exact `sourceModel -> targetModel` rewrites for top-level `POST /v1/messages` and `POST /v1/messages/count_tokens` requests. Omit it or leave it as `{}` to disable rewrites. Both the source and target must be non-empty strings. Targets can be regular model IDs or `provider/model` aliases such as `dashscope/qwen3.6-plus`, and the rewrite happens before provider alias parsing. The admin endpoints `GET/POST /admin/config/model-mappings` read and update only this field.
+- **modelMappings:** Exact `sourceModel -> targetModel` rewrites shared by top-level `POST /v1/messages`, `POST /v1/messages/count_tokens`, `POST /v1/responses`, and `POST /v1/chat/completions` requests. Omit it or leave it as `{}` to disable rewrites. Both the source and target must be non-empty strings. Targets can be regular model IDs or `provider/model` aliases such as `dashscope/qwen3.6-plus`, and the rewrite happens before provider alias parsing. These mappings are not split per interface. The admin endpoints `GET/POST /admin/config/model-mappings` read and update only this field.
 - **extraPrompts:** Map of `model -> prompt` appended to the first system prompt when translating Anthropic-style requests to Copilot. Use this to inject guardrails or guidance per model. Missing default entries are auto-added without overwriting your custom prompts. The built-in prompts for `gpt-5.3-codex` and `gpt-5.4` enable phase-aware commentary, which lets the model emit a short user-facing progress update before tools or deeper reasoning.
 - **providers:** Global upstream provider map. Each provider key (for example `dashscope`) becomes a route prefix (`/dashscope/v1/messages`). Supports `type: "anthropic"`, `type: "openai-compatible"`, and `type: "openai-responses"`. Top-level clients can also use `model: "dashscope/model-id"` with `/v1/messages`, `/v1/messages/count_tokens`, and `/v1/responses`; the gateway strips the `dashscope/` prefix before forwarding upstream. `GET /v1/models` does not aggregate provider models; use `GET /dashscope/v1/models` for provider model lists.
   - `enabled` defaults to `true` if omitted.
@@ -269,7 +259,7 @@ The following command line options are available for the `start` command:
     - `supportPdf` (optional): Controls whether the model supports PDF/document content. Defaults to `false`; unsupported PDFs are converted to a text notice. Set it to `true` to send PDF/document blocks as OpenAI Chat Completions file parts.
     - `toolContentSupportType` (optional): Tool result content capabilities for that model, as an array of `array`, `image`, and `pdf`. Provider routes default to string-only tool content when omitted. If `supportPdf` is `true` but this list does not include `pdf`, file parts in tool results are moved to user role messages. This provider default does not change the Copilot main flow, which continues to support array + image and not PDF.
 - **smallModel:** Fallback model used for tool-less warmup messages (e.g., Claude Code probe requests); defaults to gpt-5-mini.
-- **responsesApiContextManagementModels:** List of GPT model IDs that should receive Responses API `context_management` compaction instructions. This defaults to `[]`, so you need to opt in explicitly. A good starting point is `["gpt-5-mini", "gpt-5.3-codex", "gpt-5.4-mini", "gpt-5.4"]`. When enabled, the request includes `context_management` in the body and keeps only the latest compaction carrier on follow-up turns. The actual compaction is handled server-side and appears to begin when usage approaches roughly 90% of the model's `maxPromptTokens`, which makes it especially useful for long-running tasks. In practice, the effective `compact_threshold` also appears to be fixed on the server side, so changing it in this project does not currently alter compaction behavior. At the moment, this optimization is intended for GPT-family models only.
+- **useResponsesApiContextManagement:** When `true`, the proxy adds Responses API `context_management` compaction instructions. Defaults to `true`. Set it to `false` to disable this globally. When enabled, the request includes `context_management` in the body and keeps only the latest compaction carrier on follow-up turns. This is especially useful for long-running tasks.
 - **modelReasoningEfforts:** Per-model `reasoning.effort` sent to the Copilot Responses API. Allowed values are `none`, `minimal`, `low`, `medium`, `high`, and `xhigh`. If a model isn’t listed, `high` is used by default.
 - **useMessagesApi:** When `true`, Claude-family models that support Copilot's native `/v1/messages` endpoint will use the Messages API; otherwise they fall back to `/chat/completions`. Set to `false` to disable Messages API routing and always use `/chat/completions`. Defaults to `true`.
 - **useResponsesApiWebSocket:** When `true`, Responses API requests use Copilot's websocket transport for models that advertise `ws:/responses`; models that only advertise `/responses` continue to use HTTP. Set to `false` to disable websocket routing and use HTTP `/responses` whenever the selected model supports it. Defaults to `true`.
@@ -520,14 +510,14 @@ Example `~/.config/opencode/opencode.json`:
             "output": ["text"]
           },
           "limit": {
-            "context": 272000,
+            "context": 300000,
             "output": 128000
           }
         },
         "gpt-5-mini": {
           "name": "gpt-5-mini",
           "limit": {
-            "context": 128000,
+            "context": 200000,
             "output": 64000
           }
         },
@@ -539,7 +529,7 @@ Example `~/.config/opencode/opencode.json`:
             "output": ["text"]
           },          
           "limit": {
-            "context": 128000,
+            "context": 200000,
             "output": 32000
           },
           "options": {

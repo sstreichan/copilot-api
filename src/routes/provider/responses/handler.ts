@@ -13,7 +13,10 @@ import {
   normalizeResponsesUsage,
   type UsageTokens,
 } from "~/lib/token-usage"
-import { applyResponsesApiContextManagement } from "~/routes/responses/utils"
+import {
+  applyResponsesApiContextManagement,
+  compactInputByLatestCompaction,
+} from "~/routes/responses/utils"
 import type {
   ResponsesPayload,
   ResponsesResult,
@@ -60,13 +63,16 @@ export async function handleProviderResponsesForProvider(
     : undefined
 
   const maxPromptTokens = model?.capabilities.limits.max_prompt_tokens ?? 0
-  applyResponsesApiContextManagement(payload, maxPromptTokens)
+  // Smaller than the client compaction threshold, use server-side compaction to maintain cache hit rate
+  applyResponsesApiContextManagement(payload, maxPromptTokens, 0.8)
 
   const contextManagement = payload.context_management
   debugJson(logger, "Translated Responses request payload:", {
     contextManagement,
     provider,
   })
+
+  compactInputByLatestCompaction(payload)
 
   if (providerConfig.name === "codex") {
     const upstreamResponse = await forwardCodexResponses(

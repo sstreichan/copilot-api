@@ -1,6 +1,10 @@
 import type {
   ResponseContextManagementCompactionItem,
+  ResponseFunctionCallOutputItem,
+  ResponseInputContent,
+  ResponseInputImage,
   ResponseInputItem,
+  ResponseInputMessage,
   ResponseInputReasoning,
   ResponsesPayload,
   ResponsesTransport,
@@ -8,16 +12,17 @@ import type {
 
 import { COMPACT_REQUEST, type CompactType } from "~/lib/compact"
 import {
-  isResponsesApiContextManagementModel as isConfiguredResponsesApiContextManagementModel,
+  isResponsesApiContextManagementEnabled as isConfiguredResponsesApiContextManagementEnabled,
   isResponsesApiWebSocketEnabled as isConfiguredResponsesApiWebSocketEnabled,
 } from "~/lib/config"
 
 export const RESPONSES_ENDPOINT = "/responses"
 export const RESPONSES_WS_ENDPOINT = "ws:/responses"
+export const DEFAULT_RESPONSES_COMPACT_THRESHOLD_RATIO = 0.9
 
 export const responsesUtilsDependencies = {
-  isResponsesApiContextManagementModel:
-    isConfiguredResponsesApiContextManagementModel,
+  isResponsesApiContextManagementEnabled:
+    isConfiguredResponsesApiContextManagementEnabled,
   isResponsesApiWebSocketEnabled: isConfiguredResponsesApiWebSocketEnabled,
 }
 
@@ -79,8 +84,6 @@ export const hasVisionInput = (payload: ResponsesPayload): boolean => {
 }
 
 const DATA_URL_PREFIX = "data:"
-const BASE64_MARKER = ";base64,"
-const IMAGE_MEDIA_TYPE_PATTERN = /^image\/[a-zA-Z0-9.+-]+$/
 // Static 96x32 PNG reading "Image too large / Redacted".
 const REDACTED_IMAGE_PLACEHOLDER_DATA_URL =
   "data:image/png;base64,"
@@ -111,136 +114,157 @@ export const sanitizeOversizedInputImages = (
       maxPromptImageSize
     : undefined
 
-  if (!payload.input) {
+  if (limit === undefined || !Array.isArray(payload.input)) {
     return 0
   }
 
-  let count = 0
-  for (const image of collectInputImageDataUrls(payload.input)) {
-    if (limit !== undefined && image.decodedBytes > limit) {
-      replaceInputImageWithPlaceholder(image)
-      count += 1
-    }
-  }
-
-  return count
+  return sanitizeInputImages(
+    payload.input,
+    (image) => image.decodedBytes > limit,
+  )
 }
 
 export const sanitizeAllInputImages = (payload: ResponsesPayload): number => {
-  if (!payload.input) {
+  if (!Array.isArray(payload.input)) {
     return 0
   }
 
-  let count = 0
-  for (const image of collectInputImageDataUrls(payload.input)) {
-    replaceInputImageWithPlaceholder(image)
-    count += 1
-  }
-  return count
+  return sanitizeInputImages(payload.input, () => true)
 }
 
 interface InputImageDataUrl {
   decodedBytes: number
-  mediaType: string
-  record: Record<string, unknown>
+  record: ResponseInputImage
+}
+
+const sanitizeInputImages = (
+  input: Array<ResponseInputItem>,
+  shouldReplace: (image: InputImageDataUrl) => boolean,
+): number => {
+  let count = 0
+  for (const image of collectInputImageDataUrls(input)) {
+    if (!shouldReplace(image)) {
+      continue
+    }
+
+    replaceInputImageWithPlaceholder(image)
+    count += 1
+  }
+
+  return count
 }
 
 const collectInputImageDataUrls = (
-  value: unknown,
+  input: Array<ResponseInputItem>,
   images: Array<InputImageDataUrl> = [],
 ): Array<InputImageDataUrl> => {
-  if (!value) {
-    return images
+  for (const item of input) {
+    collectInputItemImageDataUrls(item, images)
   }
 
-  if (Array.isArray(value)) {
-    for (const entry of value) {
-      collectInputImageDataUrls(entry, images)
-    }
-    return images
-  }
-
-  if (typeof value !== "object") {
-    return images
-  }
-
-  const record = value as Record<string, unknown>
-  const image = getInputImageDataUrl(record)
-  if (image) {
-    images.push(image)
-    return images
-  }
-
-  for (const key of Object.keys(record)) {
-    collectInputImageDataUrls(record[key], images)
-  }
   return images
 }
 
-const getInputImageDataUrl = (
-  record: Record<string, unknown>,
-): InputImageDataUrl | null => {
-  const type =
-    typeof record.type === "string" ? record.type.toLowerCase() : undefined
-  if (type !== "input_image" || typeof record.image_url !== "string") {
-    return null
-  }
-
-  const imageUrl = record.image_url
-  const base64MarkerIndex = imageUrl.indexOf(BASE64_MARKER)
-  if (
-    !imageUrl.startsWith(DATA_URL_PREFIX)
-    || base64MarkerIndex <= DATA_URL_PREFIX.length
-  ) {
-    return null
-  }
-
-  const mediaType = imageUrl.slice(DATA_URL_PREFIX.length, base64MarkerIndex)
-  if (!IMAGE_MEDIA_TYPE_PATTERN.test(mediaType)) {
-    return null
-  }
-
-  const decodedBytes = getBase64DecodedByteLength(
-    imageUrl,
-    base64MarkerIndex + BASE64_MARKER.length,
-  )
-
-  return {
-    decodedBytes,
-    mediaType,
-    record,
+const collectInputItemImageDataUrls = (
+  item: ResponseInputItem,
+  images: Array<InputImageDataUrl>,
+): void => {
+  if (isResponseInputMessage(item)) {
+    collectContentImageDataUrls(item.content, images)
+  } else if (isResponseFunctionCallOutputItem(item)) {
+    collectContentImageDataUrls(item.output, images)
   }
 }
 
-const getBase64DecodedByteLength = (
-  value: string,
-  base64Start: number,
-): number => {
-  const base64Length = value.length - base64Start
-  const padding =
-    value.endsWith("==") ? 2
-    : value.endsWith("=") ? 1
-    : 0
+const collectContentImageDataUrls = (
+  content: string | Array<ResponseInputContent> | undefined,
+  images: Array<InputImageDataUrl>,
+): void => {
+  if (!Array.isArray(content)) {
+    return
+  }
 
-  return Math.max(0, Math.floor((base64Length * 3) / 4) - padding)
+  for (const block of content) {
+    const image = getInputImageDataUrl(block)
+    if (image) {
+      images.push(image)
+    }
+  }
+}
+
+const getInputImageDataUrl = (
+  content: ResponseInputContent,
+): InputImageDataUrl | null => {
+  if (!isResponseInputImage(content) || typeof content.image_url !== "string") {
+    return null
+  }
+
+  const imageUrl = content.image_url
+  if (!imageUrl.startsWith(DATA_URL_PREFIX)) {
+    return null
+  }
+
+  const decodedBytes = estimateDataUrlByteLength(imageUrl)
+
+  return {
+    decodedBytes,
+    record: content,
+  }
+}
+
+const estimateDataUrlByteLength = (value: string): number => {
+  return Math.max(0, Math.floor((value.length * 3) / 4))
 }
 
 const replaceInputImageWithPlaceholder = (image: InputImageDataUrl): void => {
   image.record.type = "input_image"
   image.record.image_url = REDACTED_IMAGE_PLACEHOLDER_DATA_URL
   image.record.detail = "low"
-  delete image.record.text
   delete image.record.file_id
+}
+
+const isResponseInputMessage = (
+  item: ResponseInputItem,
+): item is ResponseInputMessage => {
+  return (
+    typeof item === "object"
+    && item !== null
+    && "role" in item
+    && typeof item.role === "string"
+  )
+}
+
+const isResponseFunctionCallOutputItem = (
+  item: ResponseInputItem,
+): item is ResponseFunctionCallOutputItem => {
+  return (
+    typeof item === "object"
+    && item !== null
+    && "type" in item
+    && item.type === "function_call_output"
+  )
+}
+
+const isResponseInputImage = (
+  content: ResponseInputContent,
+): content is ResponseInputImage => {
+  return (
+    typeof content === "object"
+    && content !== null
+    && "type" in content
+    && content.type === "input_image"
+  )
 }
 
 export const resolveResponsesCompactThreshold = (
   maxPromptTokens?: number,
+  compactThresholdRatio = DEFAULT_RESPONSES_COMPACT_THRESHOLD_RATIO,
 ): number => {
   if (typeof maxPromptTokens === "number" && maxPromptTokens > 0) {
-    return Math.floor(maxPromptTokens * 0.9)
+    return Math.floor(maxPromptTokens * compactThresholdRatio)
   }
 
-  return 50000
+  return 200_000 * compactThresholdRatio
 }
 
 const createCompactionContextManagement = (
@@ -255,21 +279,18 @@ const createCompactionContextManagement = (
 export const applyResponsesApiContextManagement = (
   payload: ResponsesPayload,
   maxPromptTokens?: number,
+  compactThresholdRatio = DEFAULT_RESPONSES_COMPACT_THRESHOLD_RATIO,
 ): void => {
   if (payload.context_management !== undefined) {
     return
   }
 
-  if (
-    !responsesUtilsDependencies.isResponsesApiContextManagementModel(
-      payload.model,
-    )
-  ) {
+  if (!responsesUtilsDependencies.isResponsesApiContextManagementEnabled()) {
     return
   }
 
   payload.context_management = createCompactionContextManagement(
-    resolveResponsesCompactThreshold(maxPromptTokens),
+    resolveResponsesCompactThreshold(maxPromptTokens, compactThresholdRatio),
   )
 }
 
