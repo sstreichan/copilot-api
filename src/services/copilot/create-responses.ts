@@ -372,6 +372,10 @@ export interface ResponseErrorEvent {
   param: string | null
   sequence_number: number
   type: "error"
+  error?: {
+    code: string | null
+    message: string
+  }
 }
 
 export interface ResponseFunctionCallArgumentsDeltaEvent {
@@ -450,6 +454,12 @@ export interface ResponseTextDoneEvent {
 export type ResponsesStream = ReturnType<typeof events>
 export type CreateResponsesReturn = ResponsesResult | ResponsesStream
 export type ResponsesTransport = "http" | "websocket"
+
+type ResponsesStreamChunk = {
+  data?: string
+  event?: string
+  id?: string | number
+}
 
 interface ResponsesRequestOptions {
   vision: boolean
@@ -698,14 +708,26 @@ export const getResponsesWebSocketInitiator = (
 const createPooledResponsesWebSocketStream = (
   request: ResponsesWebSocketRequest,
 ): ResponsesStream =>
-  createPooledWebSocketStream(request, {
-    createChunk: createResponsesWebSocketStreamChunk,
-    isTerminalChunk: isTerminalResponsesStreamChunk,
-    openErrorMessage: "Failed to create responses websocket",
-    streamErrorMessage: "Responses websocket stream error",
-    terminalChunkMissingMessage:
-      "Responses websocket ended without a terminal response",
-  }) as ResponsesStream
+  createResponsesSafeStream(
+    createPooledWebSocketStream(request, {
+      createChunk: createResponsesWebSocketStreamChunk,
+      isTerminalChunk: isTerminalResponsesStreamChunk,
+      openErrorMessage: "Failed to create responses websocket",
+      streamErrorMessage: "Responses websocket stream error",
+      terminalChunkMissingMessage:
+        "Responses websocket ended without a terminal response",
+    }),
+  )
+
+const createResponsesSafeStream = async function* (
+  source: AsyncIterable<ResponsesStreamChunk>,
+): AsyncGenerator<ResponsesStreamChunk, void, unknown> {
+  try {
+    yield* source
+  } catch (error) {
+    yield createResponsesErrorServerSentEventChunk(getErrorMessage(error))
+  }
+}
 
 export const buildResponsesWebSocketPayload = (
   payload: ResponsesPayload,
@@ -754,9 +776,19 @@ const createResponsesWebSocketStreamChunk = (
       copilot_quota_snapshots?: Record<string, CopilotQuotaSnapshot>
       id?: unknown
       type?: unknown
+      error?: {
+        code: string | null
+        message: string
+      }
+      code?: string | null
+      message?: string
     }
     if (parsed.type === "response.completed") {
       logCopilotQuotaSnapshots(parsed.copilot_quota_snapshots)
+    }
+    if (parsed.type === "error" && parsed.error) {
+      parsed.code = parsed.error.code
+      parsed.message = parsed.error.message
     }
     return {
       data: JSON.stringify(parsed),
@@ -784,4 +816,29 @@ const isTerminalResponsesStreamChunk = (chunk: { data?: string }): boolean => {
   } catch {
     return false
   }
+}
+
+const createResponsesErrorServerSentEventChunk = (
+  message: string,
+): ResponsesStreamChunk => {
+  const errorEvent: ResponseErrorEvent = {
+    code: null,
+    message,
+    param: null,
+    sequence_number: 0,
+    type: "error",
+  }
+
+  return {
+    data: JSON.stringify(errorEvent),
+    event: errorEvent.type,
+  }
+}
+
+const getErrorMessage = (error: unknown): string => {
+  if (error instanceof Error && error.message) {
+    return error.message
+  }
+
+  return String(error)
 }
