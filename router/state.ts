@@ -16,7 +16,7 @@ const DEFAULT_ENCODER = new TextEncoder()
 
 export const DEFAULT_HISTORY_LIMIT = 200
 export const DEFAULT_SSE_RETRY_MS = 2000
-export const DEFAULT_INSTANCE_COOLDOWN_MS = 60_000
+export const DEFAULT_INSTANCE_COOLDOWN_MS = 3_600_000 // 60 min: exhausted instance (402/429 w/o Retry-After) stays out long enough to skip dead quota
 
 export interface ProxyContext {
   body: string
@@ -91,6 +91,7 @@ export interface ProxyToOptions {
   logger: (line: string) => void
   fetchImpl?: typeof fetch
   onQuotaSnapshots?: (quotaSnapshots: unknown) => void
+  onQuotaExceeded?: () => void
 }
 
 export interface DashboardHandlerOptions {
@@ -539,8 +540,9 @@ export function getInstanceName(
 function observeResponsesSseQuotaSnapshots(
   body: ReadableStream<Uint8Array> | null,
   onQuotaSnapshots?: (quotaSnapshots: unknown) => void,
+  onQuotaExceeded?: () => void,
 ): ReadableStream<Uint8Array> | null {
-  if (!body || !onQuotaSnapshots) {
+  if (!body || (!onQuotaSnapshots && !onQuotaExceeded)) {
     return body
   }
 
@@ -559,9 +561,19 @@ function observeResponsesSseQuotaSnapshots(
     }
 
     try {
-      const parsed = JSON.parse(data) as { copilot_quota_snapshots?: unknown }
-      if (parsed.copilot_quota_snapshots) {
+      const parsed = JSON.parse(data) as {
+        code?: unknown
+        error?: { code?: unknown }
+        copilot_quota_snapshots?: unknown
+      }
+      if (parsed.copilot_quota_snapshots && onQuotaSnapshots) {
         onQuotaSnapshots(parsed.copilot_quota_snapshots)
+      }
+      if (
+        parsed.code === "quota_exceeded"
+        || parsed.error?.code === "quota_exceeded"
+      ) {
+        onQuotaExceeded?.()
       }
     } catch {
       return
@@ -619,6 +631,7 @@ export async function proxyTo(options: ProxyToOptions): Promise<Response> {
         observeResponsesSseQuotaSnapshots(
           upstream.body,
           options.onQuotaSnapshots,
+          options.onQuotaExceeded,
         )
       : upstream.body
 
@@ -724,22 +737,56 @@ function applyCooldownOnExhaustion(
     model: string
     requestNowMs: number
   },
-) {
+): boolean {
   if (!COOLDOWN_STATUSES.has(proxied.status)) {
-    return
+    return false
   }
 
   // 402 has no Retry-After; falls back to defaultCooldownMs below.
-  const retryAfter = proxied.headers.get("Retry-After")
-  const retryAfterMs = parseRetryAfterMs(retryAfter, params.requestNowMs)
+  applyCooldown(runtime, {
+    ...params,
+    status: proxied.status,
+    retryAfter: proxied.headers.get("Retry-After"),
+  })
+  return true
+}
+
+function applyCooldown(
+  runtime: RouterRuntime,
+  params: {
+    port: number
+    instanceName: string
+    model: string
+    requestNowMs: number
+    status: number
+    retryAfter: string | null
+  },
+) {
+  const retryAfterMs = parseRetryAfterMs(params.retryAfter, params.requestNowMs)
   const cooldownMs = retryAfterMs ?? runtime.defaultCooldownMs
   const cooldownUntilMs = params.requestNowMs + cooldownMs
 
   runtime.state.portCooldownUntil.set(params.port, cooldownUntilMs)
-  runtime.state.portCooldownRetryAfter.set(params.port, retryAfter)
+  runtime.state.portCooldownRetryAfter.set(params.port, params.retryAfter)
   runtime.logger(
-    `cooldown set instance=${params.instanceName}:${params.port} model=${params.model} status=${proxied.status} until=${new Date(cooldownUntilMs).toISOString()} retry-after=${retryAfter || "_"}`,
+    `cooldown set instance=${params.instanceName}:${params.port} model=${params.model} status=${params.status} until=${new Date(cooldownUntilMs).toISOString()} retry-after=${params.retryAfter || "_"}`,
   )
+}
+
+function applyCooldownOnStreamQuotaExceeded(
+  runtime: RouterRuntime,
+  params: {
+    port: number
+    instanceName: string
+    model: string
+    requestNowMs: number
+  },
+) {
+  applyCooldown(runtime, {
+    ...params,
+    status: 402,
+    retryAfter: null,
+  })
 }
 
 function createAllCoolingResponse(
@@ -830,6 +877,13 @@ async function handleNoModelRequest(
     fetchImpl: runtime.fetchImpl,
     onQuotaSnapshots: (quotaSnapshots) =>
       updateUpstreamQuotaSnapshot(runtime.state, port, quotaSnapshots),
+    onQuotaExceeded: () =>
+      applyCooldownOnStreamQuotaExceeded(runtime, {
+        port,
+        instanceName,
+        model: "_",
+        requestNowMs: request.requestNowMs,
+      }),
   })
   applyCooldownOnExhaustion(runtime, proxied, {
     port,
@@ -846,70 +900,89 @@ async function handleModelRequest(
   runtime: RouterRuntime,
   request: RouterRequestContext,
 ): Promise<Response> {
-  const result = pickPort(runtime.state, {
-    sessionId: request.sessionId,
-    agent: request.agent,
-    model: request.model,
-    nowMs: request.requestNowMs,
-  })
+  const modelPorts = runtime.state.modelToPorts.get(request.model) || []
+  const maxAttempts = Math.max(modelPorts.length, 1)
 
-  if (!result) {
-    const modelPorts = runtime.state.modelToPorts.get(request.model) || []
-    const allCoolingResponse = createAllCoolingResponse(runtime, {
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const result = pickPort(runtime.state, {
       sessionId: request.sessionId,
       agent: request.agent,
-      provider: request.provider,
       model: request.model,
-      ports: modelPorts,
-      requestNowMs: request.requestNowMs,
-      error: `all upstream instances are cooling down for model: ${request.model}`,
+      nowMs: request.requestNowMs,
     })
-    if (allCoolingResponse) {
-      return allCoolingResponse
+
+    if (!result) {
+      break
+    }
+
+    const instanceName = getInstanceName(runtime.state, result.port)
+    const routeRecord: RouteRecord = {
+      ts: runtime.now(),
+      sid: request.sessionId || "-",
+      agent: request.agent,
+      model: request.model,
+      provider: request.provider,
+      port: result.port,
+      reason: result.reason,
+      instanceName,
+    }
+    recordRoute(runtime.state, routeRecord)
+    runtime.logger(
+      `sid=${routeRecord.sid} agent=${request.agent} provider=${request.provider} → ${instanceName}:${result.port} model=${request.model} reason=${result.reason}`,
+    )
+
+    const proxied = await proxyTo({
+      port: result.port,
+      context: { body: request.bodyText, req: request.req, url: request.url },
+      logger: runtime.logger,
+      fetchImpl: runtime.fetchImpl,
+      onQuotaSnapshots: (quotaSnapshots) =>
+        updateUpstreamQuotaSnapshot(runtime.state, result.port, quotaSnapshots),
+      onQuotaExceeded: () =>
+        applyCooldownOnStreamQuotaExceeded(runtime, {
+          port: result.port,
+          instanceName,
+          model: request.model,
+          requestNowMs: request.requestNowMs,
+        }),
+    })
+    const exhausted = applyCooldownOnExhaustion(runtime, proxied, {
+      port: result.port,
+      instanceName,
+      model: request.model,
+      requestNowMs: request.requestNowMs,
+    })
+    updateUpstreamHeaderSnapshot(runtime.state, result.port, proxied.headers)
+
+    if (!exhausted) {
+      return proxied
     }
 
     runtime.logger(
-      `NO PORT sid=${request.sessionId || "-"} agent=${request.agent} model=${request.model} provider=${request.provider}`,
-    )
-    return Response.json(
-      { error: `no instance serves model: ${request.model}` },
-      { status: 502 },
+      `retry model=${request.model} after exhausted instance=${instanceName}:${result.port} status=${proxied.status}`,
     )
   }
 
-  const instanceName = getInstanceName(runtime.state, result.port)
-  const routeRecord: RouteRecord = {
-    ts: runtime.now(),
-    sid: request.sessionId || "-",
+  const allCoolingResponse = createAllCoolingResponse(runtime, {
+    sessionId: request.sessionId,
     agent: request.agent,
-    model: request.model,
     provider: request.provider,
-    port: result.port,
-    reason: result.reason,
-    instanceName,
-  }
-  recordRoute(runtime.state, routeRecord)
-  runtime.logger(
-    `sid=${routeRecord.sid} agent=${request.agent} provider=${request.provider} → ${instanceName}:${result.port} model=${request.model} reason=${result.reason}`,
-  )
-
-  const proxied = await proxyTo({
-    port: result.port,
-    context: { body: request.bodyText, req: request.req, url: request.url },
-    logger: runtime.logger,
-    fetchImpl: runtime.fetchImpl,
-    onQuotaSnapshots: (quotaSnapshots) =>
-      updateUpstreamQuotaSnapshot(runtime.state, result.port, quotaSnapshots),
-  })
-  applyCooldownOnExhaustion(runtime, proxied, {
-    port: result.port,
-    instanceName,
     model: request.model,
+    ports: modelPorts,
     requestNowMs: request.requestNowMs,
+    error: `all upstream instances are cooling down for model: ${request.model}`,
   })
-  updateUpstreamHeaderSnapshot(runtime.state, result.port, proxied.headers)
+  if (allCoolingResponse) {
+    return allCoolingResponse
+  }
 
-  return proxied
+  runtime.logger(
+    `NO PORT sid=${request.sessionId || "-"} agent=${request.agent} model=${request.model} provider=${request.provider}`,
+  )
+  return Response.json(
+    { error: `no instance serves model: ${request.model}` },
+    { status: 502 },
+  )
 }
 
 export function createRouterHandler(options: RouterHandlerOptions) {

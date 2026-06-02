@@ -234,7 +234,7 @@ describe("router discovery and proxy helpers", () => {
 
 // eslint-disable-next-line max-lines-per-function
 describe("router handler cooldown semantics", () => {
-  test("router handler cools down instance on upstream 402 quota_exceeded", async () => {
+  test("router handler retries another instance on upstream 402 quota_exceeded", async () => {
     const state = createState()
     state.modelToPorts.set("gpt-4.1", [4141, 4142])
     state.sessionBindings.set("session-1:atlas:gpt-4.1", 4141)
@@ -268,9 +268,10 @@ describe("router handler cooldown semantics", () => {
       }),
     )
 
-    // 402 has no Retry-After → default cooldown applied, instance cooled down.
-    expect(res.status).toBe(402)
+    expect(res.status).toBe(200)
+    expect(await res.text()).toBe("ok")
     expect(state.portCooldownUntil.get(4141)).toBeGreaterThan(fixedNowMs)
+    expect(state.sessionBindings.get("session-1:atlas:gpt-4.1")).toBe(4142)
   })
 
   test("router handler sets cooldown on upstream 429 using Retry-After seconds", async () => {
@@ -313,7 +314,8 @@ describe("router handler cooldown semantics", () => {
       }),
     )
 
-    expect(res.status).toBe(429)
+    expect(res.status).toBe(200)
+    expect(await res.text()).toBe("ok")
     expect(state.portCooldownUntil.get(4141)).toBe(fixedNowMs + 7000)
     expect(state.portCooldownRetryAfter.get(4141)).toBe("7")
     expect(state.portHeaderSnapshots.get(4141)).toEqual({
@@ -459,6 +461,40 @@ describe("router handler cooldown semantics", () => {
     })
   })
 
+  test("router handler cools down instance when 200 SSE stream carries quota_exceeded error", async () => {
+    const state = createState()
+    state.modelToPorts.set("gpt-5.5", [4141])
+    const fixedNowMs = new Date("2026-03-13T00:00:00.000Z").getTime()
+
+    const fetchImpl = createFetchStub(() =>
+      Promise.resolve(
+        new Response(
+          [
+            'event: error\ndata: {"type":"error","error":{"code":"quota_exceeded","message":"You have exceeded your monthly quota"},"code":"quota_exceeded","message":"You have exceeded your monthly quota"}\n\n',
+          ].join(""),
+          {
+            status: 200,
+            headers: { "content-type": "text/event-stream" },
+          },
+        ),
+      ),
+    )
+    const handler = createRouterHandlerForTest({
+      state,
+      fetchImpl,
+      fixedNowMs,
+    })
+
+    const res = await handler(
+      createRouterRequest('{"model":"gpt-5.5","stream":true}'),
+    )
+
+    expect(res.status).toBe(200)
+    expect(await res.text()).toContain("quota_exceeded")
+    expect(state.portCooldownUntil.get(4141)).toBe(fixedNowMs + 3_600_000)
+    expect(state.portCooldownRetryAfter.get(4141)).toBeNull()
+  })
+
   test("router handler returns 503 on nomodel when all instances are cooling", async () => {
     const state = createState()
     const fixedNowMs = new Date("2026-03-13T00:00:00.000Z").getTime()
@@ -509,8 +545,8 @@ describe("router handler cooldown semantics", () => {
 
     const res = await handler(createRouterRequest('{"model":"gpt-4.1"}'))
 
-    expect(res.status).toBe(429)
-    expect(state.portCooldownUntil.get(4141)).toBe(fixedNowMs + 60000)
+    expect(res.status).toBe(503)
+    expect(state.portCooldownUntil.get(4141)).toBe(fixedNowMs + 3600000)
     expect(state.portCooldownRetryAfter.get(4141)).toBe("invalid")
   })
 
@@ -537,7 +573,7 @@ describe("router handler cooldown semantics", () => {
 
     const res = await handler(createRouterRequest('{"model":"gpt-4.1"}'))
 
-    expect(res.status).toBe(429)
+    expect(res.status).toBe(503)
     expect(state.portCooldownUntil.get(4141)).toBe(
       new Date("2026-03-13T00:00:05.000Z").getTime(),
     )
