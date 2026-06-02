@@ -73,6 +73,38 @@
 - usage API 顶层累计 `total_nano_aiu` / `nano_aiu` / `aiu`。
 - 4145 的成功模型响应 AIU 字段，因为该账号本轮返回 402 quota exceeded。
 
+### 2026-06-02 第二轮观察：overage 耗尽后的真实行为
+
+本轮在同一天进行第二次 usage API 查询与真实请求测试，获得 overage 耗尽后的完整状态快照。
+
+**usage API 最新快照：**
+
+| 端口 | entitlement | remaining | percent_remaining | has_quota | overage_permitted | overage_count |
+|---:|---:|---:|---:|---|---|---:|
+| 4142 | 10000 | -92 | 0.0 | false | false | 91 |
+| 4143 | 10000 | -140 | 0.0 | false | false | 139 |
+| 4144 | 10000 | 786 | 7.8 | true | true | 0 |
+
+**真实请求结果（4142 / 4143）：**
+
+- `gpt-5.5` → HTTP 429，body `quota exceeded`
+- `gpt-5.4-mini` → HTTP 429，body `quota exceeded`
+- `gpt-4o`、`gpt-4.1` → HTTP 400，`unsupported_api_for_model`（与 quota 无关，Responses API 不支持这些模型）
+- `x-quota-snapshot-premium_interactions` header：本轮未出现（NOT PRESENT）
+
+**新增结论：**
+
+- **`overage_permitted` 会从 `true` 变成 `false`**：上次观察到 overage\_permitted=true、overage\_count=0；本轮 4142/4143 均已经历 overage 后，overage\_permitted=false，has\_quota=false。说明 overage 不是无限深度，用完后会被关掉。
+- **402 还是 429，由请求头 `X-GitHub-Api-Version` 决定，不是后端随机，也不是代理改写**。同账号同模型 quota 耗尽，实测：
+  - 带 `X-GitHub-Api-Version: 2026-01-09` → **HTTP 402**，body `{"code":"quota_exceeded","message":"You have exceeded your monthly quota"}`
+  - 不带版本头（旧行为）→ **HTTP 429**，body 纯文本 `quota exceeded`
+  - host `business` / `githubcopilot` 不影响此结果；path `/responses` 与 `/v1/responses` 同结果。
+  - copilot-api 在 `src/lib/api-config.ts` 硬编码 `API_VERSION = "2026-01-09"`，故走本地代理永远见 402；早前文档记的 429 是手测时漏带版本头。
+  - `src/lib/error.ts` 的 `forwardError()` 原样透传 status，不改写。402 是真实 backend 给的。
+  - 语义：新 API 版本把 quota 耗尽从「限流 429」重定义为「需付费 402 Payment Required」，与 AI Credits / token billing rollout 一致。
+- **overage 上限仍未知**：4142 在 91 次时关闭、4143 在 139 次时关闭，两值不同，目前无法推断 overage 是固定额度还是 per-account 配置或时序效应。无法从 `copilot_internal/user` 端点读出 overage hard cap。
+- **reset 日期**：4142/4143/4144 均为 `2026-07-01`，届时 remaining/overage\_count 应当重置。
+
 ### 下一轮复测重点
 
 - 等 4142 / 4143 / 4144 任一账号的 `premium_interactions.remaining` 归零后继续发请求，确认是否仍返回 200。

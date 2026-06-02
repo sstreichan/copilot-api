@@ -234,6 +234,45 @@ describe("router discovery and proxy helpers", () => {
 
 // eslint-disable-next-line max-lines-per-function
 describe("router handler cooldown semantics", () => {
+  test("router handler cools down instance on upstream 402 quota_exceeded", async () => {
+    const state = createState()
+    state.modelToPorts.set("gpt-4.1", [4141, 4142])
+    state.sessionBindings.set("session-1:atlas:gpt-4.1", 4141)
+    const fixedNowMs = new Date("2026-03-13T00:00:00.000Z").getTime()
+
+    const fetchImpl = createFetchStub((input) => {
+      const port = new URL(toInputUrl(input)).port
+      if (port === "4141") {
+        return Promise.resolve(
+          new Response(
+            '{"error":{"message":"You have exceeded your monthly quota","code":"quota_exceeded"}}',
+            { status: 402 },
+          ),
+        )
+      }
+      return Promise.resolve(new Response("ok", { status: 200 }))
+    })
+
+    const handler = createRouterHandlerForTest({ state, fetchImpl, fixedNowMs })
+
+    const res = await handler(
+      new Request("http://localhost/v1/messages", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-session-id": "session-1",
+          "x-oc-agent": "atlas",
+          "x-oc-provider": "openai",
+        },
+        body: '{"model":"gpt-4.1"}',
+      }),
+    )
+
+    // 402 has no Retry-After → default cooldown applied, instance cooled down.
+    expect(res.status).toBe(402)
+    expect(state.portCooldownUntil.get(4141)).toBeGreaterThan(fixedNowMs)
+  })
+
   test("router handler sets cooldown on upstream 429 using Retry-After seconds", async () => {
     const state = createState()
     state.modelToPorts.set("gpt-4.1", [4141, 4142])

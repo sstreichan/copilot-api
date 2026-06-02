@@ -710,7 +710,12 @@ function buildRequestContext(params: {
   }
 }
 
-function applyCooldownOn429(
+// 429 = upstream rate-limit, 402 = quota/credit exhausted (new
+// X-GitHub-Api-Version quota_exceeded semantics). Both mean this instance
+// cannot serve now, so cool it down and stop routing here.
+const COOLDOWN_STATUSES = new Set([429, 402])
+
+function applyCooldownOnExhaustion(
   runtime: RouterRuntime,
   proxied: Response,
   params: {
@@ -720,10 +725,11 @@ function applyCooldownOn429(
     requestNowMs: number
   },
 ) {
-  if (proxied.status !== 429) {
+  if (!COOLDOWN_STATUSES.has(proxied.status)) {
     return
   }
 
+  // 402 has no Retry-After; falls back to defaultCooldownMs below.
   const retryAfter = proxied.headers.get("Retry-After")
   const retryAfterMs = parseRetryAfterMs(retryAfter, params.requestNowMs)
   const cooldownMs = retryAfterMs ?? runtime.defaultCooldownMs
@@ -732,7 +738,7 @@ function applyCooldownOn429(
   runtime.state.portCooldownUntil.set(params.port, cooldownUntilMs)
   runtime.state.portCooldownRetryAfter.set(params.port, retryAfter)
   runtime.logger(
-    `cooldown set instance=${params.instanceName}:${params.port} model=${params.model} until=${new Date(cooldownUntilMs).toISOString()} retry-after=${retryAfter || "_"}`,
+    `cooldown set instance=${params.instanceName}:${params.port} model=${params.model} status=${proxied.status} until=${new Date(cooldownUntilMs).toISOString()} retry-after=${retryAfter || "_"}`,
   )
 }
 
@@ -825,7 +831,7 @@ async function handleNoModelRequest(
     onQuotaSnapshots: (quotaSnapshots) =>
       updateUpstreamQuotaSnapshot(runtime.state, port, quotaSnapshots),
   })
-  applyCooldownOn429(runtime, proxied, {
+  applyCooldownOnExhaustion(runtime, proxied, {
     port,
     instanceName,
     model: "_",
@@ -895,7 +901,7 @@ async function handleModelRequest(
     onQuotaSnapshots: (quotaSnapshots) =>
       updateUpstreamQuotaSnapshot(runtime.state, result.port, quotaSnapshots),
   })
-  applyCooldownOn429(runtime, proxied, {
+  applyCooldownOnExhaustion(runtime, proxied, {
     port: result.port,
     instanceName,
     model: request.model,
