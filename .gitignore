@@ -59,3 +59,4 @@ docs/plans/
 # MemPalace per-project files (issue #185)
 mempalace.yaml
 entities.json
+.omo/run-continuation/

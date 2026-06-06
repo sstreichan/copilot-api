@@ -16,7 +16,7 @@ const DEFAULT_ENCODER = new TextEncoder()
 
 export const DEFAULT_HISTORY_LIMIT = 200
 export const DEFAULT_SSE_RETRY_MS = 2000
-export const DEFAULT_INSTANCE_COOLDOWN_MS = 3_600_000 // 60 min: exhausted instance (402/429 w/o Retry-After) stays out long enough to skip dead quota
+export const DEFAULT_INSTANCE_COOLDOWN_MS = 18_000_000 // 300 min (5h): exhausted instance (402/429 w/o Retry-After) stays out long enough to skip dead quota
 
 export interface ProxyContext {
   body: string
@@ -25,6 +25,7 @@ export interface ProxyContext {
 }
 
 export interface RouteRecord {
+  historyId?: string
   ts: string
   sid: string
   agent: string
@@ -33,6 +34,8 @@ export interface RouteRecord {
   port: number
   reason: string
   instanceName: string
+  usage?: Record<string, unknown> | null
+  copilotUsage?: Record<string, unknown> | null
 }
 
 export interface StatusPayload {
@@ -51,6 +54,7 @@ export interface StatusPayload {
   sessionBindings: Record<string, number>
   modelToPorts: Record<string, Array<number>>
   routeHistorySize: number
+  totalNanoAiuSinceStart: number
 }
 
 export interface StickyRouterState {
@@ -67,6 +71,8 @@ export interface StickyRouterState {
   portCooldownUntil: Map<number, number>
   portCooldownRetryAfter: Map<number, string | null>
   portHeaderSnapshots: Map<number, UpstreamHeaderSnapshot>
+  totalNanoAiuSinceStart: number
+  historyNanoById: Map<string, number>
 }
 
 export interface RouterHandlerOptions {
@@ -92,6 +98,10 @@ export interface ProxyToOptions {
   fetchImpl?: typeof fetch
   onQuotaSnapshots?: (quotaSnapshots: unknown) => void
   onQuotaExceeded?: () => void
+  onUsageResolved?: (payload: {
+    usage: Record<string, unknown> | null
+    copilotUsage: Record<string, unknown> | null
+  }) => void
 }
 
 export interface DashboardHandlerOptions {
@@ -122,6 +132,8 @@ export function createStickyRouterState(
     portCooldownUntil: new Map<number, number>(),
     portCooldownRetryAfter: new Map<number, string | null>(),
     portHeaderSnapshots: new Map<number, UpstreamHeaderSnapshot>(),
+    totalNanoAiuSinceStart: 0,
+    historyNanoById: new Map<string, number>(),
   }
 }
 
@@ -290,6 +302,7 @@ export function getStatusPayload(
     sessionBindings: Object.fromEntries(state.sessionBindings),
     modelToPorts: Object.fromEntries(state.modelToPorts),
     routeHistorySize: state.routeHistory.length,
+    totalNanoAiuSinceStart: state.totalNanoAiuSinceStart,
   }
 }
 
@@ -334,6 +347,8 @@ export function recordRoute(
   const historyLimit = options.historyLimit ?? DEFAULT_HISTORY_LIMIT
   const encoder = options.encoder ?? DEFAULT_ENCODER
 
+  record.historyId ??= createHistoryId()
+  state.historyNanoById.set(record.historyId, 0)
   state.routeHistory.push(record)
   if (state.routeHistory.length > historyLimit) {
     state.routeHistory.splice(0, state.routeHistory.length - historyLimit)
@@ -343,16 +358,74 @@ export function recordRoute(
   broadcastSse(state, `data: ${JSON.stringify(record)}\n\n`, encoder)
 }
 
+function createHistoryId(): string {
+  if (
+    typeof globalThis.crypto !== "undefined"
+    && typeof globalThis.crypto.randomUUID === "function"
+  ) {
+    return globalThis.crypto.randomUUID()
+  }
+
+  return `history-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+}
+
+export function updateRouteRecord(
+  state: StickyRouterState,
+  historyId: string | undefined,
+  patch: Pick<RouteRecord, "usage" | "copilotUsage">,
+  encoder = DEFAULT_ENCODER,
+): boolean {
+  if (!historyId) {
+    return false
+  }
+
+  const target = state.routeHistory.find(
+    (entry) => entry.historyId === historyId,
+  )
+  if (!target) {
+    return false
+  }
+
+  target.usage = patch.usage
+  target.copilotUsage = patch.copilotUsage
+
+  const previousNano = state.historyNanoById.get(historyId) ?? 0
+  const nextNano = getTotalNanoAiu(patch.copilotUsage ?? null)
+  state.historyNanoById.set(historyId, nextNano)
+  state.totalNanoAiuSinceStart += nextNano - previousNano
+
+  broadcastSse(
+    state,
+    `event: history_update\ndata: ${JSON.stringify(target)}\n\n`,
+    encoder,
+  )
+  return true
+}
+
 export function clearRouteHistory(
   state: StickyRouterState,
   encoder = DEFAULT_ENCODER,
 ) {
   state.routeHistory.splice(0)
+  state.historyNanoById.clear()
   broadcastSse(
     state,
     `event: reset\ndata: ${JSON.stringify({ target: "history" })}\n\n`,
     encoder,
   )
+}
+
+function getTotalNanoAiu(copilotUsage: Record<string, unknown> | null): number {
+  if (!copilotUsage) {
+    return 0
+  }
+
+  const value = Number(copilotUsage.total_nano_aiu)
+  if (!Number.isFinite(value)) {
+    return 0
+  }
+
+  return value
 }
 
 export function clearSessionBindings(
@@ -537,12 +610,19 @@ export function getInstanceName(
   return state.portToInstance.get(port)?.name || `:${port}`
 }
 
-function observeResponsesSseQuotaSnapshots(
+function observeResponsesSseMetadata(
   body: ReadableStream<Uint8Array> | null,
-  onQuotaSnapshots?: (quotaSnapshots: unknown) => void,
-  onQuotaExceeded?: () => void,
+  callbacks: {
+    onQuotaSnapshots?: (quotaSnapshots: unknown) => void
+    onQuotaExceeded?: () => void
+    onUsageResolved?: (payload: {
+      usage: Record<string, unknown> | null
+      copilotUsage: Record<string, unknown> | null
+    }) => void
+  } = {},
 ): ReadableStream<Uint8Array> | null {
-  if (!body || (!onQuotaSnapshots && !onQuotaExceeded)) {
+  const { onQuotaExceeded, onQuotaSnapshots, onUsageResolved } = callbacks
+  if (!body || (!onQuotaSnapshots && !onQuotaExceeded && !onUsageResolved)) {
     return body
   }
 
@@ -562,12 +642,36 @@ function observeResponsesSseQuotaSnapshots(
 
     try {
       const parsed = JSON.parse(data) as {
+        type?: unknown
         code?: unknown
         error?: { code?: unknown }
         copilot_quota_snapshots?: unknown
+        usage?: unknown
+        copilot_usage?: unknown
+        response?: unknown
       }
       if (parsed.copilot_quota_snapshots && onQuotaSnapshots) {
         onQuotaSnapshots(parsed.copilot_quota_snapshots)
+      }
+      if (
+        (parsed.type === "response.completed"
+          || parsed.type === "message_delta")
+        && onUsageResolved
+      ) {
+        const usage =
+          parsed.type === "message_delta" && isRecord(parsed.usage) ?
+            parsed.usage
+          : isRecord(parsed.response) && isRecord(parsed.response.usage) ?
+            parsed.response.usage
+          : null
+        const copilotUsage =
+          isRecord(parsed.copilot_usage) ? parsed.copilot_usage
+          : (
+            isRecord(parsed.response) && isRecord(parsed.response.copilot_usage)
+          ) ?
+            parsed.response.copilot_usage
+          : null
+        onUsageResolved({ usage, copilotUsage })
       }
       if (
         parsed.code === "quota_exceeded"
@@ -626,13 +730,29 @@ export async function proxyTo(options: ProxyToOptions): Promise<Response> {
       body: req.method !== "GET" && req.method !== "HEAD" ? body : undefined,
     })
 
+    const contentType = upstream.headers.get("content-type") || ""
+    if (contentType.includes("application/json") && options.onUsageResolved) {
+      try {
+        const parsed = await upstream.clone().json()
+        const usage =
+          isRecord(parsed) && isRecord(parsed.usage) ? parsed.usage : null
+        const copilotUsage =
+          isRecord(parsed) && isRecord(parsed.copilot_usage) ?
+            parsed.copilot_usage
+          : null
+        options.onUsageResolved({ usage, copilotUsage })
+      } catch {
+        options.onUsageResolved({ usage: null, copilotUsage: null })
+      }
+    }
+
     const responseBody =
-      upstream.headers.get("content-type")?.includes("text/event-stream") ?
-        observeResponsesSseQuotaSnapshots(
-          upstream.body,
-          options.onQuotaSnapshots,
-          options.onQuotaExceeded,
-        )
+      contentType.includes("text/event-stream") ?
+        observeResponsesSseMetadata(upstream.body, {
+          onQuotaSnapshots: options.onQuotaSnapshots,
+          onQuotaExceeded: options.onQuotaExceeded,
+          onUsageResolved: options.onUsageResolved,
+        })
       : upstream.body
 
     return new Response(responseBody, {
@@ -884,6 +1004,12 @@ async function handleNoModelRequest(
         model: "_",
         requestNowMs: request.requestNowMs,
       }),
+    onUsageResolved: ({ copilotUsage, usage }) => {
+      updateRouteRecord(runtime.state, routeRecord.historyId, {
+        usage,
+        copilotUsage,
+      })
+    },
   })
   applyCooldownOnExhaustion(runtime, proxied, {
     port,
@@ -945,6 +1071,12 @@ async function handleModelRequest(
           model: request.model,
           requestNowMs: request.requestNowMs,
         }),
+      onUsageResolved: ({ copilotUsage, usage }) => {
+        updateRouteRecord(runtime.state, routeRecord.historyId, {
+          usage,
+          copilotUsage,
+        })
+      },
     })
     const exhausted = applyCooldownOnExhaustion(runtime, proxied, {
       port: result.port,

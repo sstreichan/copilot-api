@@ -188,9 +188,10 @@ describe("router discovery and proxy helpers", () => {
 
   test("proxyTo observes quota snapshots from streaming SSE without changing the body", async () => {
     const observedSnapshots: Array<unknown> = []
+    const observedUsage: Array<unknown> = []
     const sseBody = [
       'event: response.output_text.delta\ndata: {"type":"response.output_text.delta","delta":"hello"}\n\n',
-      'event: response.completed\ndata: {"type":"response.completed","copilot_quota_snapshots":{"premium_interactions":{"entitlement":"300","overage_count":0,"overage_permitted":true,"percent_remaining":16.2,"reset_date":"2026-06-01T00:00:00Z"}},"response":{"id":"resp_1","usage":null}}\n\n',
+      'event: response.completed\ndata: {"type":"response.completed","copilot_quota_snapshots":{"premium_interactions":{"entitlement":"300","overage_count":0,"overage_permitted":true,"percent_remaining":16.2,"reset_date":"2026-06-01T00:00:00Z"}},"copilot_usage":{"total_nano_aiu":123},"response":{"id":"resp_1","usage":{"input_tokens":11}}}\n\n',
     ].join("")
     const fetchImpl = createFetchStub(() =>
       Promise.resolve(
@@ -215,6 +216,7 @@ describe("router discovery and proxy helpers", () => {
       fetchImpl,
       onQuotaSnapshots: (quotaSnapshots) =>
         observedSnapshots.push(quotaSnapshots),
+      onUsageResolved: (payload) => observedUsage.push(payload),
     })
 
     expect(await res.text()).toBe(sseBody)
@@ -226,6 +228,108 @@ describe("router discovery and proxy helpers", () => {
           overage_permitted: true,
           percent_remaining: 16.2,
           reset_date: "2026-06-01T00:00:00Z",
+        },
+      },
+    ])
+    expect(observedUsage).toEqual([
+      {
+        usage: { input_tokens: 11 },
+        copilotUsage: { total_nano_aiu: 123 },
+      },
+    ])
+  })
+
+  test("proxyTo extracts copilot usage from response.copilot_usage in SSE response.completed", async () => {
+    const observedUsage: Array<unknown> = []
+    const sseBody = [
+      'event: response.created\ndata: {"type":"response.created"}\n\n',
+      'event: response.completed\ndata: {"type":"response.completed","response":{"id":"resp_2","usage":{"input_tokens":7},"copilot_usage":{"total_nano_aiu":987654}}}\n\n',
+    ].join("")
+    const fetchImpl = createFetchStub(() =>
+      Promise.resolve(
+        new Response(sseBody, {
+          headers: { "content-type": "text/event-stream; charset=utf-8" },
+        }),
+      ),
+    )
+    const req = new Request("http://router.local/v1/responses", {
+      method: "POST",
+      body: '{"model":"claude-sonnet-4.6","stream":true}',
+    })
+
+    const res = await proxyTo({
+      port: 4141,
+      context: {
+        body: '{"model":"claude-sonnet-4.6","stream":true}',
+        req,
+        url: new URL(req.url),
+      },
+      logger: () => {},
+      fetchImpl,
+      onUsageResolved: (payload) => observedUsage.push(payload),
+    })
+
+    expect(await res.text()).toBe(sseBody)
+    expect(observedUsage).toEqual([
+      {
+        usage: { input_tokens: 7 },
+        copilotUsage: { total_nano_aiu: 987654 },
+      },
+    ])
+  })
+
+  test("proxyTo extracts usage from non-streaming JSON responses", async () => {
+    const observedUsage: Array<unknown> = []
+    const fetchImpl = createFetchStub(() =>
+      Promise.resolve(
+        Response.json({
+          id: "resp-json",
+          usage: {
+            input_tokens: 1,
+            input_tokens_details: { cached_tokens: 2 },
+          },
+          copilot_usage: {
+            total_nano_aiu: 3,
+          },
+        }),
+      ),
+    )
+    const req = new Request("http://router.local/v1/responses", {
+      method: "POST",
+      body: '{"model":"gpt-5.5","stream":false}',
+    })
+
+    const res = await proxyTo({
+      port: 4141,
+      context: {
+        body: '{"model":"gpt-5.5","stream":false}',
+        req,
+        url: new URL(req.url),
+      },
+      logger: () => {},
+      fetchImpl,
+      onUsageResolved: (payload) => observedUsage.push(payload),
+    })
+
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({
+      id: "resp-json",
+      usage: {
+        input_tokens: 1,
+        input_tokens_details: { cached_tokens: 2 },
+      },
+      copilot_usage: {
+        total_nano_aiu: 3,
+      },
+    })
+    expect(observedUsage).toEqual([
+      {
+        usage: {
+          input_tokens: 1,
+          input_tokens_details: { cached_tokens: 2 },
+        },
+        copilotUsage: {
+          total_nano_aiu: 3,
         },
       },
     ])
@@ -491,7 +595,7 @@ describe("router handler cooldown semantics", () => {
 
     expect(res.status).toBe(200)
     expect(await res.text()).toContain("quota_exceeded")
-    expect(state.portCooldownUntil.get(4141)).toBe(fixedNowMs + 3_600_000)
+    expect(state.portCooldownUntil.get(4141)).toBe(fixedNowMs + 18_000_000)
     expect(state.portCooldownRetryAfter.get(4141)).toBeNull()
   })
 
@@ -546,7 +650,7 @@ describe("router handler cooldown semantics", () => {
     const res = await handler(createRouterRequest('{"model":"gpt-4.1"}'))
 
     expect(res.status).toBe(503)
-    expect(state.portCooldownUntil.get(4141)).toBe(fixedNowMs + 3600000)
+    expect(state.portCooldownUntil.get(4141)).toBe(fixedNowMs + 18_000_000)
     expect(state.portCooldownRetryAfter.get(4141)).toBe("invalid")
   })
 

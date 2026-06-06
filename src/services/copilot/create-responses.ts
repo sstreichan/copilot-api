@@ -229,6 +229,7 @@ export interface ResponsesResult {
   tool_choice: unknown
   tools: Array<Tool>
   top_p: number | null
+  copilot_usage?: Record<string, unknown> | null
 }
 
 export type Metadata = { [key: string]: string }
@@ -348,6 +349,7 @@ export type ResponseStreamEvent =
   | ResponseTextDoneEvent
 
 export interface ResponseCompletedEvent {
+  copilot_usage?: Record<string, unknown> | null
   copilot_quota_snapshots?: Record<string, CopilotQuotaSnapshot>
   response: ResponsesResult
   sequence_number: number

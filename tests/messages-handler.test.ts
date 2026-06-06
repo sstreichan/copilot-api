@@ -16,6 +16,7 @@ const actualModelsModule = await import("../src/lib/models")
 const actualRateLimitModule = await import("../src/lib/rate-limit")
 const actualUtilsModule = await import("../src/lib/utils")
 const actualApiFlowsModule = await import("../src/routes/messages/api-flows")
+const actualResponsesUtilsModule = await import("../src/routes/responses/utils")
 
 const state = actualStateModule.state
 
@@ -58,6 +59,13 @@ let getSmallModelSpy: ReturnType<
 let isMessagesApiEnabledSpy: ReturnType<
   typeof spyOn<typeof actualConfigModule, "isMessagesApiEnabled">
 >
+let isResponsesApiWebSocketEnabledSpy: ReturnType<
+  typeof spyOn<
+    typeof actualResponsesUtilsModule.responsesUtilsDependencies,
+    "isResponsesApiWebSocketEnabled"
+  >
+>
+
 let resolveMappedModelSpy: ReturnType<
   typeof spyOn<typeof actualConfigModule, "resolveMappedModel">
 >
@@ -129,6 +137,10 @@ beforeEach(() => {
     actualConfigModule,
     "resolveMappedModel",
   ).mockImplementation((model: string) => modelMappings[model] ?? model)
+  isResponsesApiWebSocketEnabledSpy = spyOn(
+    actualResponsesUtilsModule.responsesUtilsDependencies,
+    "isResponsesApiWebSocketEnabled",
+  ).mockReturnValue(true)
 })
 
 afterEach(() => {
@@ -140,6 +152,7 @@ afterEach(() => {
   handleWithMessagesApiSpy.mockRestore()
   handleWithResponsesApiSpy.mockRestore()
   handleWithChatCompletionsSpy.mockRestore()
+  isResponsesApiWebSocketEnabledSpy.mockRestore()
 })
 
 describe("messages handler orchestration", () => {

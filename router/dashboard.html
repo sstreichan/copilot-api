@@ -155,6 +155,38 @@
       white-space: nowrap;
       font-variant-numeric: tabular-nums;
     }
+    .usage-summary {
+      color: var(--muted);
+      cursor: pointer;
+      user-select: none;
+      white-space: nowrap;
+    }
+    .usage-summary:hover {
+      color: var(--text);
+    }
+    .usage-details {
+      min-width: 420px;
+    }
+    .usage-details pre {
+      margin: 8px 0 0;
+      padding: 8px 10px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: rgba(255,255,255,.03);
+      overflow: auto;
+      max-height: 240px;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .budget-cell { font-variant-numeric: tabular-nums; }
+
+    .budget-good { color: var(--good); }
+
+    .budget-warn { color: var(--warn); }
+
+    .budget-danger { color: var(--bad); }
+
   </style>
 </head>
 <body>
@@ -168,6 +200,51 @@
     </div>
 
     <div class="grid">
+      <section class="panel" id="budget-panel">
+
+        <div class="panel-head">
+
+          <h2>Budget · <span id="budget-month"></span></h2>
+
+          <span class="muted" id="budget-snapshot-note"></span>
+
+        </div>
+
+        <div class="scroll">
+
+          <table>
+
+            <thead>
+
+              <tr><th>Used (USD)</th><th>Total (USD)</th><th>Used %</th><th>Pace (USD/day)</th><th>Month-end forecast (USD)</th></tr>
+
+            </thead>
+
+            <tbody>
+
+              <tr>
+
+                <td class="budget-cell" id="budget-used">-</td>
+
+                <td class="budget-cell" id="budget-total">-</td>
+
+                <td class="budget-cell" id="budget-pct">-</td>
+
+                <td class="budget-cell" id="budget-pace">-</td>
+
+                <td class="budget-cell" id="budget-forecast">-</td>
+
+              </tr>
+
+            </tbody>
+
+          </table>
+
+        </div>
+
+      </section>
+
+
       <section class="panel">
         <h2>Instances</h2>
         <div class="stats">
@@ -202,13 +279,13 @@
 
       <section class="panel">
         <div class="panel-head">
-          <h2>Route History</h2>
+          <h2>Route History <span class="muted" id="history-total-usd">(Total: $0.000000)</span></h2>
           <button id="clear-history" class="btn" type="button">Clear history</button>
         </div>
         <div class="scroll">
           <table>
             <thead>
-              <tr><th>Time</th><th>Session</th><th>Agent</th><th>Model</th><th>Target</th><th>Reason</th></tr>
+              <tr><th>Time</th><th>Session</th><th>Agent</th><th>Model</th><th>Target</th><th>Reason</th><th>Usage</th></tr>
             </thead>
             <tbody id="history-body"></tbody>
           </table>
@@ -218,7 +295,8 @@
   </div>
 
   <script>
-    const state = { history: [] }
+    const state = { history: [], totalNanoAiuSinceStart: 0 }
+    const HISTORY_DISPLAY_LIMIT = 50
     const LAST_ACTIVE_REFRESH_INTERVAL_MS = 5000
     const byId = (id) => document.getElementById(id)
     const cut = (value, size = 24) => {
@@ -361,6 +439,100 @@
       }).join('')
     }
 
+    function renderBudget(instances) {
+
+      const setText = (id, val) => { const el = byId(id); if (el) el.textContent = val }
+
+      const setClass = (id, val) => { const el = byId(id); if (el) el.className = val }
+
+      const reporting = (instances || []).filter((instance) => {
+
+        const usage = instance?.headerSnapshot?.premiumUsage
+
+        return usage && Number.isFinite(Number(usage.used)) && Number.isFinite(Number(usage.total))
+
+      })
+
+      const total = reporting.length
+
+      const now = new Date()
+
+      const monthName = now.toLocaleString('en-US', { month: 'long', year: 'numeric' })
+
+      setText('budget-month', monthName)
+
+      setText('budget-snapshot-note', `${total}/${(instances || []).length} instances reporting`)
+
+      if (total === 0) {
+
+        setText('budget-used', '-')
+
+        setText('budget-total', '-')
+
+        setText('budget-pct', '-')
+
+        setText('budget-pace', '-')
+
+        setText('budget-forecast', '-')
+
+        setClass('budget-forecast', 'budget-cell')
+
+        return
+
+      }
+
+      const totalUsedCredits = reporting.reduce((sum, instance) => sum + Number(instance.headerSnapshot.premiumUsage.used), 0)
+
+      const totalCapCredits = reporting.reduce((sum, instance) => sum + Number(instance.headerSnapshot.premiumUsage.total), 0)
+
+      const CREDIT_TO_USD = 0.01
+
+      const totalUsedUsd = totalUsedCredits * CREDIT_TO_USD
+
+      const totalCapUsd = totalCapCredits * CREDIT_TO_USD
+
+      const elapsed = now.getDate()
+
+      const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate()
+
+      const remaining = Math.max(0, daysInMonth - elapsed)
+
+      const paceUsd = elapsed > 0 ? totalUsedUsd / elapsed : 0
+
+      const forecastUsd = paceUsd * daysInMonth
+
+      const pct = totalCapUsd > 0 ? (totalUsedUsd / totalCapUsd) * 100 : 0
+
+      const dailyBudgetUsd = remaining > 0 ? (totalCapUsd - totalUsedUsd) / remaining : 0
+
+      const ratio = dailyBudgetUsd > 0 ? paceUsd / dailyBudgetUsd : Infinity
+
+      let statusClass = 'budget-good'
+
+      let statusIcon = '✓'
+
+      if (ratio > 1.1) { statusClass = 'budget-danger'; statusIcon = '🔴' }
+
+      else if (ratio > 0.9) { statusClass = 'budget-warn'; statusIcon = '⚠' }
+
+      const fmtUsd = (n) => `$${Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+
+      setText('budget-used', fmtUsd(totalUsedUsd))
+
+      setText('budget-total', fmtUsd(totalCapUsd))
+
+      setText('budget-pct', `${pct.toFixed(1)}%`)
+
+      setText('budget-pace', paceUsd > 0 ? fmtUsd(paceUsd) : '-')
+
+      setText('budget-forecast', forecastUsd > 0 ? `${fmtUsd(forecastUsd)} ${statusIcon}` : '-')
+
+      setClass('budget-forecast', `budget-cell ${statusClass}`)
+
+    }
+
+
+
     function renderBindings(bindings) {
       const entries = Object.entries(bindings || {})
       byId('binding-count').textContent = String(entries.length)
@@ -377,6 +549,68 @@
       `).join('')
     }
 
+    function toPrettyJson(value) {
+      return value == null ? 'null' : JSON.stringify(value, null, 2)
+    }
+
+    function usageSummary(item) {
+      const usage = item.usage
+      const copilotUsage = item.copilotUsage
+      if (!usage && !copilotUsage) return '-'
+      const cached =
+        usage?.input_tokens_details?.cached_tokens
+        ?? usage?.cache_read_input_tokens
+      const nano = copilotUsage?.total_nano_aiu
+      const parts = []
+      const usd = Number.isFinite(Number(nano)) ? Number(nano) / 100000000000 : null
+      const tokenDetails = Array.isArray(copilotUsage?.token_details) ? copilotUsage.token_details : []
+      const typeOrder = ["input", "cache_read", "cache_write", "output"]
+      const typeLabel = {
+        input: "in",
+        cache_read: "cache",
+        cache_write: "cache_write",
+        output: "out",
+      }
+      const typeCosts = {}
+      for (const detail of tokenDetails) {
+        if (!detail || typeof detail !== "object") continue
+        const tokenType = typeof detail.token_type === "string" ? detail.token_type : ""
+        const tokenCount = Number(detail.token_count)
+        const batchSize = Number(detail.batch_size)
+        const costPerBatch = Number(detail.cost_per_batch)
+        if (!tokenType || !Number.isFinite(tokenCount) || !Number.isFinite(batchSize) || !Number.isFinite(costPerBatch) || batchSize <= 0) continue
+        const nanoCost = (tokenCount / batchSize) * costPerBatch
+        if (!Number.isFinite(nanoCost)) continue
+        typeCosts[tokenType] = (typeCosts[tokenType] || 0) + nanoCost
+      }
+      if (cached !== undefined) parts.push(`cached=${cached}`)
+      if (usd !== null) parts.push(`$${usd.toFixed(6)}`)
+      for (const tokenType of typeOrder) {
+        const typeNano = typeCosts[tokenType]
+        if (!Number.isFinite(typeNano)) continue
+        const typeUsd = typeNano / 100000000000
+        parts.push(`${typeLabel[tokenType] || tokenType}=$${typeUsd.toFixed(6)}`)
+      }
+      return parts.length ? parts.join(' · ') : 'details'
+    }
+
+    function usageCell(item) {
+      if (!item.usage && !item.copilotUsage) return '-'
+      return `
+        <details class="usage-details">
+          <summary class="usage-summary">${usageSummary(item)}</summary>
+          <pre>usage:\n${escapeHtml(toPrettyJson(item.usage))}\n\ncopilot_usage:\n${escapeHtml(toPrettyJson(item.copilotUsage))}</pre>
+        </details>
+      `
+    }
+
+    function escapeHtml(value) {
+      return String(value)
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+    }
+
     function historyRow(item) {
       return `
         <tr>
@@ -386,24 +620,40 @@
           <td>${cut(item.model, 28)}</td>
           <td><strong>${item.port || '-'}</strong></td>
           <td>${item.reason || '-'}</td>
+          <td>${usageCell(item)}</td>
         </tr>
       `
     }
 
     function renderHistory(history) {
-      state.history = Array.isArray(history) ? [...history].sort((a, b) => (b.ts || '').localeCompare(a.ts || '')).slice(0, 50) : []
+      state.history = Array.isArray(history) ? [...history].sort((a, b) => (b.ts || '').localeCompare(a.ts || '')).slice(0, HISTORY_DISPLAY_LIMIT) : []
       byId('history-count').textContent = String(state.history.length)
       const body = byId('history-body')
       if (!state.history.length) {
-        body.innerHTML = '<tr><td colspan="6" class="empty">No routes yet.</td></tr>'
+        body.innerHTML = '<tr><td colspan="7" class="empty">No routes yet.</td></tr>'
         return
       }
       body.innerHTML = state.history.map(historyRow).join('')
     }
 
+    function renderHistoryTotal(totalNanoAiuSinceStart) {
+      const nano = Number(totalNanoAiuSinceStart)
+      const usd = Number.isFinite(nano) ? nano / 100000000000 : 0
+      byId('history-total-usd').textContent = `(Total: $${usd.toFixed(6)})`
+    }
+
     function prependHistory(item) {
       state.history.unshift(item)
-      state.history = state.history.slice(0, 50)
+      state.history = state.history.slice(0, HISTORY_DISPLAY_LIMIT)
+      renderHistory(state.history)
+    }
+
+    function updateHistoryItem(item) {
+      const historyId = item?.historyId
+      if (!historyId) return
+      const index = state.history.findIndex((entry) => entry.historyId === historyId)
+      if (index === -1) return
+      state.history[index] = item
       renderHistory(state.history)
     }
 
@@ -437,7 +687,11 @@
       const response = await fetch('/api/status')
       const payload = await response.json()
       renderInstances(payload.instances || [])
+      renderBudget(payload.instances || [])
+
       renderBindings(payload.sessionBindings || {})
+      state.totalNanoAiuSinceStart = Number(payload.totalNanoAiuSinceStart || 0)
+      renderHistoryTotal(state.totalNanoAiuSinceStart)
       if (typeof payload.routeHistorySize === 'number') {
         byId('history-count').textContent = String(payload.routeHistorySize)
       }
@@ -471,6 +725,14 @@
       }
       events.addEventListener('reset', async () => {
         await refreshAll()
+      })
+      events.addEventListener('history_update', async (event) => {
+        try {
+          updateHistoryItem(JSON.parse(event.data))
+          await loadStatus()
+        } catch (error) {
+          console.error('failed to parse history_update payload', error)
+        }
       })
     }
 

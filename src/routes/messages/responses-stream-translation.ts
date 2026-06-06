@@ -512,6 +512,10 @@ const handleResponseCompleted = (
       stop_sequence: anthropic.stop_sequence,
     },
     usage: anthropic.usage,
+    copilot_usage:
+      anthropic.copilot_usage
+      ?? ("copilot_usage" in rawEvent ? rawEvent.copilot_usage : null)
+      ?? null,
   }
 
   if ("copilot_quota_snapshots" in rawEvent) {

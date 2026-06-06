@@ -128,6 +128,7 @@ function renderInstancesFromDashboard(
     "instance-count": { textContent: "0" },
     "binding-count": { textContent: "0" },
     "history-count": { textContent: "0" },
+    "history-total-usd": { textContent: "(Total: $0.000000)" },
     "instances-body": { innerHTML: "" },
     "bindings-body": { innerHTML: "" },
     "history-body": { innerHTML: "" },
@@ -154,7 +155,12 @@ function renderInstancesFromDashboard(
         json: () =>
           Promise.resolve(
             String(url).includes("/api/status") ?
-              { instances: [], sessionBindings: {}, routeHistorySize: 0 }
+              {
+                instances: [],
+                sessionBindings: {},
+                routeHistorySize: 0,
+                totalNanoAiuSinceStart: 0,
+              }
             : [],
           ),
       }),
@@ -237,6 +243,7 @@ describe("router handlers", () => {
         "claude-3.7": [4142],
       },
       routeHistorySize: 0,
+      totalNanoAiuSinceStart: 0,
     })
 
     const modelsPayload = await modelsRes.json()

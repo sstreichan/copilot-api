@@ -833,6 +833,7 @@ export const translateResponsesResultToAnthropic = (
     stop_reason: stopReason,
     stop_sequence: null,
     usage,
+    copilot_usage: response.copilot_usage ?? null,
   }
 }
 

@@ -145,6 +145,7 @@ export const translateAnthropicMessageToResponses = (
     tool_choice: "auto",
     tools: [],
     top_p: null,
+    copilot_usage: response.copilot_usage ?? null,
   }
 }
 
@@ -863,6 +864,9 @@ const handleAnthropicMessageDelta = (
   if (event.usage) {
     state.response.usage = buildResponseUsage(event.usage)
   }
+  if (event.copilot_usage) {
+    state.response.copilot_usage = event.copilot_usage
+  }
   if (event.delta.stop_reason === "max_tokens") {
     state.pendingStopReason = "incomplete"
   }
@@ -1117,6 +1121,7 @@ const ensureResponseForFailure = (
     tool_choice: "auto",
     tools: [],
     top_p: null,
+    copilot_usage: null,
   }
   state.response = response
   return response

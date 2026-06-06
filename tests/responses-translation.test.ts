@@ -1153,4 +1153,40 @@ describe("translateResponsesResultToAnthropic", () => {
       },
     ])
   })
+
+  it("preserves copilot_usage when translating Responses result", () => {
+    const responsesResult: ResponsesResult = {
+      id: "resp_cost",
+      object: "response",
+      created_at: 0,
+      model: "gpt-5.4-mini",
+      output: [],
+      output_text: "",
+      status: "completed",
+      usage: {
+        input_tokens: 12,
+        output_tokens: 3,
+        total_tokens: 15,
+      },
+      error: null,
+      incomplete_details: null,
+      instructions: null,
+      metadata: null,
+      parallel_tool_calls: false,
+      temperature: null,
+      tool_choice: null,
+      tools: [],
+      top_p: null,
+      copilot_usage: {
+        total_nano_aiu: 123456,
+      },
+    }
+
+    const anthropicResponse =
+      translateResponsesResultToAnthropic(responsesResult)
+
+    expect(anthropicResponse.copilot_usage).toEqual({
+      total_nano_aiu: 123456,
+    })
+  })
 })

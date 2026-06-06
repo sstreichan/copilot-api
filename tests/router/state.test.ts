@@ -5,11 +5,13 @@ import {
   clearRouteHistory,
   clearSessionBindings,
   createStickyRouterState,
+  createSseResponse,
   discoverModels,
   getStatusPayload,
   incrementCount,
   pickPort,
   recordRoute,
+  updateRouteRecord,
 } from "../../router/state"
 
 function createState() {
@@ -205,6 +207,7 @@ describe("router state helpers", () => {
     expect(state.routeHistory[0]?.ts).toBe("t-1")
     expect(state.portModelCounts.get(4141)?.get("gpt-4.1")).toBe(201)
     expect(payload.routeHistorySize).toBe(DEFAULT_HISTORY_LIMIT)
+    expect(payload.totalNanoAiuSinceStart).toBe(0)
     expect(payload.instances[0]).toEqual({
       name: "alpha",
       port: 4141,
@@ -221,6 +224,85 @@ describe("router state helpers", () => {
         weeklyRateLimit: null,
       },
     })
+  })
+
+  test("updateRouteRecord patches usage fields and broadcasts history_update", async () => {
+    const state = createState()
+    const response = createSseResponse(
+      state,
+      new Request("http://localhost/api/events"),
+    )
+    const reader = response.body?.getReader()
+    if (!reader) {
+      throw new Error("missing SSE reader")
+    }
+
+    await reader.read()
+
+    recordRoute(state, {
+      ts: "t-1",
+      sid: "s-1",
+      agent: "atlas",
+      model: "gpt-4.1",
+      provider: "openai",
+      port: 4141,
+      reason: "new",
+      instanceName: "alpha",
+    })
+
+    const historyId = state.routeHistory[0]?.historyId
+    expect(typeof historyId).toBe("string")
+
+    const updated = updateRouteRecord(state, historyId, {
+      usage: { input_tokens: 1 },
+      copilotUsage: { total_nano_aiu: 2 },
+    })
+
+    expect(updated).toBe(true)
+    expect(state.routeHistory[0]?.usage).toEqual({ input_tokens: 1 })
+    expect(state.routeHistory[0]?.copilotUsage).toEqual({ total_nano_aiu: 2 })
+
+    await reader.read()
+    const nextChunk = await reader.read()
+    const payloadText = new TextDecoder().decode(nextChunk.value as Uint8Array)
+    expect(payloadText).toContain("event: history_update")
+    expect(payloadText).toContain('"input_tokens":1')
+    expect(payloadText).toContain('"total_nano_aiu":2')
+    expect(state.totalNanoAiuSinceStart).toBe(2)
+
+    const updatedAgain = updateRouteRecord(state, historyId, {
+      usage: { input_tokens: 1 },
+      copilotUsage: { total_nano_aiu: 5 },
+    })
+    expect(updatedAgain).toBe(true)
+    expect(state.totalNanoAiuSinceStart).toBe(5)
+  })
+
+  test("clearRouteHistory clears history records but keeps cumulative total since start", () => {
+    const state = createState()
+    recordRoute(state, {
+      ts: "t-1",
+      sid: "s-1",
+      agent: "atlas",
+      model: "gpt-4.1",
+      provider: "openai",
+      port: 4141,
+      reason: "new",
+      instanceName: "alpha",
+    })
+    const historyId = state.routeHistory[0]?.historyId
+    if (!historyId) {
+      throw new Error("missing history id")
+    }
+    updateRouteRecord(state, historyId, {
+      usage: { input_tokens: 1 },
+      copilotUsage: { total_nano_aiu: 9 },
+    })
+
+    clearRouteHistory(state)
+    expect(state.routeHistory).toHaveLength(0)
+    expect(state.historyNanoById.size).toBe(0)
+    expect(state.totalNanoAiuSinceStart).toBe(9)
   })
 
   test("getStatusPayload exposes cooldownUntil, remainingCooldownMs, and upstreamRetryAfter", () => {

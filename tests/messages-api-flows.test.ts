@@ -408,6 +408,7 @@ test("messages Responses flow preserves the configured tool_search alias in non-
       input_tokens: 0,
       output_tokens: 0,
     },
+    copilot_usage: null,
   })
 })
 

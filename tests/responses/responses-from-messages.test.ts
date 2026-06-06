@@ -3,7 +3,9 @@ import { describe, expect, it } from "bun:test"
 import type { ResponsesPayload } from "~/services/copilot/create-responses"
 
 import {
+  createAnthropicToResponsesStreamState,
   translateAnthropicMessageToResponses,
+  translateAnthropicStreamEventToResponsesStreamEvents,
   translateResponsesToAnthropicMessages,
 } from "~/routes/responses/responses-from-messages"
 
@@ -289,6 +291,9 @@ describe("translateAnthropicMessageToResponses", () => {
           input: { city: "Hangzhou" },
         },
       ],
+      copilot_usage: {
+        total_nano_aiu: 123,
+      },
       stop_reason: "tool_use",
       stop_sequence: null,
       usage: {
@@ -355,6 +360,9 @@ describe("translateAnthropicMessageToResponses", () => {
       tool_choice: "auto",
       tools: [],
       top_p: null,
+      copilot_usage: {
+        total_nano_aiu: 123,
+      },
     })
   })
 
@@ -445,5 +453,64 @@ describe("translateAnthropicMessageToResponses", () => {
     expect(result.output).toEqual([])
     expect(result.output_text).toBe("")
     expect(result.status).toBe("completed")
+  })
+})
+
+describe("translateAnthropicStreamEventToResponsesStreamEvents", () => {
+  it("carries copilot_usage into response.completed for messages backend streams", () => {
+    const state = createAnthropicToResponsesStreamState()
+
+    translateAnthropicStreamEventToResponsesStreamEvents(
+      {
+        type: "message_start",
+        message: {
+          id: "msg_stream",
+          type: "message",
+          role: "assistant",
+          model: "claude-sonnet-4.6",
+          content: [],
+          stop_reason: null,
+          stop_sequence: null,
+          usage: {
+            input_tokens: 10,
+            output_tokens: 0,
+          },
+        },
+      },
+      state,
+    )
+
+    translateAnthropicStreamEventToResponsesStreamEvents(
+      {
+        type: "message_delta",
+        delta: {
+          stop_reason: "end_turn",
+          stop_sequence: null,
+        },
+        usage: {
+          output_tokens: 5,
+        },
+        copilot_usage: {
+          total_nano_aiu: 456,
+        },
+      },
+      state,
+    )
+
+    const events = translateAnthropicStreamEventToResponsesStreamEvents(
+      {
+        type: "message_stop",
+      },
+      state,
+    )
+
+    expect(events.at(-1)).toMatchObject({
+      type: "response.completed",
+      response: {
+        copilot_usage: {
+          total_nano_aiu: 456,
+        },
+      },
+    })
   })
 })

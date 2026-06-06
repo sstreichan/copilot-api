@@ -163,6 +163,7 @@ export interface AnthropicResponse {
     cache_read_input_tokens?: number
     service_tier?: "standard" | "priority" | "batch"
   }
+  copilot_usage?: Record<string, unknown> | null
 }
 
 export type AnthropicResponseContentBlock = AnthropicAssistantContentBlock
@@ -213,6 +214,7 @@ export interface AnthropicMessageDeltaEvent {
     stop_sequence?: string | null
   }
   copilot_quota_snapshots?: unknown
+  copilot_usage?: Record<string, unknown> | null
   usage?: {
     input_tokens?: number
     output_tokens: number

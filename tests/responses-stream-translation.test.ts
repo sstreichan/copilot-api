@@ -190,6 +190,7 @@ describe("translateResponsesStreamEvent tool calls", () => {
         stop_reason: "tool_use",
         stop_sequence: null,
       },
+      copilot_usage: null,
       usage: {
         input_tokens: 0,
         output_tokens: 0,
@@ -246,6 +247,98 @@ describe("translateResponsesStreamEvent tool calls", () => {
           percent_remaining: 16.1,
           reset_date: "2026-06-01T00:00:00Z",
         },
+      },
+    })
+  })
+
+  test("preserves copilot_usage on terminal message delta", () => {
+    const state = createResponsesStreamState()
+
+    const events = translateResponsesStreamEvent(
+      {
+        type: "response.completed",
+        sequence_number: 1,
+        response: {
+          id: "resp-usage",
+          object: "response",
+          created_at: 0,
+          model: "gpt-5.4-mini",
+          output: [],
+          output_text: "",
+          status: "completed",
+          usage: {
+            input_tokens: 10,
+            output_tokens: 2,
+            total_tokens: 12,
+          },
+          error: null,
+          incomplete_details: null,
+          instructions: null,
+          metadata: null,
+          parallel_tool_calls: false,
+          temperature: null,
+          tool_choice: null,
+          tools: [],
+          top_p: null,
+          copilot_usage: {
+            total_nano_aiu: 999,
+          },
+        },
+      } as ResponseCompletedEvent,
+      state,
+    )
+
+    const messageDelta = events.find((event) => event.type === "message_delta")
+    expect(messageDelta).toMatchObject({
+      type: "message_delta",
+      copilot_usage: {
+        total_nano_aiu: 999,
+      },
+    })
+  })
+
+  test("preserves top-level copilot_usage on terminal message delta", () => {
+    const state = createResponsesStreamState()
+
+    const events = translateResponsesStreamEvent(
+      {
+        type: "response.completed",
+        sequence_number: 2,
+        copilot_usage: {
+          total_nano_aiu: 123456,
+        },
+        response: {
+          id: "resp-top-level-usage",
+          object: "response",
+          created_at: 0,
+          model: "gpt-5.3-codex",
+          output: [],
+          output_text: "",
+          status: "completed",
+          usage: {
+            input_tokens: 10,
+            output_tokens: 2,
+            total_tokens: 12,
+          },
+          error: null,
+          incomplete_details: null,
+          instructions: null,
+          metadata: null,
+          parallel_tool_calls: false,
+          temperature: null,
+          tool_choice: null,
+          tools: [],
+          top_p: null,
+        },
+      } as ResponseCompletedEvent,
+      state,
+    )
+
+    const messageDelta = events.find((event) => event.type === "message_delta")
+    expect(messageDelta).toMatchObject({
+      type: "message_delta",
+      copilot_usage: {
+        total_nano_aiu: 123456,
       },
     })
   })
