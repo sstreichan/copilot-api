@@ -685,26 +685,19 @@ const translateSystemPrompt = (
     .map((block, index) => {
       if (index === 0) {
         return (
-          normalizeSystemPromptBlockText(block.text, index)
+          normalizeSystemPromptBlockText(block.text)
           + "\n\n"
           + extraPrompt
           + "\n\n"
         )
       }
-      return normalizeSystemPromptBlockText(block.text, index)
+      return block.text
     })
     .join(" ")
   return text.length > 0 ? text : null
 }
 
-const normalizeSystemPromptBlockText = (
-  text: string,
-  index: number,
-): string => {
-  if (index !== 0) {
-    return text
-  }
-
+const normalizeSystemPromptBlockText = (text: string): string => {
   if (!text.startsWith(CLAUDE_CODE_BILLING_HEADER_PREFIX)) {
     return text
   }
