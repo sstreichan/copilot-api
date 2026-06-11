@@ -465,7 +465,51 @@ describe("messages handler orchestration", () => {
     expect(forwardedPayload.model).toBe("messages-model")
   })
 
-  test("delegates to the Responses API flow when the model supports /responses", async () => {
+  test("stabilizes Claude Code billing header before forwarding to the Messages API flow", async () => {
+    selectedModel = {
+      id: "messages-model",
+      supported_endpoints: ["/v1/messages"],
+    }
+
+    const app = await createApp()
+    const response = await app.request("/", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(
+        createPayload({
+          system: [
+            {
+              type: "text",
+              text: "x-anthropic-billing-header: cc_version=2.1.158.c0c; cc_entrypoint=cli; cch=6fb32;",
+            },
+            {
+              type: "text",
+              text: "You are Claude Code, Anthropic's official CLI for Claude.",
+            },
+          ],
+        }),
+      ),
+    })
+
+    expect(response.status).toBe(200)
+    expect(await response.text()).toBe("messages")
+
+    const [, forwardedPayload] = handleWithMessagesApiSpy.mock.calls[0]
+    expect(forwardedPayload.system).toEqual([
+      {
+        type: "text",
+        text: "x-anthropic-billing-header: cc_version=2.1.158.c0c; cc_entrypoint=cli; cch=<stable>;",
+      },
+      {
+        type: "text",
+        text: "You are Claude Code, Anthropic's official CLI for Claude.",
+      },
+    ])
+  })
+
+  test("stabilizes Claude Code billing header before forwarding to the Responses API flow", async () => {
     selectedModel = {
       id: "responses-model",
       supported_endpoints: ["/responses"],
@@ -477,7 +521,20 @@ describe("messages handler orchestration", () => {
       headers: {
         "content-type": "application/json",
       },
-      body: JSON.stringify(createPayload()),
+      body: JSON.stringify(
+        createPayload({
+          system: [
+            {
+              type: "text",
+              text: "x-anthropic-billing-header: cc_version=2.1.158.c0c; cc_entrypoint=cli; cch=6fb32;",
+            },
+            {
+              type: "text",
+              text: "You are Claude Code, Anthropic's official CLI for Claude.",
+            },
+          ],
+        }),
+      ),
     })
 
     expect(response.status).toBe(200)
@@ -485,6 +542,18 @@ describe("messages handler orchestration", () => {
     expect(handleWithMessagesApiSpy).not.toHaveBeenCalled()
     expect(handleWithResponsesApiSpy).toHaveBeenCalledTimes(1)
     expect(handleWithChatCompletionsSpy).not.toHaveBeenCalled()
+
+    const [, forwardedPayload] = handleWithResponsesApiSpy.mock.calls[0]
+    expect(forwardedPayload.system).toEqual([
+      {
+        type: "text",
+        text: "x-anthropic-billing-header: cc_version=2.1.158.c0c; cc_entrypoint=cli; cch=<stable>;",
+      },
+      {
+        type: "text",
+        text: "You are Claude Code, Anthropic's official CLI for Claude.",
+      },
+    ])
   })
 
   test("delegates to the Responses API flow when the model supports ws:/responses", async () => {
@@ -540,7 +609,7 @@ describe("messages handler orchestration", () => {
     expect(handleWithChatCompletionsSpy).toHaveBeenCalledTimes(1)
   })
 
-  test("falls back to the Chat Completions flow when no endpoint matches", async () => {
+  test("stabilizes Claude Code billing header before falling back to the Chat Completions flow", async () => {
     selectedModel = {
       id: "chat-model",
       supported_endpoints: [],
@@ -552,7 +621,20 @@ describe("messages handler orchestration", () => {
       headers: {
         "content-type": "application/json",
       },
-      body: JSON.stringify(createPayload()),
+      body: JSON.stringify(
+        createPayload({
+          system: [
+            {
+              type: "text",
+              text: "x-anthropic-billing-header: cc_version=2.1.158.c0c; cc_entrypoint=cli; cch=6fb32;",
+            },
+            {
+              type: "text",
+              text: "You are Claude Code, Anthropic's official CLI for Claude.",
+            },
+          ],
+        }),
+      ),
     })
 
     expect(response.status).toBe(200)
@@ -560,6 +642,18 @@ describe("messages handler orchestration", () => {
     expect(handleWithMessagesApiSpy).not.toHaveBeenCalled()
     expect(handleWithResponsesApiSpy).not.toHaveBeenCalled()
     expect(handleWithChatCompletionsSpy).toHaveBeenCalledTimes(1)
+
+    const [, forwardedPayload] = handleWithChatCompletionsSpy.mock.calls[0]
+    expect(forwardedPayload.system).toEqual([
+      {
+        type: "text",
+        text: "x-anthropic-billing-header: cc_version=2.1.158.c0c; cc_entrypoint=cli; cch=<stable>;",
+      },
+      {
+        type: "text",
+        text: "You are Claude Code, Anthropic's official CLI for Claude.",
+      },
+    ])
   })
 
   test("applies warmup model override and passes request metadata to the selected flow", async () => {
