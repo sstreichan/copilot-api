@@ -125,7 +125,7 @@ export const handleResponses = async (c: Context) => {
   const requestedModel = payload.model
   payload.model = resolveMappedModel(payload.model)
   if (payload.model !== requestedModel) {
-    logger.debug(
+    consola.debug(
       `Resolved model mapping: ${requestedModel} -> ${payload.model}`,
     )
   }

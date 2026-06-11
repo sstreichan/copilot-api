@@ -23,6 +23,7 @@ import {
   type PooledWebSocketRequest,
 } from "~/services/responses-websocket"
 import { requestContext } from "~/lib/request-context"
+import consola from "consola"
 
 export const CODEX_API_BASE_URL = "https://chatgpt.com/backend-api"
 
@@ -202,6 +203,7 @@ export async function forwardCodexResponses(
     transport?: ResponsesTransport
   } = {},
 ): Promise<CreateResponsesReturn> {
+  consola.log(`<-- model: ${payload.model}`)
   const transport = resolveCodexResponsesTransport(options.transport)
   if (payload.stream && transport === "websocket") {
     return forwardCodexResponsesOverWebSocket(payload, requestHeaders, baseUrl)
@@ -440,6 +442,14 @@ const createCodexResponsesWebSocketStreamChunk = (
     const parsed = JSON.parse(data) as {
       id?: unknown
       type?: unknown
+      error?: {
+        message: string
+      }
+      message?: string
+    }
+
+    if (parsed.type === "error" && parsed.error) {
+      parsed.message = parsed.error.message
     }
 
     return {

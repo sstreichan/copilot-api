@@ -5,6 +5,7 @@ import consola from "consola"
 import type { Model } from "~/services/copilot/get-models"
 
 import { awaitApproval } from "~/lib/approval"
+import { COMPACT_REQUEST } from "~/lib/compact"
 import {
   getSmallModel,
   isMessagesApiEnabled,
@@ -22,7 +23,11 @@ import { findEndpointModel } from "~/lib/models"
 import { parseProviderModelAlias } from "~/lib/provider-model"
 import { checkRateLimit } from "~/lib/rate-limit"
 import { state } from "~/lib/state"
-import { generateRequestIdFromPayload, getRootSessionId } from "~/lib/utils"
+import {
+  generateRequestIdFromPayload,
+  getRootSessionId,
+  getUUID,
+} from "~/lib/utils"
 import { handleProviderMessagesForProvider } from "~/routes/provider/messages/handler"
 import { getResponsesTransportForModel } from "~/routes/responses/utils"
 
@@ -42,6 +47,7 @@ import {
   stripToolReferenceTurnBoundary,
 } from "./preprocess"
 import { parseSubagentMarkerFromFirstUser } from "./subagent-marker"
+import { tryHandleWebSearch } from "./web-search/fulfill"
 
 const logger = createHandlerLogger("messages-handler")
 const cm = (model: string) => (shouldUseColor() ? colorizeModel(model) : model)
@@ -54,13 +60,21 @@ export const messagesFlowHandlers = {
 
 export async function handleCompletion(c: Context) {
   const anthropicPayload = await c.req.json<AnthropicMessagesPayload>()
+
   const requestedModel = anthropicPayload.model
   anthropicPayload.model = resolveMappedModel(anthropicPayload.model)
   if (anthropicPayload.model !== requestedModel) {
-    logger.debug(
+    consola.debug(
       `Resolved model mapping: ${requestedModel} -> ${anthropicPayload.model}`,
     )
   }
+
+  const webSearchResult = await tryHandleWebSearch(c, anthropicPayload, {
+    logger,
+    forwardToProvider: (ctx, payload, provider) =>
+      handleProviderMessagesForProvider(ctx, { payload, provider }),
+  })
+  if (webSearchResult) return webSearchResult
 
   const providerModelAlias = parseProviderModelAlias(anthropicPayload.model)
   if (providerModelAlias) {
@@ -93,8 +107,7 @@ export async function handleCompletion(c: Context) {
     debugJson(logger, "Detected Subagent marker:", subagentMarker)
   }
 
-  const sessionId = getRootSessionId(anthropicPayload, c)
-  logger.debug("Extracted session ID:", sessionId)
+  let sessionId = getRootSessionId(anthropicPayload, c)
 
   const anthropicBeta = c.req.header("anthropic-beta")
   logger.debug("Anthropic Beta header:", anthropicBeta)
@@ -103,20 +116,35 @@ export async function handleCompletion(c: Context) {
     anthropicPayload.model = getSmallModel()
   }
 
-  if (compactType === 0) {
-    const lastMessageCacheControl = getLastMessageContentCacheControl(
-      anthropicPayload.messages.at(-1),
-    )
+  const lastMessageCacheControl = getLastMessageContentCacheControl(
+    anthropicPayload.messages.at(-1),
+  )
+
+  if (!state.tokenBasedBilling) {
     stripToolReferenceTurnBoundary(anthropicPayload)
-    mergeToolResultForClaude(anthropicPayload)
-    applyLastMessageCacheControl(anthropicPayload, lastMessageCacheControl)
+
+    // Merge tool_result and text blocks into tool_result to avoid consuming premium requests
+    // (caused by skill invocations, edit hooks, plan or to do reminders)
+    // e.g. {"role":"user","content":[{"type":"tool_result","content":"Launching skill: xxx"},{"type":"text","text":"xxx"}]}
+    // not only for claude, but also for opencode
+    // compact requests still run this processing, except for the final compact message itself
+    mergeToolResultForClaude(anthropicPayload, {
+      skipLastMessage: compactType === COMPACT_REQUEST,
+    })
   }
+
+  applyLastMessageCacheControl(anthropicPayload, lastMessageCacheControl)
 
   const selectedModel = findEndpointModel(anthropicPayload.model)
   anthropicPayload.model = selectedModel?.id ?? anthropicPayload.model
 
   const requestId = generateRequestIdFromPayload(anthropicPayload, sessionId)
   logger.debug("Generated request ID:", requestId)
+
+  if (!sessionId) {
+    sessionId = getUUID(requestId)
+  }
+  logger.debug("Extracted session ID:", sessionId)
 
   const { value: effortValue, source: effortSource } =
     resolveAnthropicEffortForLog(

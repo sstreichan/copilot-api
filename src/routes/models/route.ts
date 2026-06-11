@@ -3,6 +3,7 @@ import { Hono } from "hono"
 import type { Model } from "~/services/copilot/get-models"
 
 import { forwardError } from "~/lib/error"
+import { toClientModelId } from "~/lib/models"
 import { state } from "~/lib/state"
 import { cacheModels } from "~/lib/utils"
 
@@ -77,13 +78,12 @@ modelRoutes.get("/", async (c) => {
     }
 
     const models = state.models?.data.map((model) => {
-      // limits is typed as required but is missing for embedding models at runtime
-      const is1m =
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-        model.capabilities.limits?.max_context_window_tokens === 1_000_000
+      const capabilities = model.capabilities
+      const contextWindow = capabilities?.limits?.max_context_window_tokens ?? 0
+      const clientId = toClientModelId(model.id)
       return {
         ...model,
-        id: is1m ? `${model.id}[1m]` : model.id,
+        id: contextWindow > 1_000_000 ? `${clientId}[1m]` : clientId,
         object: "model",
         type: model.capabilities.type,
         created: 0, // No date available from source

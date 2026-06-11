@@ -236,6 +236,8 @@ export const setupCodexToken = async (): Promise<void> => {
 const REFRESH_POLL_INTERVAL_MS = 15_000
 const EARLY_REFRESH_BUFFER_MS = 60_000
 const RETRY_REFRESH_DELAY_MS = 15_000
+const MAX_RETRY_REFRESH_DELAY_MS = 600_000
+const RETRY_REFRESH_JITTER_MS = 15_000
 const MIN_REFRESH_DELAY_MS = 1_000
 
 export const getRefreshDeadlineMs = (
@@ -257,6 +259,7 @@ const runCopilotRefreshLoop = async (
   signal: AbortSignal,
 ) => {
   let refreshAtMs = getRefreshDeadlineMs(refreshIn)
+  let retryDelayMs = RETRY_REFRESH_DELAY_MS
 
   while (!signal.aborted) {
     const nextDelayMs = getRefreshPollDelayMs(refreshAtMs)
@@ -273,15 +276,21 @@ const runCopilotRefreshLoop = async (
       initTelemetry(metadata.token, metadata.endpoints?.telemetry)
       trackAuthNewToken()
       refreshAtMs = getRefreshDeadlineMs(metadata.refresh_in)
+      retryDelayMs = RETRY_REFRESH_DELAY_MS
       consola.debug("Copilot token refreshed")
       if (state.showToken) {
         consola.info("Refreshed Copilot token:", metadata.token)
       }
     } catch (error) {
       consola.error("Failed to refresh Copilot token:", error)
-      refreshAtMs = Date.now() + RETRY_REFRESH_DELAY_MS
+      const delayMs = Math.min(
+        retryDelayMs + Math.floor(Math.random() * RETRY_REFRESH_JITTER_MS),
+        MAX_RETRY_REFRESH_DELAY_MS,
+      )
+      refreshAtMs = Date.now() + delayMs
+      retryDelayMs = Math.min(retryDelayMs * 2, MAX_RETRY_REFRESH_DELAY_MS)
       consola.warn(
-        `Retrying Copilot token refresh in ${RETRY_REFRESH_DELAY_MS / 1000}s`,
+        `Retrying Copilot token refresh in ${Math.round(delayMs / 1000)}s`,
       )
     }
   }
@@ -385,4 +394,5 @@ export async function logUser() {
 
   const copilotUser = await getCopilotUsage()
   state.copilotApiUrl = copilotUser.endpoints.api
+  state.tokenBasedBilling = copilotUser.token_based_billing
 }

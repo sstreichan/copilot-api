@@ -1,3 +1,4 @@
+import consola from "consola"
 import type { Context } from "hono"
 
 import { streamSSE, type SSEMessage } from "hono/streaming"
@@ -11,6 +12,7 @@ import {
   resolvePremiumInfo,
   writeStreamLog,
 } from "~/lib/logger"
+import { parseProviderModelAlias } from "~/lib/provider-model"
 import { checkRateLimit } from "~/lib/rate-limit"
 import {
   applyForwardableResponseHeaders,
@@ -24,6 +26,7 @@ import {
   type UsageTokens,
 } from "~/lib/token-usage"
 import { generateRequestIdFromPayload, getUUID, isNullish } from "~/lib/utils"
+import { handleProviderChatCompletionsForProvider } from "~/routes/provider/chat-completions/handler"
 import {
   createChatCompletions,
   type ChatCompletionChunk,
@@ -38,9 +41,18 @@ export async function handleCompletion(c: Context) {
   const requestedModel = payload.model
   payload.model = resolveMappedModel(payload.model)
   if (payload.model !== requestedModel) {
-    logger.debug(
+    consola.debug(
       `Resolved model mapping: ${requestedModel} -> ${payload.model}`,
     )
+  }
+
+  const providerModelAlias = parseProviderModelAlias(payload.model)
+  if (providerModelAlias) {
+    payload.model = providerModelAlias.model
+    return await handleProviderChatCompletionsForProvider(c, {
+      payload,
+      provider: providerModelAlias.provider,
+    })
   }
 
   await checkRateLimit(state)

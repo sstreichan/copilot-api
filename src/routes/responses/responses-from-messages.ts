@@ -955,7 +955,7 @@ const handleAnthropicError = (
 ): Array<ResponseFailedEvent> => {
   const response = ensureResponseForFailure(state)
   response.status = "failed"
-  response.error = { message: event.error.message }
+  response.error = { code: null, message: event.error.message }
 
   return [
     {

@@ -41,6 +41,8 @@ export interface State {
   // Smart agent cache (TTL: 3 minutes)
   smartAgentDecision?: SmartAgentDecision | null
   smartAgentCacheTimestamp?: number
+
+  tokenBasedBilling?: boolean
 }
 
 export const state: State = {

@@ -1411,6 +1411,50 @@ describe("responses handler token usage", () => {
     expect(createResponsesMock.mock.calls[0]?.[1]?.transport).toBe("http")
   })
 
+  test("uses model Responses API compact threshold before max token fallback", async () => {
+    state.models = {
+      object: "list",
+      data: [
+        {
+          capabilities: {
+            limits: {
+              max_prompt_tokens: 128000,
+            },
+          },
+          id: "gpt-5.4",
+          supported_endpoints: ["/responses"],
+        },
+      ],
+    } as typeof state.models
+    responsesUtilsDependencies.getModelResponsesApiCompactThreshold = (
+      model,
+    ) => (model === "gpt-5.4" ? 272_000 * 0.8 : undefined)
+    createResponsesMock.mockImplementation((payload) =>
+      Promise.resolve(createResponsesResult(payload.model)),
+    )
+
+    const app = createApp()
+    const response = await app.request("/v1/responses", {
+      body: JSON.stringify({
+        input: "hello",
+        model: "gpt-5.4",
+      }),
+      headers: {
+        "content-type": "application/json",
+      },
+      method: "POST",
+    })
+
+    expect(response.status).toBe(200)
+    expect(createResponsesMock).toHaveBeenCalledTimes(1)
+    expect(createResponsesMock.mock.calls[0][0].context_management).toEqual([
+      {
+        type: "compaction",
+        compact_threshold: 217600,
+      },
+    ])
+  })
+
   test("preserves custom apply_patch tools for Copilot Responses", async () => {
     createResponsesMock.mockImplementation((payload: ResponsesPayload) =>
       Promise.resolve({
@@ -1497,6 +1541,54 @@ describe("responses handler token usage", () => {
     })
   })
 
+  test("does not use Codex parent thread header as Responses session", async () => {
+    createResponsesMock.mockImplementation((payload) =>
+      Promise.resolve(createResponsesResult(payload.model)),
+    )
+
+    const payload = {
+      input: [
+        {
+          content: [{ text: "SUBAGENT_PROBE", type: "input_text" }],
+          role: "user",
+        },
+      ],
+      model: "gpt-test",
+    }
+
+    const app = createApp()
+    const response = await app.request("/v1/responses", {
+      body: JSON.stringify(payload),
+      headers: {
+        "content-type": "application/json",
+        "session-id": "root-session",
+        "x-codex-parent-thread-id": "parent-thread",
+        "x-openai-subagent": "collab_spawn",
+        "x-session-id": "alternate-session",
+      },
+      method: "POST",
+    })
+
+    expect(response.status).toBe(200)
+    expect(createResponsesMock).toHaveBeenCalledTimes(1)
+
+    const options = createResponsesMock.mock.calls[0][1]
+    const expectedSessionId = getUUID("root-session")
+    expect(options?.initiator).toBe("agent")
+    expect(options?.sessionId).toBe(expectedSessionId)
+    expect(options?.requestId).toBe(
+      generateRequestIdFromPayload(
+        { messages: payload.input },
+        expectedSessionId,
+      ),
+    )
+    expect(options?.subagentMarker).toEqual({
+      agent_id: "parent-thread",
+      agent_type: "collab_spawn",
+      session_id: "root-session",
+    })
+  })
+
   test("ignores session headers when Codex subagent header is missing", async () => {
     createResponsesMock.mockImplementation((payload) =>
       Promise.resolve(createResponsesResult(payload.model)),
@@ -1519,6 +1611,7 @@ describe("responses handler token usage", () => {
         "content-type": "application/json",
         "session-id": "root-session",
         "thread-id": "child-thread",
+        "x-codex-parent-thread-id": "parent-thread",
       },
       method: "POST",
     })

@@ -190,6 +190,7 @@ export const translateChatCompletionStreamErrorToResponsesEvent = (
     type: "response.failed",
     sequence_number: nextSequenceNumber(state),
     response: buildResponsesResultFromStreamState(state, "failed", {
+      code: null,
       message,
     }),
   }
