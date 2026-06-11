@@ -50,6 +50,7 @@ export interface StatusPayload {
     remainingCooldownMs: number
     upstreamRetryAfter: string | null
     headerSnapshot: UpstreamHeaderSnapshot
+    disabled: boolean
   }>
   sessionBindings: Record<string, number>
   modelToPorts: Record<string, Array<number>>
@@ -71,6 +72,7 @@ export interface StickyRouterState {
   portCooldownUntil: Map<number, number>
   portCooldownRetryAfter: Map<number, string | null>
   portHeaderSnapshots: Map<number, UpstreamHeaderSnapshot>
+  disabledPorts: Set<number>
   totalNanoAiuSinceStart: number
   historyNanoById: Map<string, number>
 }
@@ -132,6 +134,7 @@ export function createStickyRouterState(
     portCooldownUntil: new Map<number, number>(),
     portCooldownRetryAfter: new Map<number, string | null>(),
     portHeaderSnapshots: new Map<number, UpstreamHeaderSnapshot>(),
+    disabledPorts: new Set<number>(),
     totalNanoAiuSinceStart: 0,
     historyNanoById: new Map<string, number>(),
   }
@@ -217,7 +220,9 @@ export function getAvailablePorts(
   nowMs: number,
 ): Array<number> {
   return ports.filter(
-    (port) => getRemainingCooldownMs(state, port, nowMs) === 0,
+    (port) =>
+      !state.disabledPorts.has(port)
+      && getRemainingCooldownMs(state, port, nowMs) === 0,
   )
 }
 
@@ -297,6 +302,7 @@ export function getStatusPayload(
         headerSnapshot:
           state.portHeaderSnapshots.get(instance.port)
           ?? EMPTY_UPSTREAM_HEADER_SNAPSHOT,
+        disabled: state.disabledPorts.has(instance.port),
       }
     }),
     sessionBindings: Object.fromEntries(state.sessionBindings),
@@ -436,6 +442,24 @@ export function clearSessionBindings(
   broadcastSse(
     state,
     `event: reset\ndata: ${JSON.stringify({ target: "bindings" })}\n\n`,
+    encoder,
+  )
+}
+
+export function setInstanceDisabled(
+  state: StickyRouterState,
+  port: number,
+  disabled: boolean,
+  encoder = DEFAULT_ENCODER,
+): void {
+  if (disabled) {
+    state.disabledPorts.add(port)
+  } else {
+    state.disabledPorts.delete(port)
+  }
+  broadcastSse(
+    state,
+    `event: reset\ndata: ${JSON.stringify({ target: "instances" })}\n\n`,
     encoder,
   )
 }
@@ -1160,6 +1184,62 @@ export function createDashboardHandler(options: DashboardHandlerOptions) {
     req: Request,
   ): Promise<Response> {
     const url = new URL(req.url)
+
+    if (url.pathname.startsWith("/api/instances/") && req.method === "PATCH") {
+      const portString = url.pathname.slice("/api/instances/".length)
+      const port = Number(portString)
+      if (!Number.isInteger(port) || !options.state.portToInstance.has(port)) {
+        return new Response(JSON.stringify({ error: "instance not found" }), {
+          status: 404,
+          headers: { "content-type": "application/json" },
+        })
+      }
+
+      let body: unknown
+      try {
+        body = await req.json()
+      } catch {
+        return new Response(JSON.stringify({ error: "invalid JSON body" }), {
+          status: 400,
+          headers: { "content-type": "application/json" },
+        })
+      }
+
+      if (
+        !body
+        || typeof body !== "object"
+        || typeof (body as Record<string, unknown>).disabled !== "boolean"
+      ) {
+        return new Response(
+          JSON.stringify({ error: "disabled must be a boolean" }),
+          {
+            status: 400,
+            headers: { "content-type": "application/json" },
+          },
+        )
+      }
+
+      const disabled = (body as Record<string, unknown>).disabled as boolean
+      setInstanceDisabled(options.state, port, disabled, encoder)
+      const instance = options.state.portToInstance.get(port)
+      options.logger?.(
+        `dashboard ${disabled ? "disabled" : "enabled"} instance port=${port} name=${instance?.name ?? "?"}`,
+      )
+      return new Response(JSON.stringify({ ok: true, port, disabled }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })
+    }
+
+    if (url.pathname.startsWith("/api/instances/") && req.method !== "PATCH") {
+      return new Response(JSON.stringify({ error: "method not allowed" }), {
+        status: 405,
+        headers: {
+          "content-type": "application/json",
+          allow: "PATCH",
+        },
+      })
+    }
 
     if (
       (url.pathname === "/" || url.pathname === "/index.html")

@@ -129,7 +129,10 @@ function renderInstancesFromDashboard(
     "binding-count": { textContent: "0" },
     "history-count": { textContent: "0" },
     "history-total-usd": { textContent: "(Total: $0.000000)" },
-    "instances-body": { innerHTML: "" },
+    "instances-body": {
+      innerHTML: "",
+      addEventListener() {},
+    },
     "bindings-body": { innerHTML: "" },
     "history-body": { innerHTML: "" },
   }
@@ -219,6 +222,7 @@ describe("router handlers", () => {
             sessionRateLimit: null,
             weeklyRateLimit: null,
           },
+          disabled: false,
         },
         {
           name: "beta",
@@ -235,6 +239,7 @@ describe("router handlers", () => {
             sessionRateLimit: null,
             weeklyRateLimit: null,
           },
+          disabled: false,
         },
       ],
       sessionBindings: {},

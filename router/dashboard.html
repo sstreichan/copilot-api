@@ -187,6 +187,23 @@
 
     .budget-danger { color: var(--bad); }
 
+    .switch { position: relative; display: inline-block; width: 36px; height: 20px; cursor: pointer; }
+    .switch input { opacity: 0; width: 0; height: 0; }
+    .slider {
+      position: absolute; inset: 0;
+      background: var(--panel-2); border: 1px solid var(--border); border-radius: 999px;
+      transition: background .15s ease, border-color .15s ease;
+    }
+    .slider::before {
+      content: ''; position: absolute; width: 14px; height: 14px;
+      left: 2px; top: 50%; transform: translateY(-50%);
+      background: var(--muted); border-radius: 50%;
+      transition: left .15s ease, background .15s ease;
+    }
+    .switch input:checked + .slider { background: rgba(88,166,255,.18); border-color: var(--accent); }
+    .switch input:checked + .slider::before { left: 18px; background: var(--accent); }
+    .switch input:disabled + .slider { opacity: .6; cursor: wait; }
+
   </style>
 </head>
 <body>
@@ -255,7 +272,7 @@
         <div class="scroll">
           <table>
             <thead>
-              <tr><th>Name</th><th>Port</th><th>Status</th><th>Model Requests</th><th>Cooldown</th><th>Last Active</th></tr>
+              <tr><th>Name</th><th>Port</th><th>Status</th><th>Model Requests</th><th>Cooldown</th><th>Last Active</th><th>Enabled</th></tr>
             </thead>
             <tbody id="instances-body"></tbody>
           </table>
@@ -394,7 +411,7 @@
       byId('instance-count').textContent = String(instances.length)
       const body = byId('instances-body')
       if (!instances.length) {
-        body.innerHTML = '<tr><td colspan="6" class="empty">No instances discovered.</td></tr>'
+        body.innerHTML = '<tr><td colspan="7" class="empty">No instances discovered.</td></tr>'
         return
       }
       body.innerHTML = instances.map((item) => {
@@ -434,6 +451,7 @@
             <td>${countsHtml}</td>
             <td>${cooldownHtml}</td>
             <td class="last-active" data-last-active="${item.lastActive || ''}"><span class="${last.className}" title="${last.title}">${last.label}</span></td>
+            <td><label class="switch" title="${item.disabled ? 'Disabled' : 'Enabled'}"><input type="checkbox" data-port="${item.port}" data-prev="${item.disabled ? '0' : '1'}" ${item.disabled ? '' : 'checked'}><span class="slider"></span></label></td>
           </tr>
         `
       }).join('')
@@ -738,6 +756,35 @@
 
     byId('clear-bindings').addEventListener('click', () => clearData('bindings'))
     byId('clear-history').addEventListener('click', () => clearData('history'))
+
+    byId('instances-body').addEventListener('change', async (event) => {
+      const input = event.target
+      if (!(input instanceof HTMLInputElement) || input.type !== 'checkbox' || !input.dataset.port) return
+      const port = Number(input.dataset.port)
+      const wasEnabled = input.dataset.prev === '1'
+      const nowEnabled = input.checked
+      if (wasEnabled === nowEnabled) return
+      try {
+        const response = await fetch(`/api/instances/${port}`, {
+          method: 'PATCH',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ disabled: !nowEnabled }),
+        })
+        if (!response.ok) {
+          window.alert(`Failed to toggle instance: HTTP ${response.status}`)
+          input.checked = wasEnabled
+          input.dataset.prev = wasEnabled ? '1' : '0'
+          return
+        }
+        input.dataset.prev = nowEnabled ? '1' : '0'
+        await refreshAll()
+      } catch (err) {
+        window.alert(`Failed to toggle instance: ${err instanceof Error ? err.message : String(err)}`)
+        input.checked = wasEnabled
+        input.dataset.prev = wasEnabled ? '1' : '0'
+      }
+    })
+
     setInterval(refreshLastActiveCells, LAST_ACTIVE_REFRESH_INTERVAL_MS)
 
     Promise.all([loadStatus(), loadHistory()]).finally(connectSse)

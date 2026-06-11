@@ -223,6 +223,7 @@ describe("router state helpers", () => {
         sessionRateLimit: null,
         weeklyRateLimit: null,
       },
+      disabled: false,
     })
   })
 

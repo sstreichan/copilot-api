@@ -2,6 +2,7 @@ export interface Instance {
   name: string
   port: number
   allowedModels?: Array<string>
+  disabled?: boolean
 }
 
 export function readPort(name: string, fallback: number): number {
