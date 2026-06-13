@@ -150,7 +150,7 @@ const OPENCODE_VERSION = "opencode/1.14.29"
 const OPENCODE_LLM_USER_AGENT =
   "opencode/1.14.29 ai-sdk/provider-utils/4.0.23 runtime/bun/1.3.13, opencode/1.14.29"
 
-export const COPILOT_VERSION = "0.50.1"
+export const COPILOT_VERSION = "0.52.0"
 const EDITOR_PLUGIN_VERSION = `copilot-chat/${COPILOT_VERSION}`
 const USER_AGENT = `GitHubCopilotChat/${COPILOT_VERSION}`
 const CLAUDE_AGENT_USER_AGENT =
@@ -158,7 +158,7 @@ const CLAUDE_AGENT_USER_AGENT =
 const COPILOT_WEBSOCKET_VERSION = COPILOT_VERSION
 const EDITOR_WEBSOCKET_PLUGIN_VERSION = `copilot-chat/${COPILOT_WEBSOCKET_VERSION}`
 
-const API_VERSION = "2026-01-09"
+const API_VERSION = "2026-06-01"
 const WEBSOCKET_API_VERSION = API_VERSION
 
 const COPILOT_BUSINESS_BASE_URL = "https://api.business.githubcopilot.com"

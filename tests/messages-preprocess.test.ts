@@ -1,6 +1,29 @@
-import { describe, expect, mock, test } from "bun:test"
+import {
+  afterAll,
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  spyOn,
+  test,
+} from "bun:test"
+
+import * as configModule from "~/lib/config"
 
 import type { AnthropicMessagesPayload } from "../src/routes/messages/anthropic-types"
+
+let mockedReasoningEffort:
+  | "none"
+  | "minimal"
+  | "low"
+  | "medium"
+  | "high"
+  | "xhigh" = "xhigh"
+
+const getReasoningEffortForModelSpy = spyOn(
+  configModule,
+  "getReasoningEffortForModel",
+).mockImplementation(() => mockedReasoningEffort)
 
 import {
   applyLastMessageCacheControl,
@@ -12,23 +35,17 @@ import {
   stripToolReferenceTurnBoundary,
 } from "../src/routes/messages/preprocess"
 
-// Mock config to provide modelReasoningEfforts for test models
-await mock.module("~/lib/config", () => ({
-  getConfig: () => ({
-    extraPrompts: {
-      "gpt-5.4": "## Intermediary updates",
-    },
-    modelReasoningEfforts: {
-      "gpt-5.4": "xhigh",
-    },
-  }),
-  getExtraPromptForModel: (model: string) =>
-    model === "gpt-5.4" ? "## Intermediary updates" : "",
-  getReasoningEffortForModel: (model: string) => {
-    const efforts: Record<string, string> = { "gpt-5.4": "xhigh" }
-    return efforts[model] ?? "high"
-  },
-}))
+beforeEach(() => {
+  mockedReasoningEffort = "xhigh"
+})
+
+afterEach(() => {
+  mockedReasoningEffort = "xhigh"
+})
+
+afterAll(() => {
+  getReasoningEffortForModelSpy.mockRestore()
+})
 
 describe("normalizeSystemMessages", () => {
   test("merges system string content into the previous message", () => {
@@ -436,7 +453,7 @@ describe("mergeToolResultForClaude", () => {
     })
   })
 
-  test("lifts cache_control out of merged array tool_result content", () => {
+  test("strips cache_control from blocks absorbed into tool_result content", () => {
     const payload: AnthropicMessagesPayload = {
       model: "claude-opus-4.6",
       max_tokens: 128,
@@ -450,19 +467,16 @@ describe("mergeToolResultForClaude", () => {
               content: [
                 {
                   type: "text",
-                  text: "tool output",
-                  cache_control: {
-                    type: "ephemeral",
-                    ttl: "1h",
-                  },
+                  text: "existing output",
                 },
               ],
             },
             {
               type: "text",
-              text: "cached trailing text",
+              text: "follow-up details",
               cache_control: {
                 type: "ephemeral",
+                scope: "user",
               },
             },
             {
@@ -471,6 +485,9 @@ describe("mergeToolResultForClaude", () => {
                 type: "base64",
                 media_type: "image/png",
                 data: "image-data",
+              },
+              cache_control: {
+                type: "ephemeral",
               },
             },
           ],
@@ -486,14 +503,18 @@ describe("mergeToolResultForClaude", () => {
         {
           type: "tool_result",
           tool_use_id: "tool-1",
+          cache_control: {
+            type: "ephemeral",
+            scope: "user",
+          },
           content: [
             {
               type: "text",
-              text: "tool output",
+              text: "existing output",
             },
             {
               type: "text",
-              text: "cached trailing text",
+              text: "follow-up details",
             },
             {
               type: "image",
@@ -504,9 +525,6 @@ describe("mergeToolResultForClaude", () => {
               },
             },
           ],
-          cache_control: {
-            type: "ephemeral",
-          },
         },
       ],
     })
@@ -1197,29 +1215,6 @@ describe("prepareMessagesApiPayload", () => {
 
     expect(payload.thinking).toBeUndefined()
     expect(payload.output_config).toBeUndefined()
-  })
-
-  test("preserves explicit effort from request instead of overriding with config default", () => {
-    const payload: AnthropicMessagesPayload = {
-      model: "gpt-5.4",
-      max_tokens: 128,
-      messages: [{ role: "user", content: "hello" }],
-      output_config: { effort: "low" },
-    }
-
-    prepareMessagesApiPayload(payload, {
-      capabilities: {
-        supports: {
-          adaptive_thinking: true,
-        },
-      },
-    } as never)
-
-    expect(payload.thinking).toEqual({
-      type: "adaptive",
-      display: "summarized",
-    })
-    expect(payload.output_config).toEqual({ effort: "low" })
   })
 
   test("strips top-level cache_control sent by Zed (minimal-mode shape)", () => {

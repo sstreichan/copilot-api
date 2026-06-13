@@ -1,6 +1,14 @@
 import type { Context } from "hono"
 
-import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test"
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  mock,
+  spyOn,
+  test,
+} from "bun:test"
 import { Hono } from "hono"
 
 import type { AnthropicMessagesPayload } from "../src/routes/messages/anthropic-types"
@@ -15,12 +23,14 @@ const actualConfigModule = await import("../src/lib/config")
 const actualModelsModule = await import("../src/lib/models")
 const actualRateLimitModule = await import("../src/lib/rate-limit")
 const actualUtilsModule = await import("../src/lib/utils")
-const actualApiFlowsModule = await import("../src/routes/messages/api-flows")
-const actualResponsesUtilsModule = await import("../src/routes/responses/utils")
+const { responsesUtilsDependencies } = await import(
+  "../src/routes/responses/utils"
+)
 
 const state = actualStateModule.state
 
 let messagesApiEnabled = true
+let responsesApiWebSocketEnabled = true
 let modelMappings: Record<string, string> = {}
 type SelectedModel = {
   id: string
@@ -38,21 +48,32 @@ type FlowCallOptions = {
 let selectedModel: SelectedModel | undefined
 let handlerImportVersion = 0
 
-let handleWithMessagesApiSpy: ReturnType<
-  typeof spyOn<typeof actualApiFlowsModule, "handleWithMessagesApi">
->
-let handleWithResponsesApiSpy: ReturnType<
-  typeof spyOn<typeof actualApiFlowsModule, "handleWithResponsesApi">
->
-let handleWithChatCompletionsSpy: ReturnType<
-  typeof spyOn<typeof actualApiFlowsModule, "handleWithChatCompletions">
->
-let findEndpointModelSpy: ReturnType<
-  typeof spyOn<typeof actualModelsModule, "findEndpointModel">
->
-let checkRateLimitSpy: ReturnType<
-  typeof spyOn<typeof actualRateLimitModule, "checkRateLimit">
->
+const findEndpointModel = mock((_: string) => selectedModel)
+const checkRateLimit = mock(async () => {})
+const handleWithMessagesApi = mock(
+  (
+    _c: unknown,
+    _payload: AnthropicMessagesPayload,
+    _options: FlowCallOptions,
+  ) => Promise.resolve(new Response("messages")),
+)
+const handleWithResponsesApi = mock(
+  (
+    _c: unknown,
+    _payload: AnthropicMessagesPayload,
+    _options: FlowCallOptions,
+  ) => Promise.resolve(new Response("responses")),
+)
+const handleWithChatCompletions = mock(
+  (
+    _c: unknown,
+    _payload: AnthropicMessagesPayload,
+    _options: FlowCallOptions,
+  ) => Promise.resolve(new Response("chat")),
+)
+
+const defaultResponsesUtilsDependencies = { ...responsesUtilsDependencies }
+
 let getSmallModelSpy: ReturnType<
   typeof spyOn<typeof actualConfigModule, "getSmallModel">
 >
@@ -60,23 +81,59 @@ let isMessagesApiEnabledSpy: ReturnType<
   typeof spyOn<typeof actualConfigModule, "isMessagesApiEnabled">
 >
 let isResponsesApiWebSocketEnabledSpy: ReturnType<
-  typeof spyOn<
-    typeof actualResponsesUtilsModule.responsesUtilsDependencies,
-    "isResponsesApiWebSocketEnabled"
-  >
+  typeof spyOn<typeof actualConfigModule, "isResponsesApiWebSocketEnabled">
 >
-
 let resolveMappedModelSpy: ReturnType<
   typeof spyOn<typeof actualConfigModule, "resolveMappedModel">
 >
+let findEndpointModelSpy: ReturnType<
+  typeof spyOn<typeof actualModelsModule, "findEndpointModel">
+>
+let checkRateLimitSpy: ReturnType<
+  typeof spyOn<typeof actualRateLimitModule, "checkRateLimit">
+>
 
 const createApp = async () => {
+  getSmallModelSpy = spyOn(actualConfigModule, "getSmallModel").mockReturnValue(
+    "small-model",
+  )
+  isMessagesApiEnabledSpy = spyOn(
+    actualConfigModule,
+    "isMessagesApiEnabled",
+  ).mockImplementation(() => messagesApiEnabled)
+  isResponsesApiWebSocketEnabledSpy = spyOn(
+    actualConfigModule,
+    "isResponsesApiWebSocketEnabled",
+  ).mockImplementation(() => responsesApiWebSocketEnabled)
+  resolveMappedModelSpy = spyOn(
+    actualConfigModule,
+    "resolveMappedModel",
+  ).mockImplementation((model: string) => modelMappings[model] ?? model)
+  findEndpointModelSpy = spyOn(
+    actualModelsModule,
+    "findEndpointModel",
+  ).mockImplementation(findEndpointModel as never)
+  checkRateLimitSpy = spyOn(
+    actualRateLimitModule,
+    "checkRateLimit",
+  ).mockImplementation(checkRateLimit as never)
+
   const handlerModule = (await import(
     `../src/routes/messages/handler?messages-handler-test-${++handlerImportVersion}`
   )) as {
     handleCompletion: (c: Context) => Promise<Response>
+    messagesFlowHandlers: {
+      handleWithMessagesApi: typeof handleWithMessagesApi
+      handleWithResponsesApi: typeof handleWithResponsesApi
+      handleWithChatCompletions: typeof handleWithChatCompletions
+    }
   }
-  const { handleCompletion } = handlerModule
+  const { handleCompletion, messagesFlowHandlers } = handlerModule
+
+  messagesFlowHandlers.handleWithMessagesApi = handleWithMessagesApi
+  messagesFlowHandlers.handleWithResponsesApi = handleWithResponsesApi
+  messagesFlowHandlers.handleWithChatCompletions = handleWithChatCompletions
+
   const app = new Hono()
   app.post("/", handleCompletion)
   return app
@@ -93,66 +150,32 @@ const createPayload = (
 
 beforeEach(() => {
   state.manualApprove = false
+  state.tokenBasedBilling = false
   state.verbose = false
   messagesApiEnabled = true
+  responsesApiWebSocketEnabled = true
   modelMappings = {}
   selectedModel = undefined
 
-  handleWithMessagesApiSpy = spyOn(
-    actualApiFlowsModule,
-    "handleWithMessagesApi",
-  ).mockImplementation(
-    (_c, _payload, _options: FlowCallOptions) =>
-      new Response("messages") as never,
-  )
-  handleWithResponsesApiSpy = spyOn(
-    actualApiFlowsModule,
-    "handleWithResponsesApi",
-  ).mockImplementation(
-    (_c, _payload, _options: FlowCallOptions) =>
-      new Response("responses") as never,
-  )
-  handleWithChatCompletionsSpy = spyOn(
-    actualApiFlowsModule,
-    "handleWithChatCompletions",
-  ).mockImplementation(
-    (_c, _payload, _options: FlowCallOptions) => new Response("chat") as never,
-  )
-  findEndpointModelSpy = spyOn(
-    actualModelsModule,
-    "findEndpointModel",
-  ).mockImplementation((_: string) => selectedModel as never)
-  checkRateLimitSpy = spyOn(
-    actualRateLimitModule,
-    "checkRateLimit",
-  ).mockResolvedValue()
-  getSmallModelSpy = spyOn(actualConfigModule, "getSmallModel").mockReturnValue(
-    "small-model",
-  )
-  isMessagesApiEnabledSpy = spyOn(
-    actualConfigModule,
-    "isMessagesApiEnabled",
-  ).mockImplementation(() => messagesApiEnabled)
-  resolveMappedModelSpy = spyOn(
-    actualConfigModule,
-    "resolveMappedModel",
-  ).mockImplementation((model: string) => modelMappings[model] ?? model)
-  isResponsesApiWebSocketEnabledSpy = spyOn(
-    actualResponsesUtilsModule.responsesUtilsDependencies,
-    "isResponsesApiWebSocketEnabled",
-  ).mockReturnValue(true)
+  responsesUtilsDependencies.isResponsesApiWebSocketEnabled = () =>
+    responsesApiWebSocketEnabled
+
+  checkRateLimit.mockClear()
+  findEndpointModel.mockClear()
+  handleWithMessagesApi.mockClear()
+  handleWithResponsesApi.mockClear()
+  handleWithChatCompletions.mockClear()
 })
 
 afterEach(() => {
-  checkRateLimitSpy.mockRestore()
-  getSmallModelSpy.mockRestore()
-  isMessagesApiEnabledSpy.mockRestore()
-  resolveMappedModelSpy.mockRestore()
-  findEndpointModelSpy.mockRestore()
-  handleWithMessagesApiSpy.mockRestore()
-  handleWithResponsesApiSpy.mockRestore()
-  handleWithChatCompletionsSpy.mockRestore()
-  isResponsesApiWebSocketEnabledSpy.mockRestore()
+  Object.assign(responsesUtilsDependencies, defaultResponsesUtilsDependencies)
+
+  getSmallModelSpy?.mockRestore()
+  isMessagesApiEnabledSpy?.mockRestore()
+  isResponsesApiWebSocketEnabledSpy?.mockRestore()
+  resolveMappedModelSpy?.mockRestore()
+  findEndpointModelSpy?.mockRestore()
+  checkRateLimitSpy?.mockRestore()
 })
 
 describe("messages handler orchestration", () => {
@@ -211,7 +234,7 @@ describe("messages handler orchestration", () => {
     expect(response.status).toBe(200)
     expect(await response.text()).toBe("messages")
 
-    const [, forwardedPayload] = handleWithMessagesApiSpy.mock.calls[0]
+    const [, forwardedPayload] = handleWithMessagesApi.mock.calls[0]
     expect(forwardedPayload.system).toBeUndefined()
     expect(forwardedPayload.messages).toEqual([
       {
@@ -273,7 +296,7 @@ describe("messages handler orchestration", () => {
     expect(response.status).toBe(200)
     expect(await response.text()).toBe("messages")
 
-    const [, forwardedPayload] = handleWithMessagesApiSpy.mock.calls[0]
+    const [, forwardedPayload] = handleWithMessagesApi.mock.calls[0]
     expect(forwardedPayload.tools).toEqual([
       {
         name: "mcp__ide__getDiagnostics",
@@ -328,7 +351,7 @@ describe("messages handler orchestration", () => {
     expect(response.status).toBe(200)
     expect(await response.text()).toBe("messages")
 
-    const [, forwardedPayload] = handleWithMessagesApiSpy.mock.calls[0]
+    const [, forwardedPayload] = handleWithMessagesApi.mock.calls[0]
     expect(forwardedPayload.messages[0]).toEqual({
       role: "user",
       content: [
@@ -392,7 +415,7 @@ describe("messages handler orchestration", () => {
     expect(response.status).toBe(200)
     expect(await response.text()).toBe("messages")
 
-    const [, forwardedPayload] = handleWithMessagesApiSpy.mock.calls[0]
+    const [, forwardedPayload] = handleWithMessagesApi.mock.calls[0]
     expect(forwardedPayload.messages[0]).toEqual({
       role: "user",
       content: [
@@ -431,11 +454,11 @@ describe("messages handler orchestration", () => {
 
     expect(response.status).toBe(200)
     expect(await response.text()).toBe("messages")
-    expect(handleWithMessagesApiSpy).toHaveBeenCalledTimes(1)
-    expect(handleWithResponsesApiSpy).not.toHaveBeenCalled()
-    expect(handleWithChatCompletionsSpy).not.toHaveBeenCalled()
+    expect(handleWithMessagesApi).toHaveBeenCalledTimes(1)
+    expect(handleWithResponsesApi).not.toHaveBeenCalled()
+    expect(handleWithChatCompletions).not.toHaveBeenCalled()
 
-    const [, forwardedPayload] = handleWithMessagesApiSpy.mock.calls[0]
+    const [, forwardedPayload] = handleWithMessagesApi.mock.calls[0]
     expect(forwardedPayload.model).toBe("messages-model")
   })
 
@@ -459,9 +482,9 @@ describe("messages handler orchestration", () => {
 
     expect(response.status).toBe(200)
     expect(await response.text()).toBe("messages")
-    expect(findEndpointModelSpy).toHaveBeenCalledWith("messages-model")
+    expect(findEndpointModel).toHaveBeenCalledWith("messages-model")
 
-    const [, forwardedPayload] = handleWithMessagesApiSpy.mock.calls[0]
+    const [, forwardedPayload] = handleWithMessagesApi.mock.calls[0]
     expect(forwardedPayload.model).toBe("messages-model")
   })
 
@@ -496,7 +519,7 @@ describe("messages handler orchestration", () => {
     expect(response.status).toBe(200)
     expect(await response.text()).toBe("messages")
 
-    const [, forwardedPayload] = handleWithMessagesApiSpy.mock.calls[0]
+    const [, forwardedPayload] = handleWithMessagesApi.mock.calls[0]
     expect(forwardedPayload.system).toEqual([
       {
         type: "text",
@@ -539,11 +562,11 @@ describe("messages handler orchestration", () => {
 
     expect(response.status).toBe(200)
     expect(await response.text()).toBe("responses")
-    expect(handleWithMessagesApiSpy).not.toHaveBeenCalled()
-    expect(handleWithResponsesApiSpy).toHaveBeenCalledTimes(1)
-    expect(handleWithChatCompletionsSpy).not.toHaveBeenCalled()
+    expect(handleWithMessagesApi).not.toHaveBeenCalled()
+    expect(handleWithResponsesApi).toHaveBeenCalledTimes(1)
+    expect(handleWithChatCompletions).not.toHaveBeenCalled()
 
-    const [, forwardedPayload] = handleWithResponsesApiSpy.mock.calls[0]
+    const [, forwardedPayload] = handleWithResponsesApi.mock.calls[0]
     expect(forwardedPayload.system).toEqual([
       {
         type: "text",
@@ -557,6 +580,7 @@ describe("messages handler orchestration", () => {
   })
 
   test("delegates to the Responses API flow when the model supports ws:/responses", async () => {
+    responsesApiWebSocketEnabled = true
     selectedModel = {
       id: "responses-ws-model",
       supported_endpoints: ["ws:/responses"],
@@ -573,9 +597,9 @@ describe("messages handler orchestration", () => {
 
     expect(response.status).toBe(200)
     expect(await response.text()).toBe("responses")
-    expect(handleWithMessagesApiSpy).not.toHaveBeenCalled()
-    expect(handleWithResponsesApiSpy).toHaveBeenCalledTimes(1)
-    expect(handleWithChatCompletionsSpy).not.toHaveBeenCalled()
+    expect(handleWithMessagesApi).not.toHaveBeenCalled()
+    expect(handleWithResponsesApi).toHaveBeenCalledTimes(1)
+    expect(handleWithChatCompletions).not.toHaveBeenCalled()
   })
 
   test("does not delegate compact requests to a ws-only Responses API model", async () => {
@@ -604,9 +628,9 @@ describe("messages handler orchestration", () => {
 
     expect(response.status).toBe(200)
     expect(await response.text()).toBe("chat")
-    expect(handleWithMessagesApiSpy).not.toHaveBeenCalled()
-    expect(handleWithResponsesApiSpy).not.toHaveBeenCalled()
-    expect(handleWithChatCompletionsSpy).toHaveBeenCalledTimes(1)
+    expect(handleWithMessagesApi).not.toHaveBeenCalled()
+    expect(handleWithResponsesApi).not.toHaveBeenCalled()
+    expect(handleWithChatCompletions).toHaveBeenCalledTimes(1)
   })
 
   test("stabilizes Claude Code billing header before falling back to the Chat Completions flow", async () => {
@@ -639,11 +663,11 @@ describe("messages handler orchestration", () => {
 
     expect(response.status).toBe(200)
     expect(await response.text()).toBe("chat")
-    expect(handleWithMessagesApiSpy).not.toHaveBeenCalled()
-    expect(handleWithResponsesApiSpy).not.toHaveBeenCalled()
-    expect(handleWithChatCompletionsSpy).toHaveBeenCalledTimes(1)
+    expect(handleWithMessagesApi).not.toHaveBeenCalled()
+    expect(handleWithResponsesApi).not.toHaveBeenCalled()
+    expect(handleWithChatCompletions).toHaveBeenCalledTimes(1)
 
-    const [, forwardedPayload] = handleWithChatCompletionsSpy.mock.calls[0]
+    const [, forwardedPayload] = handleWithChatCompletions.mock.calls[0]
     expect(forwardedPayload.system).toEqual([
       {
         type: "text",
@@ -693,7 +717,7 @@ describe("messages handler orchestration", () => {
 
     expect(response.status).toBe(200)
     expect(await response.text()).toBe("messages")
-    expect(findEndpointModelSpy).toHaveBeenCalledWith("small-model")
+    expect(findEndpointModel).toHaveBeenCalledWith("small-model")
 
     const expectedSessionId = actualUtilsModule.getUUID("session-123")
     const expectedRequestId = actualUtilsModule.generateRequestIdFromPayload(
@@ -701,7 +725,7 @@ describe("messages handler orchestration", () => {
       expectedSessionId,
     )
 
-    const options = handleWithMessagesApiSpy.mock.calls[0][2]
+    const options = handleWithMessagesApi.mock.calls[0][2]
     expect(options.requestId).toBe(expectedRequestId)
     expect(options.sessionId).toBe(expectedSessionId)
     expect(options.subagentMarker).toEqual({
