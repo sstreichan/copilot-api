@@ -78,7 +78,8 @@ const decompressZstd = async (input: Uint8Array): Promise<Uint8Array> => {
     })
   }
 
-  return decompressFallback(input)
+  const decompress = decompressFallback as (input: Uint8Array) => BinaryData
+  return toUint8Array(decompress(input))
 }
 
 const getBunRuntime = (): BunRuntime | undefined =>
