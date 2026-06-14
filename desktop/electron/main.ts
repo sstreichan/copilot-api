@@ -3,7 +3,12 @@ import path from 'node:path'
 
 import { bindElectronFetch } from '../../src/lib/electron-fetch'
 import type { DesktopSettings } from '../src/types/ipc'
+import {
+  applyElectronProxy,
+  applyElectronProxyCommandLine
+} from './electron-proxy'
 import { tMain } from './i18n'
+import { readSettings, readSettingsSync } from './settings-store'
 
 const CLI_ENV_FLAGS = {
   '--api-home': 'COPILOT_API_HOME',
@@ -35,6 +40,9 @@ function applyCliEnvOverrides(argv: string[]): void {
 }
 
 applyCliEnvOverrides(process.argv)
+const initialSettings = readSettingsSync()
+applySettingsEnvOverrides(initialSettings)
+applyElectronProxyCommandLine(initialSettings.proxy)
 bindElectronFetch()
 
 interface RuntimeDependencies {
@@ -43,7 +51,7 @@ interface RuntimeDependencies {
   onStatusChange: typeof import('./server-manager').onStatusChange
   onLog: typeof import('./server-manager').onLog
   clearCallbacks: typeof import('./server-manager').clearCallbacks
-  readSettings: typeof import('./settings-store').readSettings
+  readSettings: typeof readSettings
 }
 
 let runtimeDependenciesPromise: Promise<RuntimeDependencies> | null = null
@@ -72,19 +80,15 @@ function warmOpencodeVersion(): void {
 
 function getRuntimeDependencies(): Promise<RuntimeDependencies> {
   runtimeDependenciesPromise ??= (async () => {
-    const { readSettings } = await import('./settings-store')
-
     applySettingsEnvOverrides(await readSettings())
     warmOpencodeVersion()
 
     const [
       { registerIpcHandlers },
-      { stopServer, onStatusChange, onLog, clearCallbacks },
-      settingsStore
+      { stopServer, onStatusChange, onLog, clearCallbacks }
     ] = await Promise.all([
       import('./ipc-handlers'),
-      import('./server-manager'),
-      import('./settings-store')
+      import('./server-manager')
     ])
 
     return {
@@ -93,7 +97,7 @@ function getRuntimeDependencies(): Promise<RuntimeDependencies> {
       onStatusChange,
       onLog,
       clearCallbacks,
-      readSettings: settingsStore.readSettings
+      readSettings
     }
   })()
 
@@ -251,9 +255,14 @@ function createWindow(): BrowserWindow {
 
 app.whenReady().then(async () => {
   const { registerIpcHandlers, readSettings, onStatusChange, onLog } = await getRuntimeDependencies()
+  const settings = await readSettings()
+  await applyElectronProxy(settings.proxy)
+
   const win = createWindow()
 
   registerIpcHandlers(win, async (settings, prevSettings) => {
+    await applyElectronProxy(settings.proxy)
+
     if (settings.minimizeToTray) {
       await createTray(win)
       await refreshTrayContextMenu(win)
@@ -270,7 +279,6 @@ app.whenReady().then(async () => {
   })
 
   // Only create the tray when minimize-to-tray is enabled.
-  const settings = await readSettings()
   if (settings.minimizeToTray) {
     await createTray(win)
   }

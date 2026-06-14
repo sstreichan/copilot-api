@@ -285,7 +285,7 @@ const handleWithMessagesBackend = async (
       } catch (err) {
         await writeResponsesStreamError(
           stream,
-          createPathBStreamErrorEvent(payload.model, err),
+          createResponsesStreamErrorEvent(payload.model, err),
         )
       } finally {
         const premium = await resolvePremiumInfo(
@@ -584,6 +584,11 @@ const handleStreamingResponse = (options: {
           data: processedData,
         })
       }
+    } catch (err) {
+      await writeResponsesStreamError(
+        stream,
+        createResponsesStreamErrorEvent(model, err),
+      )
     } finally {
       const premium = await resolvePremiumInfo(response, "responses/stream")
       writeStreamLog({ model, chunks: chunkCount, done: true, premium }, true)
@@ -625,7 +630,7 @@ const writeAnthropicStreamEvents = async (
   }
 }
 
-const createPathBStreamErrorEvent = (model: string, err: unknown) => {
+const createResponsesStreamErrorEvent = (model: string, err: unknown) => {
   const message = err instanceof Error ? err.message : "Stream error"
   return {
     type: "response.failed",
@@ -681,7 +686,7 @@ const getAnthropicMessageStartUsage = (
 
 const writeResponsesStreamError = async (
   stream: Parameters<Parameters<typeof streamSSE>[1]>[0],
-  errorEvent: ReturnType<typeof createPathBStreamErrorEvent>,
+  errorEvent: ReturnType<typeof createResponsesStreamErrorEvent>,
 ) => {
   try {
     await stream.writeSSE({
