@@ -607,6 +607,67 @@ if (dirtyPaths.length > 0) {
       }
     }
   }
+} else if (inspect.prState === 'ready-for-merge') {
+  stage = 'ready-for-merge'
+  summary = 'PR 已存在，且当前看起来无冲突、无阻塞，可进入最终 merge 授权阶段。'
+  gates.push(buildGhMergeGate(currentPr))
+  candidateCommands.push(
+    buildReadCommand(
+      'ready-for-merge',
+      `gh pr view ${inspect.prNumber} --json mergeable,mergeStateStatus,statusCheckRollup,reviewDecision,isDraft,headRefOid,url`,
+      '执行最终 merge 前再次确认 PR 状态没有变化',
+    ),
+  )
+  candidateCommands.push(
+    buildCandidateCommand(
+      'ready-for-merge',
+      `gh pr merge ${inspect.prNumber} --merge`,
+      '在用户明确授权后完成 GitHub merge',
+    ),
+  )
+  nextActions.push('先向用户汇报 PR 已可合并，再等待最终 merge 授权。')
+} else if (inspect.prState === 'blocked-pr') {
+  stage = 'blocked'
+  summary = 'PR 已存在，但仍被草稿状态、评审、检查项或未知可合并状态阻塞。'
+  if (inspect.isDraft) {
+    risks.push('PR 仍是 draft。')
+  }
+  if (inspect.failingChecksCount > 0) {
+    risks.push(`存在失败检查项：${inspect.failingChecksCount} 项。`)
+  }
+  if (inspect.pendingChecksCount > 0) {
+    risks.push(`存在等待中检查项：${inspect.pendingChecksCount} 项。`)
+  }
+  if (trim(inspect.reviewDecision)) {
+    risks.push(`reviewDecision 阻塞：${inspect.reviewDecision}`)
+  }
+  candidateCommands.push(
+    buildReadCommand(
+      'blocked',
+      `gh pr view ${inspect.prNumber} --json mergeable,mergeStateStatus,statusCheckRollup,reviewDecision,isDraft,headRefOid,url`,
+      '重新检查 PR 的 merge/check/review 阻塞项',
+    ),
+  )
+  nextActions.push('向用户报告具体阻塞项；不要把“已开 PR”误报成“已完成”。')
+} else if (inspect.prState === 'conflict') {
+  stage = 'conflict-analysis'
+  summary = 'PR 已存在且有冲突；workflow 将进入本地 dev <- czy-all 集成工作区，并自动尝试解到最终人工审阅前。'
+  nextActions.push('若自动解决成功，workflow 会在不 commit dev、不 push dev 的前提下，整理每个冲突块的解决摘要后停住。')
+
+  if (!allowLocalConflictAnalysis) {
+    risks.push('当前参数禁止本地冲突分析；只返回候选命令，不自动进入本地冲突工作区。')
+    candidateCommands.push(
+      buildCandidateCommand(
+        'conflict-analysis',
+        'git checkout dev && git merge --no-ff --no-commit czy-all',
+        '在显式允许本地冲突分析后创建本地冲突工作区',
+      ),
+    )
+  }
+} else {
+  stage = 'blocked'
+  summary = 'PR 已存在，但 workflow 未能判定下一阶段；保守起见先停住。'
+  risks.push('GitHub PR 状态不完整，继续动作可能误判。')
 }
 phase('总结价值')
 log('只在存在 PR 时总结不冲突改动价值。')
