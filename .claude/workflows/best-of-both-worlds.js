@@ -68,6 +68,7 @@ const INSPECT_SCHEMA = {
     'pendingChecksCount',
     'nonConflictNameOnly',
     'diffStat',
+    'upstreamOnlyCommits',
     'localUnmergedPaths',
     'dirtyPaths',
   ],
@@ -93,6 +94,7 @@ const INSPECT_SCHEMA = {
     pendingChecksCount: { type: 'number' },
     nonConflictNameOnly: { type: 'string' },
     diffStat: { type: 'string' },
+    upstreamOnlyCommits: { type: 'string' },
     localUnmergedPaths: { type: 'array', items: { type: 'string' } },
     dirtyPaths: { type: 'array', items: { type: 'string' } },
   },
@@ -175,9 +177,10 @@ async function inspectRepo() {
       '2. 不执行 checkout、merge、push、commit、git add、lint --fix。',
       '3. `dirtyPaths` 填 `git status --short --branch` 除第一行外的所有非空行。',
       '4. `localUnmergedPaths` 填 `git diff --name-only --diff-filter=U` 的逐行数组。',
-      '5. 若不存在 PR，令 `hasPr=false`，`prNumber=0`，其余 PR 字段给空串或 false 或 0。',
-      '6. `prState` 只允许填：missing-pr、blocked-pr、ready-for-merge、conflict。',
-      '7. 输出必须严格匹配 schema。',
+      '5. `upstreamOnlyCommits` 填 `git log --oneline dev..caozhiyuan/dev` 的原始文本；若为空则给空串。',
+      '6. 若不存在 PR，令 `hasPr=false`，`prNumber=0`，其余 PR 字段给空串或 false 或 0。',
+      '7. `prState` 只允许填：missing-pr、blocked-pr、ready-for-merge、conflict。',
+      '8. 输出必须严格匹配 schema。',
       '建议执行顺序：',
       'cd 仓库',
       'git fetch origin --prune',
@@ -189,6 +192,7 @@ async function inspectRepo() {
       'git rev-parse --abbrev-ref czy-all@{upstream}',
       'git rev-list --left-right --count origin/czy-all...czy-all',
       'git log --oneline caozhiyuan/dev..czy-all',
+      'git log --oneline dev..caozhiyuan/dev',
       'gh pr list --base dev --head czy-all --json number,url,mergeable,mergeStateStatus,statusCheckRollup,reviewDecision,isDraft,headRefOid,state',
       prNumber
         ? `gh pr view ${prNumber} --json number,url,mergeable,mergeStateStatus,statusCheckRollup,reviewDecision,isDraft,headRefOid,state`
@@ -674,9 +678,11 @@ log('只在存在 PR 时总结不冲突改动价值。')
 
 if (resultInspect.hasPr && trim(resultInspect.diffStat)) {
   const nonConflictPrompt = [
-    '基于下面的 diff stat 与文件列表，总结不冲突改动对用户/使用场景的价值。',
-    '若信息不足，就只根据文件名与统计做保守判断，并明确保持保守。',
+    '基于下面“真正下来的 upstream commits”、diff stat 与文件列表，总结这次无冲突下行对用户/使用场景的价值。',
+    '优先讲 feature、行为变化、用户影响；不要只复述文件名。',
+    '若信息不足，可以保守判断，但要优先利用 commit 标题表达“这次下来了什么”。',
     '输出 0-8 项。',
+    `真正下来的 upstream commits（dev..caozhiyuan/dev）:\n${trim(resultInspect.upstreamOnlyCommits) || '空'}`,
     `git diff --stat dev...czy-all:\n${resultInspect.diffStat}`,
     `git diff --name-only --diff-filter=U dev...czy-all:\n${resultInspect.nonConflictNameOnly}`,
   ].join('\n\n')
