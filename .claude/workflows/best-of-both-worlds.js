@@ -221,6 +221,12 @@ function lines(text) {
     : []
 }
 
+function normalizeDirtyPaths(dirtyPaths) {
+  return lines((dirtyPaths || []).join('\n')).filter(
+    (line) => !/^clean\s+[—-]\s+nothing to commit\.?$/i.test(line),
+  )
+}
+
 function classifyPollution(commits) {
   const suspicious = commits.filter((line) =>
     /(lint|typecheck|build|test|skill|config|cleanup|fix)/i.test(line),
@@ -350,6 +356,7 @@ phase('检查现状')
 log('顺序刷新远端引用并读取仓库现状。')
 
 const inspect = await inspectRepo()
+const dirtyPaths = normalizeDirtyPaths(inspect.dirtyPaths)
 const currentPr = buildCurrentPr(inspect)
 const commitsBeyondUpstream = lines(inspect.czyAllVsCaozhiyuan)
 const pollution = classifyPollution(commitsBeyondUpstream)
@@ -365,8 +372,8 @@ const facts = [
     : '当前未识别到现成的 czy-all -> dev PR。',
 ]
 
-if (inspect.dirtyPaths.length > 0) {
-  facts.push(`工作树存在 ${inspect.dirtyPaths.length} 条非干净项：${inspect.dirtyPaths.join('；')}。`)
+if (dirtyPaths.length > 0) {
+  facts.push(`工作树存在 ${dirtyPaths.length} 条非干净项：${dirtyPaths.join('；')}。`)
 }
 
 if (inspect.localUnmergedPaths.length > 0) {
@@ -385,7 +392,7 @@ const nextActions = []
 const candidateCommands = []
 const gates = []
 
-if (inspect.dirtyPaths.length > 0) {
+if (dirtyPaths.length > 0) {
   stage = 'blocked'
   summary = '工作树不干净；按 preflight 规则必须先停住，不进入同步或 PR 结论。'
   risks.push('若在脏工作树上继续 checkout/merge/push，可能把无关改动卷入 best-of-both-worlds 流程。')
