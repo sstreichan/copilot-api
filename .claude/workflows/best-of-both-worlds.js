@@ -1,7 +1,7 @@
 export const meta = {
   name: 'best-of-both-worlds',
   description:
-    '检查 caozhiyuan/dev -> czy-all -> dev 的集成状态，分析冲突，并在任何写操作前停在明确的用户授权门禁处。',
+    '按 best-of-both-worlds skill 自动推进 caozhiyuan/dev -> czy-all -> dev 集成，在不 commit dev、不 push dev 前提下停在最终人工审阅处。',
   phases: [
     {
       title: '检查现状',
@@ -17,15 +17,23 @@ export const meta = {
     },
     {
       title: '分析冲突',
-      detail: '只在本地已存在 dev <- czy-all 冲突工作区时逐块分析冲突，且按需并行',
+      detail: '在 PR 冲突时自动进入本地 dev <- czy-all 集成工作区，逐文件解决冲突并整理 best-of-both-worlds 摘要',
+    },
+    {
+      title: '执行同步',
+      detail: '在 workflow 内部执行 czy-all 同步、push，并回切到 dev',
+    },
+    {
+      title: '检查 PR 状态',
+      detail: '创建或确认 czy-all -> dev PR，并继续读取 merge/check/review 状态',
     },
     {
       title: '生成门禁',
-      detail: '生成逐字授权文案与下一步写操作候选命令',
+      detail: '运行验证并整理最终人工审阅停点；只为最终 merge 或污染恢复保留明确授权门禁',
     },
     {
       title: '返回方案',
-      detail: '返回结构化事实、风险、下一步动作、候选命令与停止点',
+      detail: '返回结构化事实、风险、下一步动作、候选命令与当前停点',
     },
   ],
 }
@@ -111,30 +119,39 @@ const CHANGE_SUMMARY_SCHEMA = {
   },
 }
 
-const BLOCK_ANALYSIS_SCHEMA = {
+const FILE_RESOLUTION_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: [
-    'file',
-    'blockIndex',
-    'devIntent',
-    'czyAllIntent',
-    'recommendedResolution',
-    'rationale',
-    'risk',
-    'needsUserDecision',
-    'preflightText',
-  ],
+  required: ['file', 'resolvedAllBlocks', 'staged', 'blockReports'],
   properties: {
     file: { type: 'string' },
-    blockIndex: { type: 'number' },
-    devIntent: { type: 'array', items: { type: 'string' } },
-    czyAllIntent: { type: 'array', items: { type: 'string' } },
-    recommendedResolution: { type: 'string' },
-    rationale: { type: 'string' },
-    risk: { type: 'array', items: { type: 'string' } },
-    needsUserDecision: { type: 'boolean' },
-    preflightText: { type: 'string' },
+    resolvedAllBlocks: { type: 'boolean' },
+    staged: { type: 'boolean' },
+    blockReports: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: [
+          'blockIndex',
+          'devIntent',
+          'czyAllIntent',
+          'resolvedAs',
+          'whyBestOfBoth',
+          'featureImpact',
+          'risk',
+        ],
+        properties: {
+          blockIndex: { type: 'number' },
+          devIntent: { type: 'array', items: { type: 'string' } },
+          czyAllIntent: { type: 'array', items: { type: 'string' } },
+          resolvedAs: { type: 'string' },
+          whyBestOfBoth: { type: 'string' },
+          featureImpact: { type: 'array', items: { type: 'string' } },
+          risk: { type: 'array', items: { type: 'string' } },
+        },
+      },
+    },
   },
 }
 
@@ -189,12 +206,12 @@ async function inspectRepo() {
   )
 }
 
-async function runReadonlyShell(command, label, phaseName) {
+async function runShell(command, label, phaseName, mode = '只读') {
   return agent(
     [
-      `在仓库 ${repoPath} 内运行只读 shell 命令，并以 JSON 返回结果。`,
+      `在仓库 ${repoPath} 内运行 ${mode} shell 命令，并以 JSON 返回结果。`,
       '要求：',
-      '1. 只运行给定命令，不追加写操作。',
+      '1. 只运行给定命令，不额外追加未写出的命令。',
       '2. 若命令失败，仍返回 exitCode 与 stdout。',
       '3. 输出严格匹配 schema。',
       `命令：cd ${repoPath} && ${command}`,
@@ -206,6 +223,14 @@ async function runReadonlyShell(command, label, phaseName) {
       effort: 'low',
     },
   )
+}
+
+async function runReadonlyShell(command, label, phaseName) {
+  return runShell(command, label, phaseName, '只读')
+}
+
+async function runWritableShell(command, label, phaseName) {
+  return runShell(command, label, phaseName, '写操作')
 }
 
 function trim(text) {
@@ -276,33 +301,11 @@ function buildReadCommand(stage, command, reason) {
   }
 }
 
-function buildLocalMergeGate() {
+function buildFinalUserReviewGate(blocks) {
   return {
-    kind: 'enter-local-conflict-analysis',
+    kind: 'final-review-before-dev-commit',
     preflight:
-      '确认：你已明确授权我在本地 dev 上执行 `git merge --no-ff --no-commit czy-all` 以生成冲突分析工作区（原话：“...”）。这不包含任何冲突块编辑、删除 marker、git add、验证、commit 或 push 授权。',
-  }
-}
-
-function buildValidationGate(blocks) {
-  const bullets = blocks.length
-    ? blocks
-        .map((block) => `- 第 ${block.blockIndex} 块（${block.file}）：原话“...”`)
-        .join('\n')
-    : '- 第 1 块（<file>:<hunk>）：原话“...”'
-
-  return {
-    kind: 'project-validation',
-    preflight:
-      `确认：本次 merge 共 ${blocks.length || 'Y'} 个冲突块，每块的用户拍板原话如下：\n${bullets}\n现在才进入项目级验证。`,
-  }
-}
-
-function buildCommitPushGate(blocks) {
-  return {
-    kind: 'commit-push',
-    preflight:
-      `确认：本次本地 merge \`dev <- czy-all\` 共解决 ${blocks.length || 'Y'} 块冲突，全部用户拍板原话已列出；项目级验证已全绿（lint/build/test/typecheck 均通过）；你已明确授权将合并提交 <sha 或待创建的合并提交> push 到 origin/dev（原话：“...”），现在才执行 commit/push。`,
+      `确认：workflow 已自动完成本地 dev <- czy-all 集成、冲突解决与必要验证；当前共整理 ${blocks.length || 'Y'} 个冲突块的解决摘要，并且尚未 commit 或 push dev。请先审阅每块冲突如何解决、为何是 best of both、以及功能/使用场景影响，再决定是否继续由 main agent 执行 commit/push。`,
   }
 }
 
@@ -352,12 +355,28 @@ function parseConflictBlocks(rawText) {
   return files.filter((item) => item.file && item.blockIndex)
 }
 
+function groupConflictBlocks(blocks) {
+  const grouped = new Map()
+
+  for (const block of blocks) {
+    const current = grouped.get(block.file) || []
+    current.push(block)
+    grouped.set(block.file, current)
+  }
+
+  return Array.from(grouped.entries()).map(([file, fileBlocks]) => ({
+    file,
+    blocks: fileBlocks.sort((a, b) => a.blockIndex - b.blockIndex),
+  }))
+}
+
 phase('检查现状')
 log('顺序刷新远端引用并读取仓库现状。')
 
 const inspect = await inspectRepo()
 const dirtyPaths = normalizeDirtyPaths(inspect.dirtyPaths)
-const currentPr = buildCurrentPr(inspect)
+let resultInspect = inspect
+let currentPr = buildCurrentPr(inspect)
 const commitsBeyondUpstream = lines(inspect.czyAllVsCaozhiyuan)
 const pollution = classifyPollution(commitsBeyondUpstream)
 
@@ -387,6 +406,8 @@ let stage = 'blocked'
 let summary = ''
 let nonConflictChanges = []
 let conflicts = []
+let resolvedConflictBlocks = []
+let validationResult = null
 const risks = []
 const nextActions = []
 const candidateCommands = []
@@ -436,96 +457,167 @@ if (dirtyPaths.length > 0) {
   nextActions.push('先找干净同步点，再向用户申请 force-with-lease 授权。')
 } else if (!inspect.hasPr) {
   stage = 'sync-buffer'
-  summary = '未发现现成 czy-all -> dev PR；应先判断是否需要同步 buffer，再创建 PR。'
-  candidateCommands.push(
-    buildReadCommand(
-      'sync-buffer',
-      'git status --short --branch && git log --oneline caozhiyuan/dev..czy-all && git rev-list --left-right --count origin/czy-all...czy-all',
-      '再次确认工作树、污染与本地/远端差异',
-    ),
-  )
-  candidateCommands.push(
-    buildCandidateCommand(
-      'sync-buffer',
-      'git checkout czy-all && git merge --ff-only caozhiyuan/dev',
-      '将上游最新内容以 fast-forward 方式带入 czy-all（fetch 已在检查阶段完成）',
-    ),
-  )
-  candidateCommands.push(
-    buildCandidateCommand(
-      'sync-buffer',
-      'git push origin czy-all && git checkout dev && gh pr create --base dev --head czy-all',
-      '推送 buffer 分支并创建 czy-all -> dev PR',
-    ),
-  )
-  nextActions.push('若 fast-forward 不可用，只建议纯同步 merge commit；不要自动执行。')
-} else if (inspect.prState === 'ready-for-merge') {
-  stage = 'ready-for-merge'
-  summary = 'PR 已存在，且当前看起来无冲突、无阻塞，可进入最终 merge 授权阶段。'
-  gates.push(buildGhMergeGate(currentPr))
-  candidateCommands.push(
-    buildReadCommand(
-      'ready-for-merge',
-      `gh pr view ${inspect.prNumber} --json mergeable,mergeStateStatus,statusCheckRollup,reviewDecision,isDraft,headRefOid,url`,
-      '执行最终 merge 前再次确认 PR 状态没有变化',
-    ),
-  )
-  candidateCommands.push(
-    buildCandidateCommand(
-      'ready-for-merge',
-      `gh pr merge ${inspect.prNumber} --merge`,
-      '在用户明确授权后完成 GitHub merge',
-    ),
-  )
-  nextActions.push('先向用户汇报 PR 已可合并，再等待最终 merge 授权。')
-} else if (inspect.prState === 'blocked-pr') {
-  stage = 'blocked'
-  summary = 'PR 已存在，但仍被草稿状态、评审、检查项或未知可合并状态阻塞。'
-  if (inspect.isDraft) {
-    risks.push('PR 仍是 draft。')
-  }
-  if (inspect.failingChecksCount > 0) {
-    risks.push(`存在失败检查项：${inspect.failingChecksCount} 项。`)
-  }
-  if (inspect.pendingChecksCount > 0) {
-    risks.push(`存在等待中检查项：${inspect.pendingChecksCount} 项。`)
-  }
-  if (trim(inspect.reviewDecision)) {
-    risks.push(`reviewDecision 阻塞：${inspect.reviewDecision}`)
-  }
-  nextActions.push('向用户报告具体阻塞项；不要误报“已完成”。')
-} else if (inspect.prState === 'conflict') {
-  stage = 'conflict-analysis'
-  summary = 'PR 已存在且有冲突；若未来要继续，只能在本地 dev <- czy-all 冲突分析工作区逐块决策。'
-  gates.push(buildLocalMergeGate())
-  nextActions.push('先向用户申请进入本地冲突分析工作区的授权。')
+  summary = '当前未发现现成 czy-all -> dev PR；workflow 将按 skill 镜像执行 sync-buffer 主链。'
 
-  if (!allowLocalConflictAnalysis) {
-    risks.push('当前参数禁止本地冲突分析；只返回门禁与候选命令。')
+  phase('执行同步')
+  log('在 workflow 内执行 czy-all 同步、push，并回切到 dev。')
+
+  const syncResult = await runWritableShell(
+    [
+      'git checkout czy-all',
+      'git fetch caozhiyuan --prune',
+      'git fetch origin --prune',
+      'if git merge --ff-only caozhiyuan/dev; then',
+      '  echo sync-mode:ff-only',
+      'else',
+      '  git merge --no-ff --no-edit caozhiyuan/dev',
+      'fi',
+      'git log --oneline caozhiyuan/dev..czy-all',
+      'git push origin czy-all',
+      'git checkout dev',
+    ].join('\n'),
+    '执行 sync-buffer 主链',
+    '执行同步',
+  )
+
+  if (syncResult.exitCode !== 0) {
+    stage = 'blocked'
+    summary = 'sync-buffer 主链执行失败；workflow 已停止。'
+    risks.push('workflow 在同步 czy-all 或回切 dev 时失败；继续盲目创建 PR 可能掩盖真实 git 状态。')
+    facts.push(`sync-buffer 命令失败（exitCode=${syncResult.exitCode}）：${trim(syncResult.stdout) || 'stdout 为空'}。`)
     candidateCommands.push(
-      buildCandidateCommand(
-        'conflict-analysis',
-        'git checkout dev && git merge --no-ff --no-commit czy-all',
-        '在用户明确授权后创建本地冲突分析工作区',
+      buildReadCommand(
+        'blocked',
+        'git status --short --branch && git rev-parse --abbrev-ref HEAD && git log --oneline -1 czy-all && git log --oneline -1 origin/czy-all',
+        '重新确认同步失败后的分支、工作树与 czy-all 状态',
       ),
     )
-  }
-} else {
-  stage = 'blocked'
-  summary = '未能判定明确阶段；保守起见先停住。'
-  risks.push('PR 状态或本地事实不完整，继续动作可能误判。')
-}
+    nextActions.push('先检查 sync-buffer 失败位置，再决定是否重试或人工处理。')
+  } else {
+    facts.push('workflow 已在内部完成 `git checkout czy-all`、同步 `caozhiyuan/dev`、`git push origin czy-all` 与 `git checkout dev`。')
 
+    phase('检查 PR 状态')
+    log('创建或确认 PR，并立即读取 merge/check/review 状态。')
+
+    const ensurePr = await runWritableShell(
+      [
+        'existing="$(gh pr list --base dev --head czy-all --json number --jq \'.[0].number\')"',
+        'if [ -n "$existing" ] && [ "$existing" != "null" ]; then',
+        '  echo "existing:$existing"',
+        'else',
+        '  gh pr create --base dev --head czy-all --fill',
+        'fi',
+      ].join('\n'),
+      '创建或确认 czy-all -> dev PR',
+      '检查 PR 状态',
+    )
+
+    if (ensurePr.exitCode !== 0) {
+      stage = 'blocked'
+      summary = 'sync-buffer 已完成，但创建或确认 PR 失败；workflow 已停止。'
+      risks.push('若在 PR 创建失败时继续假定 PR 已存在，后续 merge/check 判断会失真。')
+      facts.push(`PR 创建/确认失败（exitCode=${ensurePr.exitCode}）：${trim(ensurePr.stdout) || 'stdout 为空'}。`)
+      candidateCommands.push(
+        buildReadCommand(
+          'blocked',
+          'gh pr list --base dev --head czy-all --json number,url,mergeable,mergeStateStatus,isDraft,headRefOid,state',
+          '检查是否已有 PR 或查看创建失败后的 PR 状态',
+        ),
+      )
+      nextActions.push('先修复 gh pr create 阶段的问题，再决定是否重试。')
+    } else {
+      const refreshedInspect = await inspectRepo()
+      resultInspect = refreshedInspect
+      currentPr = buildCurrentPr(refreshedInspect)
+      facts.push(
+        `刷新后工作树状态为：${trim(refreshedInspect.statusShortBranch) || '空'}。`,
+      )
+      facts.push(
+        refreshedInspect.hasPr
+          ? `workflow 已创建或确认 PR #${refreshedInspect.prNumber}（${refreshedInspect.prUrl || '无 URL'}）。`
+          : 'workflow 已执行 PR 创建/确认命令，但刷新后仍未识别到 czy-all -> dev PR。',
+      )
+
+      if (!refreshedInspect.hasPr) {
+        stage = 'blocked'
+        summary = 'sync-buffer 已完成，但刷新后仍未识别到 PR；workflow 已停止。'
+        risks.push('PR 创建命令可能未生效，或 gh 读取状态失败。')
+        nextActions.push('先检查 GitHub 侧 PR 是否实际存在，再决定是否重试。')
+      } else if (refreshedInspect.prState === 'ready-for-merge') {
+        stage = 'ready-for-merge'
+        summary = 'PR 已存在，且当前看起来无冲突、无阻塞，可进入最终 merge 授权阶段。'
+        gates.push(buildGhMergeGate(currentPr))
+        candidateCommands.push(
+          buildReadCommand(
+            'ready-for-merge',
+            `gh pr view ${refreshedInspect.prNumber} --json mergeable,mergeStateStatus,statusCheckRollup,reviewDecision,isDraft,headRefOid,url`,
+            '执行最终 merge 前再次确认 PR 状态没有变化',
+          ),
+        )
+        candidateCommands.push(
+          buildCandidateCommand(
+            'ready-for-merge',
+            `gh pr merge ${refreshedInspect.prNumber} --merge`,
+            '在用户明确授权后完成 GitHub merge',
+          ),
+        )
+        nextActions.push('先向用户汇报 PR 已可合并，再等待最终 merge 授权。')
+      } else if (refreshedInspect.prState === 'blocked-pr') {
+        stage = 'blocked'
+        summary = 'PR 已存在，但仍被草稿状态、评审、检查项或未知可合并状态阻塞。'
+        if (refreshedInspect.isDraft) {
+          risks.push('PR 仍是 draft。')
+        }
+        if (refreshedInspect.failingChecksCount > 0) {
+          risks.push(`存在失败检查项：${refreshedInspect.failingChecksCount} 项。`)
+        }
+        if (refreshedInspect.pendingChecksCount > 0) {
+          risks.push(`存在等待中检查项：${refreshedInspect.pendingChecksCount} 项。`)
+        }
+        if (trim(refreshedInspect.reviewDecision)) {
+          risks.push(`reviewDecision 阻塞：${refreshedInspect.reviewDecision}`)
+        }
+        candidateCommands.push(
+          buildReadCommand(
+            'blocked',
+            `gh pr view ${refreshedInspect.prNumber} --json mergeable,mergeStateStatus,statusCheckRollup,reviewDecision,isDraft,headRefOid,url`,
+            '重新检查 PR 的 merge/check/review 阻塞项',
+          ),
+        )
+        nextActions.push('向用户报告具体阻塞项；不要把“已开 PR”误报成“已完成”。')
+      } else if (refreshedInspect.prState === 'conflict') {
+        stage = 'conflict-analysis'
+        summary = 'PR 已存在且有冲突；workflow 将进入本地 dev <- czy-all 集成工作区，并自动尝试解到最终人工审阅前。'
+        nextActions.push('若自动解决成功，workflow 会在不 commit dev、不 push dev 的前提下，整理每个冲突块的解决摘要后停住。')
+
+        if (!allowLocalConflictAnalysis) {
+          risks.push('当前参数禁止本地冲突分析；只返回候选命令，不自动进入本地冲突工作区。')
+          candidateCommands.push(
+            buildCandidateCommand(
+              'conflict-analysis',
+              'git checkout dev && git merge --no-ff --no-commit czy-all',
+              '在显式允许本地冲突分析后创建本地冲突工作区',
+            ),
+          )
+        }
+      } else {
+        stage = 'blocked'
+        summary = 'PR 已存在，但 workflow 未能判定下一阶段；保守起见先停住。'
+        risks.push('GitHub PR 状态不完整，继续动作可能误判。')
+      }
+    }
+  }
+}
 phase('总结价值')
 log('只在存在 PR 时总结不冲突改动价值。')
 
-if (inspect.hasPr && trim(inspect.diffStat)) {
+if (resultInspect.hasPr && trim(resultInspect.diffStat)) {
   const nonConflictPrompt = [
     '基于下面的 diff stat 与文件列表，总结不冲突改动对用户/使用场景的价值。',
     '若信息不足，就只根据文件名与统计做保守判断，并明确保持保守。',
     '输出 0-8 项。',
-    `git diff --stat dev...czy-all:\n${inspect.diffStat}`,
-    `git diff --name-only --diff-filter=U dev...czy-all:\n${inspect.nonConflictNameOnly}`,
+    `git diff --stat dev...czy-all:\n${resultInspect.diffStat}`,
+    `git diff --name-only --diff-filter=U dev...czy-all:\n${resultInspect.nonConflictNameOnly}`,
   ].join('\n\n')
 
   const nonConflictSummary = await agent(nonConflictPrompt, {
@@ -539,22 +631,53 @@ if (inspect.hasPr && trim(inspect.diffStat)) {
 }
 
 phase('分析冲突')
-log('只在真实本地冲突工作区存在时才分析冲突块。')
+log('在冲突场景下进入本地 dev <- czy-all 集成工作区，并尝试自动解到最终人工审阅前一刻。')
 
 if (stage === 'conflict-analysis') {
-  const localConflictWorkspaceExists =
-    inspect.localUnmergedPaths.length > 0 && inspect.currentBranch === 'dev' && allowLocalConflictAnalysis
+  let localConflictWorkspaceExists =
+    resultInspect.localUnmergedPaths.length > 0 && resultInspect.currentBranch === 'dev' && allowLocalConflictAnalysis
 
   if (!localConflictWorkspaceExists) {
-    risks.push('当前未检测到已存在的本地冲突工作区；无法直接逐块分析真实冲突标记。')
-    candidateCommands.push(
-      buildCandidateCommand(
-        'conflict-analysis',
-        'git checkout dev && git merge --no-ff --no-commit czy-all',
-        '在用户明确授权后创建本地冲突分析工作区，再重新运行本 workflow',
-      ),
+    const enterConflictWorkspace = await runWritableShell(
+      ['git checkout dev', 'git merge --no-ff --no-commit czy-all'].join('\n'),
+      '进入本地冲突分析工作区',
+      '分析冲突',
     )
-  } else {
+
+    if (enterConflictWorkspace.exitCode !== 0) {
+      const refreshedInspect = await inspectRepo()
+      resultInspect = refreshedInspect
+      currentPr = buildCurrentPr(refreshedInspect)
+      localConflictWorkspaceExists =
+        refreshedInspect.localUnmergedPaths.length > 0 && refreshedInspect.currentBranch === 'dev'
+
+      if (!localConflictWorkspaceExists) {
+        stage = 'blocked'
+        summary = 'workflow 尝试进入本地冲突工作区失败，且未检测到可继续的冲突现场。'
+        risks.push('若 merge --no-ff --no-commit 失败且未留下可解释的冲突现场，继续自动解冲突会误判。')
+        facts.push(
+          `进入本地冲突工作区失败（exitCode=${enterConflictWorkspace.exitCode}）：${trim(enterConflictWorkspace.stdout) || 'stdout 为空'}。`,
+        )
+        candidateCommands.push(
+          buildReadCommand(
+            'blocked',
+            `git status --short --branch && git rev-parse --abbrev-ref HEAD && gh pr view ${prNumber || currentPr?.number || '<number>'} --json mergeable,mergeStateStatus,statusCheckRollup,reviewDecision,isDraft,headRefOid,url`,
+            '重新确认本地 merge 失败后的 git 状态与 PR 状态',
+          ),
+        )
+        nextActions.push('先检查为何本地 merge 未形成冲突工作区，再决定是否继续自动化路径。')
+      }
+    } else {
+      facts.push('workflow 已自动进入本地 dev <- czy-all 冲突分析工作区。')
+      const refreshedInspect = await inspectRepo()
+      resultInspect = refreshedInspect
+      currentPr = buildCurrentPr(refreshedInspect)
+      localConflictWorkspaceExists =
+        refreshedInspect.localUnmergedPaths.length > 0 && refreshedInspect.currentBranch === 'dev'
+    }
+  }
+
+  if (stage === 'conflict-analysis' && localConflictWorkspaceExists) {
     const conflictCapture = await runReadonlyShell(
       "for f in $(git diff --name-only --diff-filter=U | head -n 20); do echo \"文件: $f\"; awk 'BEGIN{n=0;inb=0} /^<<<<<<< /{n++; inb=1; print \"<<<<<<<<< 冲突块 \" n; print; next} inb{print} /^>>>>>>> /{inb=0; print; next}' \"$f\"; echo; done",
       '抓取冲突块',
@@ -562,98 +685,101 @@ if (stage === 'conflict-analysis') {
     )
 
     const parsedBlocks = parseConflictBlocks(conflictCapture.stdout).slice(0, maxConflictBlocks)
+    conflicts = parsedBlocks
 
-    if (parsedBlocks.length <= 3) {
-      const sequentialResults = []
-      for (const block of parsedBlocks) {
-        const result = await agent(
+    if (parsedBlocks.length === 0) {
+      stage = 'blocked'
+      summary = 'PR 标记为冲突，但本地冲突工作区未抓到 conflict marker。'
+      risks.push('GitHub PR 状态与本地 merge 现场不一致；继续自动解冲突会误判。')
+      nextActions.push('先复核 PR 状态与本地 merge 结果是否一致，再决定是否重试。')
+    } else {
+      facts.push(`当前共有 ${groupConflictBlocks(parsedBlocks).length} 个冲突文件、${parsedBlocks.length} 个冲突块。`)
+      const groupedFiles = groupConflictBlocks(parsedBlocks)
+      const fileResolutionReports = []
+
+      for (const entry of groupedFiles) {
+        const resolution = await agent(
           [
-            '你在分析 best-of-both-worlds 冲突块。只做分析，不做编辑。',
-            '必须输出：dev 意图、czy-all 意图、推荐组合、理由、风险。',
-            '固定 needsUserDecision=true。',
-            '固定 preflightText 使用当前块编号。',
-            `文件：${block.file}`,
-            `块编号：${block.blockIndex}`,
-            `冲突内容：\n${block.excerpt}`,
+            '你在执行 best-of-both-worlds 自动冲突解决。',
+            '目标：在当前本地文件上直接落地冲突解决结果，但不要 commit，不要 push。',
+            '你必须先理解每个冲突块的 dev 意图、czy-all 意图，再生成 best-of-both-worlds 结果。',
+            '要求：',
+            '1. 直接编辑该文件，消除所有 conflict marker。',
+            '2. 完成后执行 `git add -- <file>`，但不要 `git add .`。',
+            '3. 输出严格匹配 schema。',
+            '4. blockReports 中每块都必须说明：如何解决、为何是 best of both、feature/行为/用户场景影响、风险。',
+            '5. 若无法安全自动解决，resolvedAllBlocks=false，staged=false，并在 blockReports 里清楚写风险。',
+            `文件：${entry.file}`,
+            `冲突块总数：${entry.blocks.length}`,
+            `冲突块内容：\n${entry.blocks.map((block) => `#${block.blockIndex}\n${block.excerpt}`).join('\n\n')}`,
           ].join('\n\n'),
           {
-            label: `冲突分析:${block.file}#${block.blockIndex}`,
+            label: `自动解冲突:${entry.file}`,
             phase: '分析冲突',
-            schema: BLOCK_ANALYSIS_SCHEMA,
-            effort: 'low',
+            schema: FILE_RESOLUTION_SCHEMA,
+            effort: 'high',
           },
         )
-        sequentialResults.push(result)
+        fileResolutionReports.push(resolution)
       }
-      conflicts = sequentialResults.filter(Boolean)
-    } else {
-      conflicts = (
-        await parallel(
-          parsedBlocks.map((block) => () =>
-            agent(
-              [
-                '你在分析 best-of-both-worlds 冲突块。只做分析，不做编辑。',
-                '必须输出：dev 意图、czy-all 意图、推荐组合、理由、风险。',
-                '固定 needsUserDecision=true。',
-                '固定 preflightText 使用当前块编号。',
-                `文件：${block.file}`,
-                `块编号：${block.blockIndex}`,
-                `冲突内容：\n${block.excerpt}`,
-              ].join('\n\n'),
-              {
-                label: `冲突分析:${block.file}#${block.blockIndex}`,
-                phase: '分析冲突',
-                schema: BLOCK_ANALYSIS_SCHEMA,
-                effort: 'low',
-              },
-            ),
+
+      resolvedConflictBlocks = fileResolutionReports.flatMap((item) =>
+        item.blockReports.map((block) => ({ file: item.file, ...block })),
+      )
+
+      const unresolvedFiles = fileResolutionReports.filter((item) => !item.resolvedAllBlocks || !item.staged)
+      if (unresolvedFiles.length > 0) {
+        stage = 'blocked'
+        summary = 'workflow 已尝试自动解冲突，但仍有文件未安全完成。'
+        risks.push(`仍有 ${unresolvedFiles.length} 个冲突文件未完成自动解决或未成功 staged。`)
+        nextActions.push('先审阅未完成文件的 blockReports，再决定是否继续人工处理。')
+      } else {
+        stage = 'final-review-before-dev-commit'
+        summary = 'workflow 已自动完成本地冲突解决，并停在 commit/push dev 之前等待最终人工审阅。'
+        gates.push(buildFinalUserReviewGate(resolvedConflictBlocks))
+
+        phase('生成门禁')
+        log('冲突已自动解决；现在运行验证并停在最终人工审阅前。')
+
+        validationResult = await runWritableShell(
+          ['bun run lint:all --fix', 'bun run build', 'bun test', 'bun run typecheck'].join('\n'),
+          '执行项目级验证',
+          '生成门禁',
+        )
+
+        facts.push('workflow 已在本地 dev <- czy-all 集成工作区中自动解决全部检测到的冲突块。')
+
+        if (validationResult.exitCode === 0) {
+          facts.push('workflow 已完成 lint/build/test/typecheck，且验证命令 exitCode=0。')
+        } else {
+          risks.push('自动冲突解决后项目级验证未全绿；已停止在最终人工审阅前。')
+          facts.push(
+            `项目级验证失败（exitCode=${validationResult.exitCode}）：${trim(validationResult.stdout) || 'stdout 为空'}。`,
+          )
+        }
+
+        candidateCommands.push(
+          buildReadCommand(
+            'final-review-before-dev-commit',
+            'git status --short && git diff --cached --stat && git diff --cached',
+            '审阅自动冲突解决后的 staged 结果与最终改动概览',
           ),
         )
-      ).filter(Boolean)
+        candidateCommands.push(
+          buildCandidateCommand(
+            'commit-push',
+            'git commit && git push origin dev',
+            '仅在用户与 main agent 审阅所有冲突解决摘要后，才继续 commit/push dev',
+          ),
+        )
+        nextActions.push('先审阅每个冲突块的解决摘要、功能影响与风险；确认后再由 main agent 决定是否 commit/push dev。')
+      }
     }
-
-    gates.push(
-      ...conflicts.map((block) => ({
-        kind: 'per-block-approval',
-        file: block.file,
-        blockIndex: block.blockIndex,
-        preflight: block.preflightText,
-      })),
-    )
   }
 }
 
-phase('生成门禁')
-log('在任何写操作前生成授权门禁与停止点。')
-
-if (conflicts.length > 0) {
-  gates.push(buildValidationGate(conflicts))
-  gates.push(buildCommitPushGate(conflicts))
-  candidateCommands.push(
-    buildReadCommand(
-      'project-validation',
-      'git rev-parse --abbrev-ref HEAD && git status --short',
-      '在进入项目级验证前确认仍位于 dev，且 staged/unmerged 状态可解释',
-    ),
-  )
-  candidateCommands.push(
-    buildCandidateCommand(
-      'project-validation',
-      'bun run lint:all --fix && bun run build && bun test && bun run typecheck',
-      '在所有冲突块均获用户拍板后进入项目级验证',
-    ),
-  )
-  candidateCommands.push(
-    buildCandidateCommand(
-      'commit-push',
-      'git commit && git push origin dev',
-      '在验证全绿且用户明确授权后提交并推送 dev',
-    ),
-  )
-}
-
 phase('返回方案')
-log('返回结构化方案，不执行任何写操作。')
+log('返回结构化方案，不执行 commit 或 push dev。')
 
 return {
   repoPath,
@@ -662,24 +788,31 @@ return {
   summary,
   facts,
   branch: {
-    currentBranch: inspect.currentBranch,
-    czyAllUpstream: inspect.czyAllUpstream,
+    currentBranch: resultInspect.currentBranch,
+    czyAllUpstream: resultInspect.czyAllUpstream,
     aheadBehind: {
-      left: inspect.aheadBehindLeft,
-      right: inspect.aheadBehindRight,
+      left: resultInspect.aheadBehindLeft,
+      right: resultInspect.aheadBehindRight,
     },
   },
   pr: currentPr,
   nonConflictChanges,
   conflicts,
+  resolvedConflictBlocks,
+  validation: validationResult
+    ? {
+        exitCode: validationResult.exitCode,
+        stdout: trim(validationResult.stdout),
+      }
+    : null,
   gates,
   candidateCommands,
   nextActions,
   risks,
   notes: [
-    '此 workflow 设计为到写操作门禁即停；candidateCommands 只作建议，不应在无用户授权时执行。',
-    '检查现状阶段已顺序执行 fetch，以减少本地陈旧引用导致的误判。',
-    '若要逐块分析真实冲突，最好先由用户明确授权并建立本地 dev <- czy-all conflict workspace，再重跑本 workflow。',
+    '此 workflow 现在按 best-of-both-worlds skill 的主链执行 sync-buffer、PR 创建/确认，以及必要时的本地 dev <- czy-all 自动集成。',
+    'workflow 可以自动尝试解决冲突并运行验证，但不会 commit dev，也不会 push dev。',
+    '最终交付给用户与 main agent 的重点，是每个冲突块如何解决、为何是 best of both，以及对应功能/使用场景影响。',
     'czy-all 只应承载上游同步结果；检测到污染时应优先进入污染恢复路径。',
   ],
 }
