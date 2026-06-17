@@ -40,6 +40,12 @@ export interface CopilotUsageTokens {
   total_nano_aiu?: number | null
 }
 
+/**
+ * Alias for service-layer API response field shape.
+ * Same shape as CopilotUsageTokens; service layers re-export this name.
+ */
+export type CopilotUsage = CopilotUsageTokens
+
 export interface PersistedTokenUsageEvent {
   cache_creation_input_tokens: number
   cache_read_input_tokens: number

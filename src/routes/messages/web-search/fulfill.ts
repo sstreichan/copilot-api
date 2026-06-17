@@ -19,6 +19,7 @@ import {
 import {
   createCopilotTokenUsageRecorder,
   normalizeResponsesUsage,
+  copilotUsageToTokens,
   type CopilotUsageTokens,
   type UsageTokens,
 } from "~/lib/token-usage"
@@ -30,7 +31,6 @@ import {
 } from "~/lib/utils"
 import {
   createResponses as createCopilotResponses,
-  type CopilotUsage as ResponsesCopilotUsage,
   type ResponseStreamEvent,
   type ResponsesPayload,
   type ResponsesResult,
@@ -578,19 +578,6 @@ const getNumber = (value: unknown): number | undefined =>
 const getString = (value: unknown): string | undefined =>
   typeof value === "string" ? value : undefined
 
-function copilotUsageFromResponsesResult(
-  copilotUsage: ResponsesCopilotUsage | null | undefined,
-): CopilotUsageTokens {
-  if (!copilotUsage) {
-    return {}
-  }
-
-  return {
-    token_details: copilotUsage.token_details,
-    total_nano_aiu: copilotUsage.total_nano_aiu,
-  }
-}
-
 const createUsageRecorder = (
   payload: AnthropicMessagesPayload,
   sessionId?: string,
@@ -734,7 +721,7 @@ export const handleWebSearchViaResponses = async (
   )
   recordUsage(
     normalizeResponsesUsage(result.usage),
-    copilotUsageFromResponsesResult(result.copilot_usage),
+    copilotUsageToTokens(result.copilot_usage),
   )
 
   if (!wantsStream) {

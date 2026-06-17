@@ -38,6 +38,8 @@ import {
   normalizeAnthropicUsage,
   normalizeOpenAIUsage,
   normalizeResponsesUsage,
+  copilotUsageToTokens,
+  type CopilotUsage,
   type CopilotUsageTokens,
   type UsageTokens,
 } from "~/lib/token-usage"
@@ -52,12 +54,10 @@ import {
   createChatCompletions,
   type ChatCompletionChunk,
   type ChatCompletionResponse,
-  type CopilotUsage as ChatCopilotUsage,
 } from "~/services/copilot/create-chat-completions"
 import { createMessages } from "~/services/copilot/create-messages"
 import {
   createResponses,
-  type CopilotUsage as ResponsesCopilotUsage,
   type Reasoning,
   type ResponsesPayload,
   type ResponsesResult,
@@ -394,7 +394,7 @@ const handleWithChatFallback = async (
             usage = normalizeOpenAIUsage(parsed.usage)
           }
           if (parsed.copilot_usage) {
-            copilotUsage = copilotUsageFromChatResponse(parsed.copilot_usage)
+            copilotUsage = copilotUsageToTokens(parsed.copilot_usage)
           }
           const sseEvents = translateChatCompletionChunkToResponsesStreamEvents(
             parsed,
@@ -440,7 +440,7 @@ const handleWithChatFallback = async (
   const responsesResult = translateChatCompletionToResponsesResult(chatResult)
   recordUsage(
     normalizeOpenAIUsage(chatResult.usage),
-    copilotUsageFromChatResponse(chatResult.copilot_usage),
+    copilotUsageToTokens(chatResult.copilot_usage),
   )
   debugJsonTail(logger, "Path C non-stream result:", {
     value: responsesResult,
@@ -548,9 +548,7 @@ const handleWithCopilotResponses = async ({
   })
   recordUsage(
     normalizeResponsesUsage((response as ResponsesResult).usage),
-    copilotUsageFromResponsesResult(
-      (response as ResponsesResult).copilot_usage,
-    ),
+    copilotUsageToTokens((response as ResponsesResult).copilot_usage),
   )
   const premium = await resolvePremiumInfo(response, "responses/non-stream")
   writeStreamLog({ model: payload.model, chunks: 0, done: true, premium }, true)
@@ -710,46 +708,6 @@ const getAnthropicMessageStartUsage = (
   >[0]
 }
 
-function copilotUsageFromChatResponse(
-  copilotUsage: ChatCopilotUsage | undefined,
-): CopilotUsageTokens {
-  if (!copilotUsage) {
-    return {}
-  }
-
-  return {
-    token_details: copilotUsage.token_details,
-    total_nano_aiu: copilotUsage.total_nano_aiu,
-  }
-}
-
-function copilotUsageFromResponsesResult(
-  copilotUsage: ResponsesCopilotUsage | null | undefined,
-): CopilotUsageTokens {
-  if (!copilotUsage) {
-    return {}
-  }
-
-  return {
-    token_details: copilotUsage.token_details,
-    total_nano_aiu: copilotUsage.total_nano_aiu,
-  }
-}
-
-function copilotUsageFromAnthropicResponse(value: unknown): CopilotUsageTokens {
-  const response = value as { copilot_usage?: ResponsesCopilotUsage | null }
-  return copilotUsageFromResponsesResult(response.copilot_usage)
-}
-
-function copilotUsageFromAnthropicEvent(
-  event: AnthropicStreamEventData,
-): CopilotUsageTokens | null {
-  if (event.type !== "message_delta") {
-    return null
-  }
-  return copilotUsageFromResponsesResult(event.copilot_usage)
-}
-
 const writeResponsesStreamError = async (
   stream: Parameters<Parameters<typeof streamSSE>[1]>[0],
   errorEvent: ReturnType<typeof createResponsesStreamErrorEvent>,
@@ -809,18 +767,30 @@ const getResponsesStreamUsage = (
     }
   ).response?.usage
 
+function copilotUsageFromAnthropicResponse(value: unknown): CopilotUsageTokens {
+  const response = value as { copilot_usage?: CopilotUsage | null }
+  return copilotUsageToTokens(response.copilot_usage)
+}
+
+function copilotUsageFromAnthropicEvent(
+  event: AnthropicStreamEventData,
+): CopilotUsageTokens | null {
+  if (event.type !== "message_delta") {
+    return null
+  }
+  return copilotUsageToTokens(event.copilot_usage)
+}
+
 const copilotUsageFromResponsesEvent = (
   event: ResponseStreamEvent,
 ): CopilotUsageTokens | null => {
   const response = (
     event as {
-      response?: { copilot_usage?: ResponsesCopilotUsage | null }
+      response?: { copilot_usage?: CopilotUsage | null }
     }
   ).response
 
-  return response ?
-      copilotUsageFromResponsesResult(response.copilot_usage)
-    : null
+  return response ? copilotUsageToTokens(response.copilot_usage) : null
 }
 
 const parseAnthropicSSEBody = async function* (

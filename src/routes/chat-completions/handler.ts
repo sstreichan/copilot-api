@@ -23,6 +23,7 @@ import { state } from "~/lib/state"
 import {
   createCopilotTokenUsageRecorder,
   normalizeOpenAIUsage,
+  copilotUsageToTokens,
   type CopilotUsageTokens,
   type UsageTokens,
 } from "~/lib/token-usage"
@@ -33,7 +34,6 @@ import {
   type ChatCompletionChunk,
   type ChatCompletionResponse,
   type ChatCompletionsPayload,
-  type CopilotUsage,
 } from "~/services/copilot/create-chat-completions"
 
 const logger = createHandlerLogger("chat-completions-handler")
@@ -109,7 +109,7 @@ export async function handleCompletion(c: Context) {
     debugJson(logger, "Non-streaming response:", response)
     recordUsage(
       normalizeOpenAIUsage(response.usage),
-      copilotUsageFromResponse(response.copilot_usage),
+      copilotUsageToTokens(response.copilot_usage),
     )
     const premium = await resolvePremiumInfo(
       response,
@@ -157,7 +157,7 @@ export async function handleCompletion(c: Context) {
           usage = normalizeOpenAIUsage(parsedChunk.usage)
         }
         if (parsedChunk?.copilot_usage) {
-          copilotUsage = copilotUsageFromResponse(parsedChunk.copilot_usage)
+          copilotUsage = copilotUsageToTokens(parsedChunk.copilot_usage)
         }
 
         await stream.writeSSE({ ...sseChunk, data: chunkData })
@@ -204,17 +204,4 @@ const normalizeSSEData = (data: string | undefined): string | undefined => {
     .filter((line) => line.startsWith("data:"))
     .map((line) => line.slice(5).trim())
     .join("\n")
-}
-
-function copilotUsageFromResponse(
-  copilotUsage: CopilotUsage | undefined,
-): CopilotUsageTokens {
-  if (!copilotUsage) {
-    return {}
-  }
-
-  return {
-    token_details: copilotUsage.token_details,
-    total_nano_aiu: copilotUsage.total_nano_aiu,
-  }
 }
