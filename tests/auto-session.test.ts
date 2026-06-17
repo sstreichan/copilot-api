@@ -31,6 +31,8 @@ const setFetchMock = (mockedFetch: typeof fetch): void => {
   ;(globalThis as TestGlobal).fetch = mockedFetch
 }
 
+const originalFetch = globalThis.fetch
+
 const loadAutoSessionModule = async (): Promise<AutoSessionModule> => {
   const module = (await import(
     `../src/lib/auto-session?test=${Date.now()}-${Math.random()}`
@@ -61,6 +63,8 @@ describe("auto-session", () => {
   })
 
   afterEach(() => {
+    setFetchMock(originalFetch)
+    delete (globalThis as TestGlobal).__AUTO_SESSION_QUEUE__
     mock.restore()
   })
 
