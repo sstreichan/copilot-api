@@ -19,6 +19,7 @@ import {
 import {
   createCopilotTokenUsageRecorder,
   normalizeResponsesUsage,
+  type CopilotUsageTokens,
   type UsageTokens,
 } from "~/lib/token-usage"
 import {
@@ -29,6 +30,7 @@ import {
 } from "~/lib/utils"
 import {
   createResponses as createCopilotResponses,
+  type CopilotUsage as ResponsesCopilotUsage,
   type ResponseStreamEvent,
   type ResponsesPayload,
   type ResponsesResult,
@@ -64,7 +66,7 @@ export const webSearchFlowDependencies = {
     payload: AnthropicMessagesPayload,
     sessionId?: string,
     webSearchModel?: string,
-  ): ((usage: UsageTokens) => void) =>
+  ): ((usage: UsageTokens, copilotUsage?: CopilotUsageTokens | null) => void) =>
     createCopilotTokenUsageRecorder({
       endpoint: "responses",
       fallbackSessionId: sessionId,
@@ -576,11 +578,24 @@ const getNumber = (value: unknown): number | undefined =>
 const getString = (value: unknown): string | undefined =>
   typeof value === "string" ? value : undefined
 
+function copilotUsageFromResponsesResult(
+  copilotUsage: ResponsesCopilotUsage | null | undefined,
+): CopilotUsageTokens {
+  if (!copilotUsage) {
+    return {}
+  }
+
+  return {
+    token_details: copilotUsage.token_details,
+    total_nano_aiu: copilotUsage.total_nano_aiu,
+  }
+}
+
 const createUsageRecorder = (
   payload: AnthropicMessagesPayload,
   sessionId?: string,
   webSearchModel?: string,
-): ((usage: UsageTokens) => void) =>
+): ((usage: UsageTokens, copilotUsage?: CopilotUsageTokens | null) => void) =>
   webSearchFlowDependencies.createUsageRecorder(
     payload,
     sessionId,
@@ -717,7 +732,10 @@ export const handleWebSearchViaResponses = async (
     options.sessionId,
     webSearchModel,
   )
-  recordUsage(normalizeResponsesUsage(result.usage))
+  recordUsage(
+    normalizeResponsesUsage(result.usage),
+    copilotUsageFromResponsesResult(result.copilot_usage),
+  )
 
   if (!wantsStream) {
     return c.json(response)

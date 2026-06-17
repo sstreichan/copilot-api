@@ -208,7 +208,17 @@ export interface AnthropicResponse {
     cache_read_input_tokens?: number
     service_tier?: "standard" | "priority" | "batch"
   }
-  copilot_usage?: Record<string, unknown> | null
+  copilot_usage?: AnthropicCopilotUsage | null
+}
+
+export interface AnthropicCopilotUsage {
+  token_details?: Array<{
+    batch_size: number
+    cost_per_batch: number
+    token_count: number
+    token_type: string
+  }>
+  total_nano_aiu?: number
 }
 
 export type AnthropicResponseContentBlock =
@@ -261,7 +271,7 @@ export interface AnthropicMessageDeltaEvent {
     stop_sequence?: string | null
   }
   copilot_quota_snapshots?: unknown
-  copilot_usage?: Record<string, unknown> | null
+  copilot_usage?: AnthropicCopilotUsage | null
   usage?: {
     input_tokens?: number
     output_tokens: number

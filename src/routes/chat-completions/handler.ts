@@ -23,6 +23,7 @@ import { state } from "~/lib/state"
 import {
   createCopilotTokenUsageRecorder,
   normalizeOpenAIUsage,
+  type CopilotUsageTokens,
   type UsageTokens,
 } from "~/lib/token-usage"
 import { generateRequestIdFromPayload, getUUID, isNullish } from "~/lib/utils"
@@ -32,6 +33,7 @@ import {
   type ChatCompletionChunk,
   type ChatCompletionResponse,
   type ChatCompletionsPayload,
+  type CopilotUsage,
 } from "~/services/copilot/create-chat-completions"
 
 const logger = createHandlerLogger("chat-completions-handler")
@@ -105,7 +107,10 @@ export async function handleCompletion(c: Context) {
 
   if (isNonStreaming(response)) {
     debugJson(logger, "Non-streaming response:", response)
-    recordUsage(normalizeOpenAIUsage(response.usage))
+    recordUsage(
+      normalizeOpenAIUsage(response.usage),
+      copilotUsageFromResponse(response.copilot_usage),
+    )
     const premium = await resolvePremiumInfo(
       response,
       "chat-completions/non-stream",
@@ -129,6 +134,7 @@ export async function handleCompletion(c: Context) {
   return streamSSE(c, async (stream) => {
     let chunkCount = 0
     let usage: UsageTokens = {}
+    let copilotUsage: CopilotUsageTokens = {}
     try {
       for await (const chunk of response) {
         debugJson(logger, "Streaming chunk:", chunk)
@@ -150,6 +156,9 @@ export async function handleCompletion(c: Context) {
         if (parsedChunk?.usage) {
           usage = normalizeOpenAIUsage(parsedChunk.usage)
         }
+        if (parsedChunk?.copilot_usage) {
+          copilotUsage = copilotUsageFromResponse(parsedChunk.copilot_usage)
+        }
 
         await stream.writeSSE({ ...sseChunk, data: chunkData })
       }
@@ -162,7 +171,7 @@ export async function handleCompletion(c: Context) {
         { model: payload.model, chunks: chunkCount, done: true, premium },
         true,
       )
-      recordUsage(usage)
+      recordUsage(usage, copilotUsage)
     }
   })
 }
@@ -195,4 +204,17 @@ const normalizeSSEData = (data: string | undefined): string | undefined => {
     .filter((line) => line.startsWith("data:"))
     .map((line) => line.slice(5).trim())
     .join("\n")
+}
+
+function copilotUsageFromResponse(
+  copilotUsage: CopilotUsage | undefined,
+): CopilotUsageTokens {
+  if (!copilotUsage) {
+    return {}
+  }
+
+  return {
+    token_details: copilotUsage.token_details,
+    total_nano_aiu: copilotUsage.total_nano_aiu,
+  }
 }
