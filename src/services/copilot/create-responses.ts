@@ -366,6 +366,7 @@ export interface ResponseCompletedEvent {
 }
 
 export interface ResponseIncompleteEvent {
+  copilot_usage?: CopilotUsage | null
   response: ResponsesResult
   sequence_number: number
   type: "response.incomplete"
@@ -410,6 +411,7 @@ export interface ResponseFunctionCallArgumentsDoneEvent {
 }
 
 export interface ResponseFailedEvent {
+  copilot_usage?: CopilotUsage | null
   response: ResponsesResult
   sequence_number: number
   type: "response.failed"
