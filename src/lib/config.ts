@@ -33,6 +33,7 @@ export interface AppConfig {
   // Mixing web_search with other tools is not supported.
   messageApiWebSearchModel?: string
   claudeTokenMultiplier?: number
+  copilotUseLocalModels?: boolean
 }
 
 export interface ModelConfig {
@@ -134,6 +135,7 @@ const defaultConfig: AppConfig = {
   useResponsesApiWebSocket: true,
   useResponsesApiWebSearch: true,
   messageApiWebSearchModel: "gpt-5-mini",
+  copilotUseLocalModels: false,
 }
 
 let cachedConfig: AppConfig | null = null
@@ -693,4 +695,9 @@ export function getMessageApiWebSearchModel(): string | undefined {
 export function getClaudeTokenMultiplier(): number {
   const config = getConfig()
   return config.claudeTokenMultiplier ?? 1.15
+}
+
+export function isCopilotUseLocalModelsEnabled(): boolean {
+  const config = getConfig()
+  return config.copilotUseLocalModels ?? false
 }
