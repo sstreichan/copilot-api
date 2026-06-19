@@ -54,7 +54,6 @@ export interface PersistedTokenUsageEvent {
   endpoint: TokenUsageEndpoint
   input_tokens: number
   model: string
-  nano_cost_cache_creation: number | null
   nano_cost_cache_read: number | null
   nano_cost_cache_write: number | null
   nano_cost_input: number | null
@@ -73,7 +72,6 @@ export interface TokenUsageTotals {
   cache_creation_input_tokens: number
   cache_read_input_tokens: number
   input_tokens: number
-  nano_cost_cache_creation: number | null
   nano_cost_cache_read: number | null
   nano_cost_cache_write: number | null
   nano_cost_input: number | null
@@ -97,7 +95,6 @@ export interface TokenUsageEventRecord {
   id: number
   input_tokens: number
   model: string
-  nano_cost_cache_creation: number | null
   nano_cost_cache_read: number | null
   nano_cost_cache_write: number | null
   nano_cost_input: number | null
@@ -207,7 +204,6 @@ function initializeTokenUsageDb(db: SqliteDatabase): void {
       nano_cost_input INTEGER,
       nano_cost_cache_read INTEGER,
       nano_cost_cache_write INTEGER,
-      nano_cost_cache_creation INTEGER,
       nano_cost_output INTEGER,
       total_tokens INTEGER NOT NULL DEFAULT 0
     )
@@ -218,7 +214,6 @@ function initializeTokenUsageDb(db: SqliteDatabase): void {
   ensureColumn(db, "nano_cost_input", "INTEGER")
   ensureColumn(db, "nano_cost_cache_read", "INTEGER")
   ensureColumn(db, "nano_cost_cache_write", "INTEGER")
-  ensureColumn(db, "nano_cost_cache_creation", "INTEGER")
   ensureColumn(db, "nano_cost_output", "INTEGER")
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_token_usage_events_created_at_ms
@@ -318,10 +313,9 @@ async function writeTokenUsageEvent(
         nano_cost_input,
         nano_cost_cache_read,
         nano_cost_cache_write,
-        nano_cost_cache_creation,
         nano_cost_output,
         total_tokens
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
   ).run(
     event.created_at_ms,
@@ -341,7 +335,6 @@ async function writeTokenUsageEvent(
     event.nano_cost_input,
     event.nano_cost_cache_read,
     event.nano_cost_cache_write,
-    event.nano_cost_cache_creation,
     event.nano_cost_output,
     event.total_tokens,
   )
@@ -452,7 +445,6 @@ function createEmptyTotals(): TokenUsageTotals {
     cache_creation_input_tokens: 0,
     cache_read_input_tokens: 0,
     input_tokens: 0,
-    nano_cost_cache_creation: null,
     nano_cost_cache_read: null,
     nano_cost_cache_write: null,
     nano_cost_input: null,
@@ -468,10 +460,6 @@ function addTotals(target: TokenUsageTotals, next: TokenUsageTotals): void {
   target.cache_creation_input_tokens += next.cache_creation_input_tokens
   target.cache_read_input_tokens += next.cache_read_input_tokens
   target.input_tokens += next.input_tokens
-  target.nano_cost_cache_creation = addNullableNumbers(
-    target.nano_cost_cache_creation,
-    next.nano_cost_cache_creation,
-  )
   target.nano_cost_cache_read = addNullableNumbers(
     target.nano_cost_cache_read,
     next.nano_cost_cache_read,
@@ -608,10 +596,6 @@ function totalsFromRow(
     ),
     cache_read_input_tokens: numberFromRow(row, "cache_read_input_tokens"),
     input_tokens: numberFromRow(row, "input_tokens"),
-    nano_cost_cache_creation: nullableNumberFromRow(
-      row,
-      "nano_cost_cache_creation",
-    ),
     nano_cost_cache_read: nullableNumberFromRow(row, "nano_cost_cache_read"),
     nano_cost_cache_write: nullableNumberFromRow(row, "nano_cost_cache_write"),
     nano_cost_input: nullableNumberFromRow(row, "nano_cost_input"),
@@ -660,10 +644,6 @@ function usageEventFromRow(
     id: numberFromRow(row, "id"),
     input_tokens: numberFromRow(row, "input_tokens"),
     model: stringFromRow(row, "model") || "unknown",
-    nano_cost_cache_creation: nullableNumberFromRow(
-      row,
-      "nano_cost_cache_creation",
-    ),
     nano_cost_cache_read: nullableNumberFromRow(row, "nano_cost_cache_read"),
     nano_cost_cache_write: nullableNumberFromRow(row, "nano_cost_cache_write"),
     nano_cost_input: nullableNumberFromRow(row, "nano_cost_input"),
@@ -696,7 +676,6 @@ function getTotalsRow(
       SUM(nano_cost_input) AS nano_cost_input,
       SUM(nano_cost_cache_read) AS nano_cost_cache_read,
       SUM(nano_cost_cache_write) AS nano_cost_cache_write,
-      SUM(nano_cost_cache_creation) AS nano_cost_cache_creation,
       SUM(nano_cost_output) AS nano_cost_output,
       COALESCE(SUM(total_tokens), 0) AS total_tokens
     FROM token_usage_events
@@ -724,7 +703,6 @@ function getModelRows(
       SUM(nano_cost_input) AS nano_cost_input,
       SUM(nano_cost_cache_read) AS nano_cost_cache_read,
       SUM(nano_cost_cache_write) AS nano_cost_cache_write,
-      SUM(nano_cost_cache_creation) AS nano_cost_cache_creation,
       SUM(nano_cost_output) AS nano_cost_output,
       COALESCE(SUM(total_tokens), 0) AS total_tokens
     FROM token_usage_events
@@ -849,7 +827,6 @@ export async function getTokenUsageEventsPage(input: {
       nano_cost_input,
       nano_cost_cache_read,
       nano_cost_cache_write,
-      nano_cost_cache_creation,
       nano_cost_output,
       total_tokens
     FROM token_usage_events
