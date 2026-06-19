@@ -284,6 +284,7 @@ interface {
   "usage": {
     "input_tokens": 10,
     "output_tokens": 5,
+    "cache_creation_input_tokens": 0,
     "cache_read_input_tokens": 0,
     "service_tier": "standard"
   }
@@ -296,8 +297,10 @@ interface {
 | ----------------------------- | -------- | ---------------------------- |
 | `input_tokens`                | ✅       | ✅                           |
 | `output_tokens`               | ✅       | ✅                           |
+| `cache_creation_input_tokens` | ✅       | ❌ Not emitted               |
 | `cache_read_input_tokens`     | ✅       | ⚠️ Optional (when available) |
 | `service_tier`                | ✅       | ❌ Not emitted               |
+| `cache_creation`              | ✅       | ❌ Not supported             |
 | `server_tool_use`             | ✅       | ❌ Not supported             |
 
 ---
@@ -423,6 +426,7 @@ Our implementation proxies to GitHub Copilot backend, which has its own limitati
   "usage": {
     "input_tokens": 25,
     "output_tokens": 150,
+    "cache_creation_input_tokens": 0,
     "cache_read_input_tokens": 0
   }
 }

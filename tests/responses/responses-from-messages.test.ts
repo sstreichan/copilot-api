@@ -300,6 +300,7 @@ describe("translateAnthropicMessageToResponses", () => {
         input_tokens: 120,
         output_tokens: 80,
         cache_read_input_tokens: 20,
+        cache_creation_input_tokens: 10,
       },
     })
 

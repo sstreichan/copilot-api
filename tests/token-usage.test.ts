@@ -64,19 +64,21 @@ function localDateLabel(date: Date): string {
 }
 
 describe("token usage storage", () => {
-  test("normalizes OpenAI cached usage details", () => {
+  test("normalizes OpenAI cache creation usage details", () => {
     expect(
       normalizeOpenAIUsage({
         completion_tokens: 10,
         prompt_tokens: 100,
         prompt_tokens_details: {
+          cache_creation_input_tokens: 20,
           cached_tokens: 12,
         },
         total_tokens: 110,
       }),
     ).toEqual({
+      cache_creation_input_tokens: 20,
       cache_read_input_tokens: 12,
-      input_tokens: 88,
+      input_tokens: 68,
       output_tokens: 10,
       total_tokens: 110,
     })
@@ -150,6 +152,7 @@ describe("token usage storage", () => {
 
   test("summarizes by model with total token and user fields", async () => {
     recordTokenUsageEvent({
+      cache_creation_input_tokens: 1,
       cache_read_input_tokens: 2,
       endpoint: "chat_completions",
       input_tokens: 10,
@@ -173,8 +176,10 @@ describe("token usage storage", () => {
 
     const summary = (await response.json()) as TokenUsageSummary
     expect(summary.totals).toEqual({
+      cache_creation_input_tokens: 1,
       cache_read_input_tokens: 6,
       input_tokens: 30,
+      nano_cost_cache_creation: null,
       nano_cost_cache_read: null,
       nano_cost_cache_write: null,
       nano_cost_input: null,
@@ -182,9 +187,9 @@ describe("token usage storage", () => {
       output_tokens: 9,
       request_count: 2,
       total_nano_aiu: null,
-      total_tokens: 45,
+      total_tokens: 46,
     })
-    expect(summary.totals.total_tokens).toBe(45)
+    expect(summary.totals.total_tokens).toBe(46)
     expect(summary.byModel).toHaveLength(2)
     expect(summary.byModel.every((row) => row.total_tokens > 0)).toBe(true)
   })
@@ -235,6 +240,7 @@ describe("token usage storage", () => {
     recordUsage(
       {
         cache_read_input_tokens: 3,
+        cache_creation_input_tokens: 4,
         input_tokens: 18,
         output_tokens: 75,
         total_tokens: 100,
@@ -263,7 +269,7 @@ describe("token usage storage", () => {
             batch_size: 1_000_000,
             cost_per_batch: 5_000_000_000,
             token_count: 4,
-            token_type: "cache_write",
+            token_type: "cache_creation",
           },
           {
             batch_size: 1_000_000,
@@ -284,14 +290,15 @@ describe("token usage storage", () => {
     expect(summary.totals.total_nano_aiu).toBe(15_477_500)
     expect(summary.totals.nano_cost_input).toBe(450_000)
     expect(summary.totals.nano_cost_cache_read).toBe(7_500)
-    expect(summary.totals.nano_cost_cache_write).toBe(20_000)
+    expect(summary.totals.nano_cost_cache_write).toBe(0)
+    expect(summary.totals.nano_cost_cache_creation).toBe(20_000)
     expect(summary.totals.nano_cost_output).toBe(15_000_000)
     expect(summary.byModel[0]?.total_nano_aiu).toBe(15_477_500)
-    expect(summary.byModel[0]?.nano_cost_cache_write).toBe(20_000)
+    expect(summary.byModel[0]?.nano_cost_cache_creation).toBe(20_000)
 
     const eventsPage = await fetchEventsPage()
     expect(eventsPage.items[0]?.total_nano_aiu).toBe(15_477_500)
-    expect(eventsPage.items[0]?.nano_cost_cache_write).toBe(20_000)
+    expect(eventsPage.items[0]?.nano_cost_cache_creation).toBe(20_000)
     expect(eventsPage.items[0]?.nano_cost_output).toBe(15_000_000)
   })
 
@@ -333,6 +340,7 @@ describe("token usage storage", () => {
 
     setSystemTime(localDate(2026, 4, 12, 10))
     recordTokenUsageEvent({
+      cache_creation_input_tokens: 1,
       cache_read_input_tokens: 2,
       endpoint: "chat_completions",
       input_tokens: 10,
@@ -369,8 +377,10 @@ describe("token usage storage", () => {
     expect(daily.period).toBe("week")
     expect(daily.days).toHaveLength(7)
     expect(daily.totals).toEqual({
+      cache_creation_input_tokens: 1,
       cache_read_input_tokens: 6,
       input_tokens: 36,
+      nano_cost_cache_creation: null,
       nano_cost_cache_read: null,
       nano_cost_cache_write: null,
       nano_cost_input: null,
@@ -378,13 +388,13 @@ describe("token usage storage", () => {
       output_tokens: 12,
       request_count: 3,
       total_nano_aiu: null,
-      total_tokens: 144,
+      total_tokens: 145,
     })
     expect(daily.byModel.map((model) => model.model)).toEqual([
       "gpt-a",
       "gpt-b",
     ])
-    expect(daily.byModel[0]?.total_tokens).toBe(115)
+    expect(daily.byModel[0]?.total_tokens).toBe(116)
 
     const firstDay = daily.days[0]
     expect(firstDay?.date).toBe(localDateLabel(localDate(2026, 4, 9)))
@@ -394,8 +404,10 @@ describe("token usage storage", () => {
       (day) => day.date === localDateLabel(localDate(2026, 4, 12)),
     )
     expect(may12?.totals).toEqual({
+      cache_creation_input_tokens: 1,
       cache_read_input_tokens: 6,
       input_tokens: 30,
+      nano_cost_cache_creation: null,
       nano_cost_cache_read: null,
       nano_cost_cache_write: null,
       nano_cost_input: null,
@@ -403,7 +415,7 @@ describe("token usage storage", () => {
       output_tokens: 8,
       request_count: 2,
       total_nano_aiu: null,
-      total_tokens: 44,
+      total_tokens: 45,
     })
     expect(may12?.byModel.map((model) => model.model)).toEqual([
       "gpt-b",

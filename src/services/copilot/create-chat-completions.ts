@@ -304,6 +304,7 @@ export interface ChatCompletionChunk {
     completion_tokens: number
     total_tokens: number
     prompt_tokens_details?: {
+      cache_creation_input_tokens?: number
       cached_tokens?: number
     }
     completion_tokens_details?: {
@@ -352,6 +353,7 @@ export interface ChatCompletionResponse {
     completion_tokens: number
     total_tokens: number
     prompt_tokens_details?: {
+      cache_creation_input_tokens?: number
       cached_tokens?: number
     }
   }

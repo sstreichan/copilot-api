@@ -58,6 +58,7 @@ const TOKEN_USAGE_EVENTS_PAGE_SIZE = 10
 const ALL_METRICS_VALUE = '__all__'
 const ALL_MODELS_VALUE = '__all__'
 const EMPTY_TOKEN_USAGE_TOTALS: TokenUsageTotals = {
+  cache_creation_input_tokens: 0,
   cache_read_input_tokens: 0,
   input_tokens: 0,
   output_tokens: 0,
@@ -740,6 +741,7 @@ function TokenUsagePanel({
         <TokenUsageMetric label={t('dashboard.tokenUsageInput')} value={totals.input_tokens} loading={loading} tone="blue" />
         <TokenUsageMetric label={t('dashboard.tokenUsageOutput')} value={totals.output_tokens} loading={loading} tone="green" />
         <TokenUsageMetric label={t('dashboard.tokenUsageCacheRead')} value={totals.cache_read_input_tokens} loading={loading} tone="cyan" />
+        <TokenUsageMetric label={t('dashboard.tokenUsageCacheWrite')} value={totals.cache_creation_input_tokens} loading={loading} tone="amber" />
         <TokenUsageMetric label={t('dashboard.tokenUsageRequests')} value={totals.request_count} loading={loading} tone="violet" />
       </div>
 
@@ -779,6 +781,7 @@ function TokenUsagePanel({
                     <th className="px-2.5 py-1.5 text-right font-semibold">{t('dashboard.tokenUsageInput')}</th>
                     <th className="px-2.5 py-1.5 text-right font-semibold">{t('dashboard.tokenUsageOutput')}</th>
                     <th className="px-2.5 py-1.5 text-right font-semibold">{t('dashboard.tokenUsageCacheRead')}</th>
+                    <th className="px-2.5 py-1.5 text-right font-semibold">{t('dashboard.tokenUsageCacheWrite')}</th>
                     <th className="px-2.5 py-1.5 text-right font-semibold">{t('dashboard.tokenUsageTotal')}</th>
                   </tr>
                 </thead>
@@ -843,6 +846,7 @@ function TokenUsagePanel({
                     <th className="px-2.5 py-1.5 text-right font-semibold">{t('dashboard.tokenUsageInput')}</th>
                     <th className="px-2.5 py-1.5 text-right font-semibold">{t('dashboard.tokenUsageOutput')}</th>
                     <th className="px-2.5 py-1.5 text-right font-semibold">{t('dashboard.tokenUsageCacheRead')}</th>
+                    <th className="px-2.5 py-1.5 text-right font-semibold">{t('dashboard.tokenUsageCacheWrite')}</th>
                     <th className="px-2.5 py-1.5 text-right font-semibold">{t('dashboard.tokenUsageTotal')}</th>
                   </tr>
                 </thead>
@@ -888,6 +892,7 @@ function TokenUsageMetric({ label, loading, tone, value }: {
 }
 
 type TokenUsageTrendMetricKey =
+  | 'cache_creation_input_tokens'
   | 'cache_read_input_tokens'
   | 'input_tokens'
   | 'output_tokens'
@@ -928,7 +933,8 @@ function TokenUsageTrendChart({
     { color: '#0f172a', key: 'total_tokens', label: t('dashboard.tokenUsageTotal') },
     { color: '#2563eb', key: 'input_tokens', label: t('dashboard.tokenUsageInput') },
     { color: '#16a34a', key: 'output_tokens', label: t('dashboard.tokenUsageOutput') },
-    { color: '#0891b2', key: 'cache_read_input_tokens', label: t('dashboard.tokenUsageCacheRead') }
+    { color: '#0891b2', key: 'cache_read_input_tokens', label: t('dashboard.tokenUsageCacheRead') },
+    { color: '#d97706', key: 'cache_creation_input_tokens', label: t('dashboard.tokenUsageCacheWrite') }
   ]
   const visibleMetrics = selectedMetric === ALL_METRICS_VALUE
     ? metrics
@@ -1138,6 +1144,7 @@ function TokenUsageModelRow({ model }: { model: TokenUsageModelSummary }) {
       <td className="px-2.5 py-1.5 text-right text-slate-500">{formatTokenCount(model.input_tokens)}</td>
       <td className="px-2.5 py-1.5 text-right text-slate-500">{formatTokenCount(model.output_tokens)}</td>
       <td className="px-2.5 py-1.5 text-right text-slate-500">{formatTokenCount(model.cache_read_input_tokens)}</td>
+      <td className="px-2.5 py-1.5 text-right text-slate-500">{formatTokenCount(model.cache_creation_input_tokens)}</td>
       <td className="px-2.5 py-1.5 text-right font-semibold text-[#0f172a]">{formatTokenCount(calcTokenTotal(model))}</td>
     </tr>
   )
@@ -1165,6 +1172,7 @@ function TokenUsageEventRow({ event }: { event: TokenUsageEventRecord }) {
       <td className="px-2.5 py-1.5 text-right text-slate-500">{formatTokenCount(event.input_tokens)}</td>
       <td className="px-2.5 py-1.5 text-right text-slate-500">{formatTokenCount(event.output_tokens)}</td>
       <td className="px-2.5 py-1.5 text-right text-slate-500">{formatTokenCount(event.cache_read_input_tokens)}</td>
+      <td className="px-2.5 py-1.5 text-right text-slate-500">{formatTokenCount(event.cache_creation_input_tokens)}</td>
       <td className="px-2.5 py-1.5 text-right font-semibold text-[#0f172a]">
         {formatTokenCount(event.total_tokens)}
       </td>

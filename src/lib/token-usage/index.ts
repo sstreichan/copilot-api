@@ -106,6 +106,7 @@ function resolveUserId(input: TokenUsageEventInput): string {
 function resolveTokenDetails(
   details: Array<TokenUsageTokenDetail> | null | undefined,
 ): {
+  nano_cost_cache_creation: number | null
   nano_cost_cache_read: number | null
   nano_cost_cache_write: number | null
   nano_cost_input: number | null
@@ -113,6 +114,7 @@ function resolveTokenDetails(
 } {
   if (!Array.isArray(details)) {
     return {
+      nano_cost_cache_creation: null,
       nano_cost_cache_read: null,
       nano_cost_cache_write: null,
       nano_cost_input: null,
@@ -121,6 +123,7 @@ function resolveTokenDetails(
   }
 
   const result = {
+    nano_cost_cache_creation: 0,
     nano_cost_cache_read: 0,
     nano_cost_cache_write: 0,
     nano_cost_input: 0,
@@ -151,6 +154,10 @@ function resolveTokenDetails(
         result.nano_cost_cache_write += cost
         break
       }
+      case "cache_creation": {
+        result.nano_cost_cache_creation += cost
+        break
+      }
       case "output": {
         result.nano_cost_output += cost
         break
@@ -171,6 +178,9 @@ function toPersistedEvent(
   const now = new Date()
   const cost = resolveTokenDetails(input.copilotUsage?.token_details)
   return {
+    cache_creation_input_tokens: normalizeToken(
+      input.cache_creation_input_tokens,
+    ),
     cache_read_input_tokens: normalizeToken(input.cache_read_input_tokens),
     created_at_ms: now.getTime(),
     created_at_utc: now.toISOString(),
@@ -252,6 +262,7 @@ export function normalizeOpenAIUsage(
         prompt_tokens?: number
         total_tokens?: number
         prompt_tokens_details?: {
+          cache_creation_input_tokens?: number
           cached_tokens?: number
         }
       }
@@ -261,10 +272,17 @@ export function normalizeOpenAIUsage(
   const cachedTokens = normalizeToken(
     usage?.prompt_tokens_details?.cached_tokens,
   )
+  const cacheCreationTokens = normalizeToken(
+    usage?.prompt_tokens_details?.cache_creation_input_tokens,
+  )
   const promptTokens = normalizeToken(usage?.prompt_tokens)
   return {
+    cache_creation_input_tokens: cacheCreationTokens,
     cache_read_input_tokens: cachedTokens,
-    input_tokens: Math.max(0, promptTokens - cachedTokens),
+    input_tokens: Math.max(
+      0,
+      promptTokens - cachedTokens - cacheCreationTokens,
+    ),
     output_tokens: normalizeToken(usage?.completion_tokens),
     total_tokens: normalizeOptionalToken(usage?.total_tokens),
   }
@@ -298,6 +316,7 @@ export function normalizeResponsesUsage(
 export function normalizeAnthropicUsage(
   usage:
     | {
+        cache_creation_input_tokens?: number
         cache_read_input_tokens?: number
         input_tokens?: number
         output_tokens?: number
@@ -307,6 +326,9 @@ export function normalizeAnthropicUsage(
     | undefined,
 ): UsageTokens {
   return {
+    cache_creation_input_tokens: normalizeOptionalToken(
+      usage?.cache_creation_input_tokens,
+    ),
     cache_read_input_tokens: normalizeOptionalToken(
       usage?.cache_read_input_tokens,
     ),
@@ -321,6 +343,8 @@ export function mergeAnthropicUsage(
   next: UsageTokens,
 ): UsageTokens {
   return {
+    cache_creation_input_tokens:
+      next.cache_creation_input_tokens ?? current.cache_creation_input_tokens,
     cache_read_input_tokens:
       next.cache_read_input_tokens ?? current.cache_read_input_tokens,
     input_tokens: next.input_tokens ?? current.input_tokens,
