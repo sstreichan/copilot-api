@@ -7,6 +7,7 @@ import { StringDecoder } from 'node:string_decoder'
 import type { DesktopProxySettings, ServerStatus } from '../src/types/ipc'
 import { applyDesktopProxySettingsToEnv } from './electron-proxy-config'
 import { tMain } from './i18n'
+import { buildServerStartArgs } from './server-start-args'
 
 let serverProcess: UtilityProcess | null = null
 let currentPort = 4141
@@ -14,6 +15,7 @@ let statusCallback: ((status: ServerStatus) => void) | null = null
 let logCallback: ((log: string) => void) | null = null
 // Ring buffer for logs, capped at 2000 entries for log panel replay.
 const LOG_BUFFER_MAX = 2000
+const STOP_TIMEOUT_MS = 5000
 const logBuffer: string[] = []
 const ESC_CHAR_CODE = 27
 const BEL_CHAR_CODE = 7
@@ -155,9 +157,8 @@ function getServerPath(): string {
 
 export async function startServer(
   port: number,
-  token: string,
+  token: string | null,
   serverOptions?: {
-    accountType?: string
     verbose?: boolean
     showToken?: boolean
     proxy?: DesktopProxySettings
@@ -189,38 +190,36 @@ export async function startServer(
     : false
 
   const serverPath = getServerPath()
-  const args = ['start', '--github-token', token, '--port', String(port)]
+  const args = buildServerStartArgs(port, token)
   if (proxyEnabled) args.push('--proxy-env')
-  if (serverOptions?.accountType && serverOptions.accountType !== 'individual') {
-    args.push('--account-type', serverOptions.accountType)
-  }
   if (serverOptions?.verbose) args.push('--verbose')
   if (serverOptions?.showToken) args.push('--show-token')
 
   // utilityProcess.fork is an official Electron API and does not start another
   // Electron instance, so packaged macOS builds do not show a second Dock icon.
-  serverProcess = utilityProcess.fork(serverPath, args, {
+  const proc = utilityProcess.fork(serverPath, args, {
     env,
     stdio: 'pipe',
     serviceName: 'copilot-api-server'
   })
+  serverProcess = proc
 
   // Decode streamed UTF-8 safely so chunk boundaries do not corrupt Chinese or box-drawing characters.
   const stdoutLogStream = createLogStream()
   const stderrLogStream = createLogStream()
 
-  serverProcess.stdout?.on('data', stdoutLogStream.handleData)
-  serverProcess.stdout?.once('end', stdoutLogStream.flush)
-  serverProcess.stdout?.once('close', stdoutLogStream.flush)
-  serverProcess.stderr?.on('data', stderrLogStream.handleData)
-  serverProcess.stderr?.once('end', stderrLogStream.flush)
-  serverProcess.stderr?.once('close', stderrLogStream.flush)
+  proc.stdout?.on('data', stdoutLogStream.handleData)
+  proc.stdout?.once('end', stdoutLogStream.flush)
+  proc.stdout?.once('close', stdoutLogStream.flush)
+  proc.stderr?.on('data', stderrLogStream.handleData)
+  proc.stderr?.once('end', stderrLogStream.flush)
+  proc.stderr?.once('close', stderrLogStream.flush)
 
   // Wait for the server to become ready while also detecting early process exit.
-  const startResult = await waitForServer(port, serverProcess)
+  const startResult = await waitForServer(port, proc)
   if (!startResult.ok) {
-    if (serverProcess) {
-      serverProcess.kill()
+    proc.kill()
+    if (serverProcess === proc) {
       serverProcess = null
     }
     const msg = startResult.exitCode !== undefined
@@ -230,9 +229,11 @@ export async function startServer(
   }
 
   // Register the runtime exit handler only after startup succeeds.
-  serverProcess!.on('exit', (code) => {
+  proc.on('exit', (code) => {
     stdoutLogStream.flush()
     stderrLogStream.flush()
+    if (serverProcess !== proc) return
+
     serverProcess = null
 
     if (code === 0) {
@@ -292,10 +293,35 @@ async function waitForServer(
   })
 }
 
+function waitForProcessExit(proc: UtilityProcess): Promise<void> {
+  return new Promise((resolve) => {
+    let settled = false
+
+    const finish = () => {
+      if (settled) return
+      settled = true
+      clearTimeout(timeout)
+      proc.removeListener('exit', onExit)
+      resolve()
+    }
+
+    const onExit = () => finish()
+    const timeout = setTimeout(finish, STOP_TIMEOUT_MS)
+
+    proc.once('exit', onExit)
+    if (!proc.kill()) finish()
+  })
+}
+
 export async function stopServer(): Promise<void> {
   if (!serverProcess) return
-  serverProcess.kill()
-  serverProcess = null
+  const proc = serverProcess
+  await waitForProcessExit(proc)
+
+  if (serverProcess === proc) {
+    serverProcess = null
+    statusCallback?.({ running: false })
+  }
 }
 
 export function isRunning(): boolean {

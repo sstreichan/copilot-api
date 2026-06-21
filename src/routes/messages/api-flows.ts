@@ -28,6 +28,7 @@ import {
   mergeAnthropicUsage,
   normalizeAnthropicUsage,
   normalizeOpenAIUsage,
+  normalizeOptionalToken,
   normalizeResponsesUsage,
   copilotUsageToTokens,
   type CopilotUsage,
@@ -112,21 +113,30 @@ interface MessagesFlowOptions extends FlowBaseOptions {
   selectedModel?: Model
 }
 
+interface ChatCompletionsFlowOptions extends FlowBaseOptions {
+  selectedModel?: Model
+}
+
 export const handleWithChatCompletions = async (
   c: Context,
   anthropicPayload: AnthropicMessagesPayload,
-  options: FlowBaseOptions,
+  options: ChatCompletionsFlowOptions,
 ) => {
   const {
     logger,
     requestSessionAffinity,
     requestTraceId,
+    selectedModel,
     subagentMarker,
     requestId,
     sessionId,
     compactType,
   } = options
-  const openAIPayload = translateToOpenAI(anthropicPayload)
+  const openAIPayload = translateToOpenAI(anthropicPayload, {
+    validateReasoningEffort: true,
+    reasoningEffortSupport:
+      selectedModel?.capabilities.supports.reasoning_effort,
+  })
   prepareCopilotChatCompletionsPayload(openAIPayload)
   const recordUsage = createMessagesFlowUsageRecorder({
     anthropicPayload,
@@ -155,6 +165,12 @@ export const handleWithChatCompletions = async (
       recordUsage,
       response,
     })
+    debugJson(logger, "Non-streaming response from Copilot:", response)
+    const anthropicResponse = translateToAnthropic(
+      response as ChatCompletionResponse,
+    )
+    debugJson(logger, "Translated Anthropic response:", anthropicResponse)
+    return c.json(anthropicResponse)
   }
 
   return handleChatCompletionsStream({
@@ -338,22 +354,77 @@ export const handleWithResponsesApi = async (
       "cache-control": null,
       connection: null,
     })
-    return streamSSE(c, (stream) =>
-      handleResponsesStream({
-        stream,
-        response,
-        model: responsesPayload.model,
-        logger,
-        recordUsage,
+    return streamSSE(c, async (stream) => {
+      const streamState = createResponsesStreamState({
         toolSearchName: resolveBridgeToolSearchName(anthropicPayload.tools),
-      }),
-    )
+      })
+      let usage: UsageTokens = {}
+      let copilotUsage: CopilotUsageTokens = {}
+
+      for await (const chunk of response) {
+        const eventName = chunk.event
+        if (eventName === "ping") {
+          await stream.writeSSE({ event: "ping", data: '{"type":"ping"}' })
+          continue
+        }
+
+        const data = chunk.data
+        if (!data) {
+          continue
+        }
+
+        debugLazy(logger, () => ["Responses raw stream event:", data])
+
+        const responseEvent = JSON.parse(data) as ResponseStreamEvent
+        if (
+          responseEvent.type === "response.completed"
+          || responseEvent.type === "response.failed"
+          || responseEvent.type === "response.incomplete"
+        ) {
+          usage = {
+            ...normalizeResponsesUsage(responseEvent.response.usage),
+            total_nano_aiu: normalizeOptionalToken(
+              responseEvent.copilot_usage?.total_nano_aiu,
+            ),
+          }
+          copilotUsage =
+            copilotUsageFromResponsesEvent(responseEvent) ?? copilotUsage
+        }
+
+        const events = translateResponsesStreamEvent(responseEvent, streamState)
+        for (const event of events) {
+          const eventData = JSON.stringify(event)
+          debugLazy(logger, () => ["Translated Anthropic event:", eventData])
+          await stream.writeSSE({
+            event: event.type,
+            data: eventData,
+          })
+        }
+
+        if (streamState.messageCompleted) {
+          logger.debug("Message completed, ending stream")
+          break
+        }
+      }
+
+      if (!streamState.messageCompleted) {
+        logger.warn(
+          "Responses stream ended without completion; sending error event",
+        )
+        const errorEvent = buildErrorEvent(
+          "Responses stream ended without completion",
+        )
+        await stream.writeSSE({
+          event: errorEvent.type,
+          data: JSON.stringify(errorEvent),
+        })
+      }
+
+      recordUsage(usage, copilotUsage)
+    })
   }
 
-  debugJsonTail(logger, "Non-streaming Responses result:", {
-    value: response,
-    tailLength: 400,
-  })
+  debugJson(logger, "Non-streaming Responses result:", response)
   const anthropicResponse = translateResponsesResultToAnthropic(
     response as ResponsesResult,
     {
@@ -468,94 +539,6 @@ export const handleWithMessagesApi = async (
     jsonResponse,
     getAttachedResponseHeaders(response) ?? response.headers,
   )
-}
-
-const handleResponsesStream = async (options: {
-  stream: Parameters<Parameters<typeof streamSSE>[1]>[0] extends infer S ? S
-  : never
-  response: AsyncIterable<{ event?: string; data?: string }>
-  model: string
-  logger: ConsolaInstance
-  recordUsage: (
-    usage: UsageTokens,
-    copilotUsage?: CopilotUsageTokens | null,
-  ) => void
-  toolSearchName?: string | null
-}) => {
-  const { stream, response, model, logger, recordUsage, toolSearchName } =
-    options
-  const pingInterval = setupPingInterval(stream)
-  const streamState = createResponsesStreamState({
-    toolSearchName: toolSearchName ?? undefined,
-  })
-  let usage: UsageTokens = {}
-  let copilotUsage: CopilotUsageTokens = {}
-
-  let chunkCount = 0
-  try {
-    for await (const chunk of response) {
-      const eventName = chunk.event
-      if (eventName === "ping") {
-        await stream.writeSSE({ event: "ping", data: '{"type":"ping"}' })
-        continue
-      }
-
-      const data = chunk.data
-      if (!data) {
-        continue
-      }
-
-      chunkCount++
-      debugLazy(logger, () => ["Responses raw stream event:", data])
-
-      const responseEvent = JSON.parse(data) as ResponseStreamEvent
-      if (
-        responseEvent.type === "response.completed"
-        || responseEvent.type === "response.failed"
-        || responseEvent.type === "response.incomplete"
-      ) {
-        usage = normalizeResponsesUsage(responseEvent.response.usage)
-        copilotUsage =
-          copilotUsageFromResponsesEvent(responseEvent) ?? copilotUsage
-      }
-
-      const events = translateResponsesStreamEvent(responseEvent, streamState)
-      for (const event of events) {
-        const eventData = JSON.stringify(event)
-        debugLazy(logger, () => ["Translated Anthropic event:", eventData])
-        await stream.writeSSE({
-          event: event.type,
-          data: eventData,
-        })
-      }
-
-      if (streamState.messageCompleted) {
-        logger.debug("Message completed, ending stream")
-        break
-      }
-    }
-
-    if (!streamState.messageCompleted) {
-      logger.warn(
-        "Responses stream ended without completion; sending error event",
-      )
-      const errorEvent = buildErrorEvent(
-        "Responses stream ended without completion",
-      )
-      await stream.writeSSE({
-        event: errorEvent.type,
-        data: JSON.stringify(errorEvent),
-      })
-    }
-  } finally {
-    clearInterval(pingInterval)
-    const premium = await resolvePremiumInfo(
-      response,
-      "messages/responses-stream",
-    )
-    writeStreamLog({ model, chunks: chunkCount, done: true, premium }, true)
-    recordUsage(usage, copilotUsage)
-  }
 }
 
 const applyNativeStreamResponseHeaders = (headers: Headers): Headers => {

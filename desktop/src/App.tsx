@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import AuthPage from './pages/AuthPage'
 import DashboardPage from './pages/DashboardPage'
 import { useLanguage } from './contexts/LanguageContext'
+import type { AuthResult, DesktopAuthMode } from './types/ipc'
 
 export type Page = 'auth' | 'dashboard'
 
@@ -26,7 +27,8 @@ function BootScreen({ loadingText }: { loadingText: string }) {
 
 export default function App() {
   const [page, setPage] = useState<Page | null>(null)
-  const [username, setUsername] = useState<string>('')
+  const [authMode, setAuthMode] = useState<DesktopAuthMode>('none')
+  const [canReturnFromAuth, setCanReturnFromAuth] = useState(false)
   const [port, setPort] = useState<number>(4141)
   const { setLangPref, t } = useLanguage()
 
@@ -36,7 +38,7 @@ export default function App() {
     const bootstrap = async () => {
       try {
         const [authResult, settings] = await Promise.all([
-          window.electronAPI.checkSavedToken(),
+          window.electronAPI.getAuthStatus(),
           window.electronAPI.getSettings(),
         ])
 
@@ -45,15 +47,20 @@ export default function App() {
         setPort(settings.lastPort)
         setLangPref(settings.language ?? 'auto')
 
-        if (authResult.success && authResult.username) {
-          setUsername(authResult.username)
+        if (authResult.success && authResult.mode !== 'none') {
+          setAuthMode(authResult.mode)
+          setCanReturnFromAuth(false)
           setPage('dashboard')
           return
         }
 
+        setCanReturnFromAuth(false)
         setPage('auth')
       } catch {
-        if (active) setPage('auth')
+        if (active) {
+          setCanReturnFromAuth(false)
+          setPage('auth')
+        }
       }
     }
 
@@ -64,15 +71,20 @@ export default function App() {
     }
   }, [])
 
-  const handleAuthSuccess = (user: string) => {
-    setUsername(user)
+  const handleAuthSuccess = (result: AuthResult) => {
+    setAuthMode(result.mode ?? 'provider')
+    setCanReturnFromAuth(false)
     setPage('dashboard')
   }
 
-  const handleLogout = async () => {
-    await window.electronAPI.logout()
-    setUsername('')
+  const handleChangeAuth = () => {
+    setCanReturnFromAuth(true)
     setPage('auth')
+  }
+
+  const handleBackToDashboard = () => {
+    setCanReturnFromAuth(false)
+    setPage('dashboard')
   }
 
   if (page === null) {
@@ -80,14 +92,19 @@ export default function App() {
   }
 
   if (page === 'auth') {
-    return <AuthPage onSuccess={handleAuthSuccess} />
+    return (
+      <AuthPage
+        onBack={canReturnFromAuth ? handleBackToDashboard : undefined}
+        onSuccess={handleAuthSuccess}
+      />
+    )
   }
 
   return (
     <DashboardPage
-      username={username}
+      authMode={authMode}
       defaultPort={port}
-      onLogout={handleLogout}
+      onChangeAuth={handleChangeAuth}
     />
   )
 }

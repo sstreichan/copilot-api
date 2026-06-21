@@ -64,7 +64,16 @@ export async function getSmartAgentDecision(
 ): Promise<SmartAgentDecision> {
   try {
     const usage = await getCopilotUsage()
-    const quota = usage.quota_snapshots.premium_interactions
+    const quota = usage?.quota_snapshots?.premium_interactions
+    if (!quota) {
+      return {
+        forceAgent: true,
+        remaining: 0,
+        expected: 0,
+        idealDaily: 0,
+        reason: "error",
+      }
+    }
     const daysInMonth = getDaysInMonth(now)
     const dayOfMonth = now.getUTCDate()
     const expectedRemaining = Math.max(
@@ -100,10 +109,10 @@ export type CopilotAccountType = "individual" | "business" | "enterprise"
 
 export const getCopilotUsage = async (
   githubToken?: string,
-): Promise<CopilotUsageResponse> => {
+): Promise<CopilotUsageResponse | null> => {
   const resolvedGithubToken = githubToken ?? state.githubToken
   if (!resolvedGithubToken) {
-    throw new Error("GitHub token not found")
+    return null
   }
 
   const authState = { ...state, githubToken: resolvedGithubToken }
@@ -125,6 +134,10 @@ export const getCopilotAccountType = async (
   githubToken?: string,
 ): Promise<CopilotAccountType> => {
   const usage = await getCopilotUsage(githubToken)
+  if (!usage) {
+    throw new Error("GitHub token not found")
+  }
+
   const plan = (usage.copilot_plan ?? "").toLowerCase()
 
   if (plan.includes("enterprise")) return "enterprise"

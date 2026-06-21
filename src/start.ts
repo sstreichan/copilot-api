@@ -6,15 +6,17 @@ import consola from "consola"
 import { serve, type ServerHandler } from "srvx"
 import invariant from "tiny-invariant"
 
-import { prewarmAutoSession } from "./lib/auto-session"
-import { mergeConfigWithDefaults } from "./lib/config"
-import { formatModelsLog } from "./lib/models-log"
+import { runProviderSetup } from "./auth"
+import { listEnabledProviders, mergeConfigWithDefaults } from "./lib/config"
+import { readGitHubToken } from "./lib/credential-store"
 import { initOpencodeVersion } from "./lib/opencode"
+import { formatModelsLog } from "./lib/models-log"
 import { ensurePaths } from "./lib/paths"
 import { initProxyFromEnv } from "./lib/proxy"
 import { generateEnvScript } from "./lib/shell"
 import { state } from "./lib/state"
-import { logUser, setupCopilotToken, setupGitHubToken } from "./lib/token"
+import { logUser, setupCopilotToken } from "./lib/token"
+import { prewarmAutoSession } from "./lib/auto-session"
 import {
   cacheMacMachineId,
   cacheModels,
@@ -26,7 +28,6 @@ import {
 interface RunServerOptions {
   port: number
   verbose: boolean
-  accountType: string
   manual: boolean
   rateLimit?: number
   rateLimitWait: boolean
@@ -38,12 +39,39 @@ interface RunServerOptions {
   nativeMessages: boolean
 }
 
-const logAvailableModels = () => {
+async function setupCopilotMode(
+  githubToken: string,
+  fromCli: boolean,
+  serverUrl: string,
+  claudeCode: boolean,
+): Promise<void> {
+  state.githubToken = githubToken
+  consola.info(
+    fromCli ?
+      "Using provided GitHub token"
+    : "Using GitHub token from local file",
+  )
+
+  await logUser()
+
+  await cacheVSCodeVersion()
+  cacheMacMachineId()
+  cacheVsCodeSessionId()
+  await cacheVsCodeDeviceId()
+
+  await setupCopilotToken()
+  await cacheModels()
+  await prewarmAutoSession()
+
   const availableModels = state.models?.data ?? []
   consola.info(formatModelsLog(availableModels))
+
+  if (claudeCode) {
+    await runClaudeCode(serverUrl)
+  }
 }
 
-async function handleClaudeCodeFlag(serverUrl: string) {
+async function runClaudeCode(serverUrl: string): Promise<void> {
   consola.log(
     "\n💡 Tip: The --claude-code flag simply generates a clipboard command for launching Claude Code. \n"
       + "All models remain fully accessible without this flag, just configure the model ID directly in your settings.json file.",
@@ -80,7 +108,6 @@ async function handleClaudeCodeFlag(serverUrl: string) {
       CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION: "false",
       CLAUDE_CODE_DISABLE_TERMINAL_TITLE: "true",
       CLAUDE_CODE_ENABLE_AWAY_SUMMARY: "0",
-      CLAUDE_PLUGIN_ENABLE_QUESTION_RULES: "true",
     },
     "claude",
   )
@@ -95,14 +122,41 @@ async function handleClaudeCodeFlag(serverUrl: string) {
     consola.log(command)
   }
 }
+
+async function setupProviderMode(
+  serverUrl: string,
+  claudeCode: boolean,
+): Promise<void> {
+  const enabledProviders = listEnabledProviders()
+
+  if (enabledProviders.length > 0) {
+    consola.info(`Using enabled providers: ${enabledProviders.join(", ")}`)
+    return
+  }
+
+  consola.info("No enabled providers found. Setting one up...")
+  await runProviderSetup()
+
+  if (state.githubToken) {
+    await setupCopilotMode(state.githubToken, false, serverUrl, claudeCode)
+    return
+  }
+
+  const providersAfterSetup = listEnabledProviders()
+  if (providersAfterSetup.length === 0) {
+    throw new Error(
+      "Failed to configure any provider. Run `copilot-api auth login` to set one up.",
+    )
+  }
+  consola.info(`Configured providers: ${providersAfterSetup.join(", ")}`)
+}
+
 export async function runServer(options: RunServerOptions): Promise<void> {
   const tlsModule = await import("./lib/tls")
   tlsModule.enableSystemCACompat()
 
-  // Work around unjs/consola#357 until a release includes PR #359.
   consola.options.throttle = 0
 
-  // Ensure config is merged with defaults at startup
   mergeConfigWithDefaults()
 
   await initOpencodeVersion()
@@ -117,44 +171,25 @@ export async function runServer(options: RunServerOptions): Promise<void> {
     consola.info("Verbose logging enabled")
   }
 
-  state.accountType = options.accountType
-  if (options.accountType !== "individual") {
-    consola.info(`Using ${options.accountType} plan GitHub account`)
-  }
-
   state.manualApprove = options.manual
   state.rateLimitSeconds = options.rateLimit
   state.rateLimitWait = options.rateLimitWait
   state.showToken = options.showToken
-  state.forceAgent = options.forceAgent
-  state.nativeMessages = options.nativeMessages
-
-  if (options.nativeMessages) {
-    consola.info("Native Messages API enabled for Claude models")
-  }
 
   await ensurePaths()
-  await cacheVSCodeVersion()
-  cacheMacMachineId()
-  cacheVsCodeSessionId()
-  await cacheVsCodeDeviceId()
-
-  if (options.githubToken) {
-    state.githubToken = options.githubToken
-    consola.info("Using provided GitHub token")
-    await logUser()
-  } else {
-    await setupGitHubToken()
-  }
-
-  await setupCopilotToken()
-  await cacheModels()
-  await prewarmAutoSession()
-  logAvailableModels()
 
   const serverUrl = `http://localhost:${options.port}`
-  if (options.claudeCode) {
-    await handleClaudeCodeFlag(serverUrl)
+
+  const githubToken = options.githubToken || (await readGitHubToken())
+  if (githubToken) {
+    await setupCopilotMode(
+      githubToken,
+      Boolean(options.githubToken),
+      serverUrl,
+      options.claudeCode,
+    )
+  } else {
+    await setupProviderMode(serverUrl, options.claudeCode)
   }
 
   consola.box(
@@ -162,6 +197,7 @@ export async function runServer(options: RunServerOptions): Promise<void> {
   )
 
   const { server } = await import("./server")
+
   serve({
     fetch: server.fetch as ServerHandler,
     port: options.port,
@@ -188,12 +224,6 @@ export const start = defineCommand({
       type: "boolean",
       default: false,
       description: "Enable verbose logging",
-    },
-    "account-type": {
-      alias: "a",
-      type: "string",
-      default: "individual",
-      description: "Account type to use (individual, business, enterprise)",
     },
     manual: {
       type: "boolean",
@@ -250,14 +280,14 @@ export const start = defineCommand({
     },
   },
   run({ args }) {
-    const parsedRateLimit = Number.parseInt(args["rate-limit"], 10)
+    const rateLimitRaw = args["rate-limit"]
     const rateLimit =
-      Number.isNaN(parsedRateLimit) ? undefined : parsedRateLimit
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+      rateLimitRaw === undefined ? undefined : Number.parseInt(rateLimitRaw, 10)
 
     return runServer({
       port: Number.parseInt(args.port, 10),
       verbose: args.verbose,
-      accountType: args["account-type"],
       manual: args.manual,
       rateLimit,
       rateLimitWait: args.wait,

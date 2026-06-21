@@ -373,7 +373,8 @@ export const getPremiumInfo = async (): Promise<{
 } | null> => {
   try {
     const usage = await getCopilotUsage()
-    const pi = usage.quota_snapshots.premium_interactions
+    const pi = usage?.quota_snapshots?.premium_interactions
+    if (!pi) return null
     if (!pi.unlimited) {
       return { remaining: pi.remaining, total: pi.entitlement }
     }

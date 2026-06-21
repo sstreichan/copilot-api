@@ -33,6 +33,10 @@ pre-commit hook 只跑 `lint-staged`（仅暂存文件的 lint），不保证项
 
 如果有任何一步失败，修好再提交，**不要用 `--no-verify` 跳过**。
 
+## 测试覆盖要求
+
+变更代码应达到至少 85% 单元测试覆盖率；覆盖请求翻译、provider 行为、auth、config、流式边界等受影响模块。
+
 常用启动标志：
 
 - `-M`：Claude 模型走原生 `/v1/messages`

@@ -201,6 +201,7 @@ export async function handleCompletion(c: Context) {
     anthropicPayload,
     {
       subagentMarker,
+      selectedModel,
       requestId,
       requestSessionAffinity: c.req.header("x-session-affinity"),
       requestTraceId: c.req.header("x-trace-id"),

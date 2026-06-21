@@ -77,15 +77,24 @@ export async function handleCompletion(c: Context) {
       400,
     )
   }
-
   if (state.manualApprove) await awaitApproval()
 
-  if (isNullish(payload.max_tokens)) {
+  if (
+    isNullish(payload.max_tokens)
+    && isNullish(payload.max_completion_tokens)
+  ) {
     payload = {
       ...payload,
       max_tokens: selectedModel?.capabilities.limits.max_output_tokens,
     }
     debugJson(logger, "Set max_tokens to:", payload.max_tokens)
+  }
+
+  if (payload.model.includes("gpt")) {
+    if (isNullish(payload.max_completion_tokens)) {
+      payload.max_completion_tokens = payload.max_tokens
+    }
+    delete payload.max_tokens
   }
 
   // not support subagent marker for now , set sessionId = getUUID(requestId)

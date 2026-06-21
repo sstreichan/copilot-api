@@ -8,11 +8,39 @@ export interface DeviceCodeInfo {
   expires_in: number
 }
 
+export type DesktopAuthMode = 'copilot' | 'provider' | 'none'
+
 export interface AuthResult {
   success: boolean
-  username?: string
+  mode?: DesktopAuthMode
+  providers?: string[]
   error?: string
 }
+
+export interface AuthStatus extends AuthResult {
+  mode: DesktopAuthMode
+}
+
+export type ProviderType = 'anthropic' | 'openai-compatible' | 'openai-responses'
+export type ProviderAuthType = 'authorization' | 'x-api-key'
+export type ProviderAuthTypeInput = ProviderAuthType | '__default__'
+export type QuickProviderName = 'deepseek' | 'dashscope' | 'openrouter'
+
+export type ProviderAuthInput =
+  | {
+      apiKey: string
+      baseUrl?: string
+      provider: QuickProviderName
+      type?: ProviderType
+    }
+  | {
+      apiKey: string
+      authType?: ProviderAuthTypeInput
+      baseUrl: string
+      name: string
+      provider: 'custom'
+      type: ProviderType
+    }
 
 export interface ServerStatus {
   running: boolean
@@ -33,12 +61,23 @@ export interface ModelMappingsConfig {
 
 export type TokenUsagePeriod = 'day' | 'week' | 'month'
 
+export interface TokenUsageCost {
+  amount: number
+  currency: string
+  total_cost_nanos: number
+}
+
+export interface TokenUsageEventCost extends TokenUsageCost {
+  source: string
+}
+
 export interface TokenUsageTotals {
   request_count: number
   input_tokens: number
   output_tokens: number
   cache_read_input_tokens: number
   cache_creation_input_tokens: number
+  costs: TokenUsageCost[]
   total_tokens: number
 }
 
@@ -94,6 +133,7 @@ export interface TokenUsageEventRecord {
   output_tokens: number
   cache_read_input_tokens: number
   cache_creation_input_tokens: number
+  cost: TokenUsageEventCost | null
   total_tokens: number
 }
 
@@ -138,12 +178,16 @@ export interface DesktopSettings {
 declare global {
   interface Window {
     electronAPI: {
+      getAuthStatus: () => Promise<AuthStatus>
       getDeviceCode: () => Promise<DeviceCodeInfo>
       saveToken: (token: string) => Promise<AuthResult>
       checkSavedToken: () => Promise<AuthResult>
+      configureProvider: (input: ProviderAuthInput) => Promise<AuthResult>
+      startCodexLogin: (callbackUrlOrCode?: string) => Promise<AuthResult>
       logout: () => Promise<void>
-      startServer: (port: number) => Promise<ServerStatus>
+      startServer: (port: number, authMode?: DesktopAuthMode) => Promise<ServerStatus>
       stopServer: () => Promise<void>
+      getServerStatus: () => Promise<ServerStatus>
       getSettings: () => Promise<DesktopSettings>
       saveSettings: (settings: DesktopSettings) => Promise<void>
       getModelMappingsConfig: () => Promise<ModelMappingsConfig>

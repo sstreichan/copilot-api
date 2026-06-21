@@ -227,6 +227,7 @@ export interface ResponsesResult {
   output: Array<ResponseOutputItem>
   output_text: string
   status: string
+  copilot_usage?: CopilotUsage | null
   usage?: ResponseUsage | null
   error: ResponseError | null
   incomplete_details: IncompleteDetails | null
@@ -237,7 +238,6 @@ export interface ResponsesResult {
   tool_choice: unknown
   tools: Array<Tool>
   top_p: number | null
-  copilot_usage?: CopilotUsage | null
 }
 
 export type Metadata = { [key: string]: string }

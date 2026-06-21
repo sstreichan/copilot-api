@@ -38,6 +38,7 @@ import {
   mergeAnthropicUsage,
   normalizeAnthropicUsage,
   normalizeOpenAIUsage,
+  normalizeOptionalToken,
   normalizeResponsesUsage,
   copilotUsageToTokens,
   type CopilotUsage,
@@ -596,6 +597,12 @@ const handleStreamingResponse = (options: {
           usage = normalizeResponsesUsage(getResponsesStreamUsage(parsedEvent))
           copilotUsage =
             copilotUsageFromResponsesEvent(parsedEvent) ?? copilotUsage
+          usage = {
+            ...normalizeResponsesUsage(parsedEvent.response.usage),
+            total_nano_aiu: normalizeOptionalToken(
+              parsedEvent.copilot_usage?.total_nano_aiu,
+            ),
+          }
         }
         const processedData = fixStreamIds(
           (chunk as { data?: string }).data ?? "",

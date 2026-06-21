@@ -280,6 +280,7 @@
         const EMPTY_TOKEN_USAGE_TOTALS = {
           cache_creation_input_tokens: 0,
           cache_read_input_tokens: 0,
+          costs: [],
           input_tokens: 0,
           nano_cost_cache_read: null,
           nano_cost_cache_write: null,
@@ -519,6 +520,44 @@
             `Cache Write Cost: ${formatUsdFromNano(totals?.nano_cost_cache_write)}`,
           ];
         }
+        function formatCurrencyAmount(currency, amount) {
+          const symbols = {
+            CNY: "¥",
+            USD: "$",
+          };
+          const normalizedCurrency =
+            typeof currency === "string" && currency.trim()
+              ? currency.trim().toUpperCase()
+              : "";
+          const symbol = symbols[normalizedCurrency] || "";
+          return symbol
+            ? `${symbol}${Number(amount).toFixed(6)}`
+            : `${normalizedCurrency} ${Number(amount).toFixed(6)}`;
+        }
+
+        function getCostAmount(cost) {
+          if (Number.isFinite(cost?.amount)) {
+            return Number(cost.amount);
+          }
+          if (Number.isFinite(cost?.total_cost_nanos)) {
+            return Number(cost.total_cost_nanos) / 1_000_000_000;
+          }
+          return null;
+        }
+
+        function formatTokenUsageCost(cost) {
+          const amount = getCostAmount(cost);
+          return amount === null || !cost?.currency
+            ? "—"
+            : formatCurrencyAmount(cost.currency, amount);
+        }
+
+        function formatTokenUsageCosts(costs) {
+          if (!Array.isArray(costs) || costs.length === 0) {
+            return ["—"];
+          }
+          return costs.map((cost) => formatTokenUsageCost(cost));
+        }
 
         function formatDateTime(value) {
           if (!Number.isFinite(value)) {
@@ -713,6 +752,10 @@
          * @returns {string} HTML string for the full data section.
          */
         function renderDetailedData(data) {
+          if (!data || Object.keys(data).length === 0) {
+            return "";
+          }
+
           const formattedDetails = formatObject(data);
           return `
                     <section id="detailed-data">
@@ -831,6 +874,11 @@
                   "Requests",
                   totals.request_count,
                   "var(--color-purple-accent)"
+                )}
+                ${renderTokenUsageCostMetric(
+                  "Cost",
+                  formatTokenUsageCosts(totals.costs),
+                  "var(--color-yellow-accent)"
                 )}
               </div>
 
@@ -1202,11 +1250,18 @@
           `;
         }
 
+        function renderTokenUsageValueLines(value) {
+          const lines = Array.isArray(value) ? value : [value];
+          return lines
+            .map((line) => `<span class="block whitespace-nowrap">${escapeHtml(line)}</span>`)
+            .join("");
+        }
+
         function renderTokenUsageMetric(label, value, accentColor) {
           return `
             <div class="p-4 border" style="background-color: var(--color-bg); border-color: var(--color-bg-light-2);">
-              <div class="text-lg font-bold" style="color: ${accentColor};">${formatNumber(
-                value
+              <div class="text-lg leading-6 font-bold" style="color: ${accentColor};">${renderTokenUsageValueLines(
+                typeof value === "number" ? formatNumber(value) : value
               )}</div>
               <div class="mt-1 text-xs uppercase tracking-wide" style="color: var(--color-gray-accent);">${escapeHtml(
                 label
@@ -1223,6 +1278,18 @@
               )}</div>
               <div class="mt-1 text-xs uppercase tracking-wide" style="color: var(--color-gray-accent);">${escapeHtml(
                 label
+              )}</div>
+            </div>
+          `;
+        }
+        function renderTokenUsageCostMetric(label, value, accentColor) {
+          return `
+            <div class="p-4 min-h-[90px] border" style="background-color: var(--color-bg); border-color: var(--color-bg-light-2);">
+              <div class="text-xs uppercase tracking-wide" style="color: var(--color-gray-accent);">${escapeHtml(
+                label
+              )}</div>
+              <div class="mt-2 min-h-[3rem] text-lg leading-6 font-bold" style="color: ${accentColor};">${renderTokenUsageValueLines(
+                value
               )}</div>
             </div>
           `;
@@ -1264,6 +1331,14 @@
                   <td class="px-4 py-2 text-right" style="color: var(--color-fg-dark);">${formatNumber(
                     model.cache_creation_input_tokens
                   )}</td>
+                  <td class="px-4 py-2 text-right font-semibold" style="color: var(--color-yellow-accent);">${formatNumber(
+                    model.total_tokens
+                  )}</td>
+                  <td class="px-4 py-2 text-right font-semibold" style="color: var(--color-yellow-accent);">
+                    <span class="inline-flex flex-col items-end leading-5">${renderTokenUsageValueLines(
+                      formatTokenUsageCosts(model.costs)
+                    )}</span>
+                  </td>
                 </tr>
               `;
             })
@@ -1272,6 +1347,7 @@
           return `
             <div class="overflow-auto ${state.isTokenUsageLoading ? "opacity-60" : ""}">
               <table class="w-full min-w-[880px] text-left text-xs sm:text-sm">
+              <table class="w-full min-w-[860px] text-left text-xs sm:text-sm">
                 <thead style="background-color: var(--color-bg-light-1); color: var(--color-fg-medium);">
                   <tr>
                     <th class="px-4 py-2 font-semibold">Model</th>
@@ -1282,6 +1358,8 @@
                     <th class="px-4 py-2 text-right font-semibold">Output</th>
                     <th class="px-4 py-2 text-right font-semibold">Cache Read</th>
                     <th class="px-4 py-2 text-right font-semibold">Cache Write</th>
+                    <th class="px-4 py-2 text-right font-semibold">Total Tokens</th>
+                    <th class="px-4 py-2 text-right font-semibold">Total Cost</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1308,16 +1386,14 @@
 
               return `
                 <tr class="border-b last:border-b-0" style="border-color: var(--color-bg-light-1);">
-                  <td class="px-4 py-2 whitespace-nowrap" style="color: var(--color-fg-dark);" title="${escapeHtml(
+                  <td class="px-4 py-2 max-w-[170px] truncate whitespace-nowrap" style="color: var(--color-fg-dark);" title="${escapeHtml(
                     event.created_at_utc
                   )}">${escapeHtml(formatDateTime(event.created_at_ms))}</td>
-                  <td class="px-4 py-2 max-w-[160px] truncate" style="color: var(--color-fg-lightest);" title="${escapeHtml(
+                  <td class="px-4 py-2 max-w-[100px] truncate" style="color: var(--color-fg-lightest);" title="${escapeHtml(
                     userId
                   )}">${escapeHtml(userId)}</td>
-                  <td class="px-4 py-2 whitespace-nowrap" style="color: var(--color-fg-dark);">${escapeHtml(
-                    event.endpoint.replace(/_/g, " ")
-                  )}</td>
-                  <td class="px-4 py-2 max-w-[220px] truncate" style="color: var(--color-fg-lightest);" title="${escapeHtml(
+
+                  <td class="px-4 py-2 max-w-[140px] truncate" style="color: var(--color-fg-lightest);" title="${escapeHtml(
                     event.model
                   )}">${escapeHtml(event.model)}</td>
                   <td class="px-4 py-2 max-w-[180px] truncate font-mono" style="color: var(--color-fg-dark);" title="${escapeHtml(
@@ -1344,6 +1420,14 @@
                   <td class="px-4 py-2 text-right" style="color: var(--color-fg-dark);">${formatNumber(
                     event.cache_creation_input_tokens
                   )}</td>
+                  <td class="px-4 py-2 text-right font-semibold" style="color: var(--color-yellow-accent);">${formatNumber(
+                    event.total_tokens
+                  )}</td>
+                  <td class="px-4 py-2 text-right font-semibold" style="color: var(--color-yellow-accent);">
+                    <span class="inline-flex flex-col items-end leading-5">${renderTokenUsageValueLines(
+                      formatTokenUsageCost(event.cost)
+                    )}</span>
+                  </td>
                 </tr>
               `;
             })
@@ -1352,11 +1436,12 @@
           return `
             <div class="overflow-auto ${state.isEventsLoading ? "opacity-60" : ""}">
               <table class="w-full min-w-[1280px] text-left text-xs sm:text-sm">
+              <table class="w-full min-w-[1000px] text-left text-xs sm:text-sm">
                 <thead style="background-color: var(--color-bg-light-1); color: var(--color-fg-medium);">
                   <tr>
                     <th class="px-4 py-2 font-semibold">Time</th>
                     <th class="px-4 py-2 font-semibold">User</th>
-                    <th class="px-4 py-2 font-semibold">Endpoint</th>
+
                     <th class="px-4 py-2 font-semibold">Model</th>
                     <th class="px-4 py-2 font-semibold">Session</th>
                     <th class="px-4 py-2 font-semibold">Trace</th>
@@ -1366,6 +1451,8 @@
                     <th class="px-4 py-2 text-right font-semibold">Output</th>
                     <th class="px-4 py-2 text-right font-semibold">Cache Read</th>
                     <th class="px-4 py-2 text-right font-semibold">Cache Write</th>
+                    <th class="px-4 py-2 text-right font-semibold">Total Tokens</th>
+                    <th class="px-4 py-2 text-right font-semibold">Total Cost</th>
                   </tr>
                 </thead>
                 <tbody>

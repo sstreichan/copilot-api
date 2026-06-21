@@ -7,29 +7,29 @@
 > [!IMPORTANT]
 > **使用前请先注意以下几点：**
 >
-> 1. **Claude Code 配置：** 与 Claude Code 搭配使用时，请将模型 ID 配置为 `claude-opus-4-6` 或 `claude-opus-4.6`。示例 claude `settings.json` 见 [通过 `settings.json` 手动配置](#manual-configuration-with-settingsjson)。
+> 1. **Claude Code 配置：** 与 Claude Code 搭配使用时，请将模型 ID 配置为 `claude-opus-4-8`。示例 claude `settings.json` 见 [通过 `settings.json` 手动配置](#manual-configuration-with-settingsjson)。
 >
-> 2. **推荐给 opencode 用户：** 对 opencode 而言，优先使用 opencode OAuth app。它与 opencode 内置的 GitHub Copilot provider 行为一致，且没有 Terms of Service 风险：
->    ```sh
->    npx @jeffreycao/copilot-api@latest --oauth-app=opencode start
->    ```
+> 2. **内置 `copilot`、`codex` 与第三方 provider：** 执行 `npx @jeffreycao/copilot-api@latest auth`，可选择 `copilot`、`codex`、`deepseek`、`custom` 等 provider。
 >
-> 3. **内置 `codex` provider：** 执行一次 `npx @jeffreycao/copilot-api@latest auth login --provider codex` 后，AI gateway 会自动持久化并刷新 Codex OAuth 凭据。
->
-> 4. **注意事项：** README 顶部移除的 GitHub Copilot warning 见 [GitHub Copilot 安全提示](./NOTICE.md#github-copilot-security-notice)。
+> 3. **注意事项：** README 顶部移除的 GitHub Copilot warning 见 [GitHub Copilot 安全提示](./NOTICE.md#github-copilot-security-notice)。
 
 ---
 
 ## 项目概览
 
-这个项目最初是一个通过逆向工程实现的 GitHub Copilot API 代理，但现在也可以看作一个小型 AI gateway。除了 Copilot，它还可以在同一个 OpenAI / Anthropic 兼容入口后面路由内置的 `codex` provider 和第三方 provider，例如 DashScope，让 [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview) 这类工具复用同一个本地端点。
+这是一个小型 AI gateway，可以使用 GitHub Copilot、内置 `codex` provider，也可以使用 DashScope 等已配置的第三方 provider。GitHub Copilot 现在是可选能力：如果本地没有 GitHub token，只要至少配置了一个启用中的 provider，服务仍可按 provider-only 模式启动。
+
+AI gateway 会从同一个本地端点暴露 OpenAI / Anthropic 兼容 API，让 [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview)、OpenCode、Codex 和 OpenAI 兼容客户端可以共用同一个本地服务。
 
 在 GitHub Copilot 路径上，AI gateway 会在可用时优先使用 Copilot 原生的 Anthropic 风格 Messages API，在重工具调用场景下保留更原生的 Claude 行为。
 
 ## 功能特性
 
 - **OpenAI 与 Anthropic 双兼容**：通过 `/v1/responses`、`/v1/chat/completions`、`/v1/models`、`/v1/embeddings` 和 `/v1/messages` 对外暴露同一个本地 AI gateway。
+- **Copilot 可选**：有 GitHub 凭据时可以使用 GitHub Copilot，没有 GitHub 凭据时也可以只依赖已配置的 provider 运行。
 - **同一网关接入 Copilot、`codex` 与第三方 provider**：可统一路由 GitHub Copilot、内置 `codex` provider 和配置好的外部 provider。
+- **第三方 provider 可独立启动**：配置 DashScope、DeepSeek、OpenRouter 或自定义 provider 后，不需要 GitHub Copilot 登录即可启动 AI gateway。
+- **OpenAI 兼容 provider 同时支持 chat 和 Messages API**：`openai-compatible` provider 可通过顶层 `/v1/chat/completions` 搭配 `model: "provider/model"` 提供 Chat Completions，也可通过 `/v1/messages` 完成 Anthropic Messages 的请求/响应翻译。
 - **面向 Claude 的更原生 Copilot 路由**：优先使用原生 `/v1/messages`，保留 Claude 风格工具流，支持 Anthropic beta 能力、通过 Responses-capable 模型支持 Claude WebSearch，并保留 subagent / session 标记。
 - **Claude Code 与 OpenCode 集成**：兼容 Claude Code 与 OpenCode，也支持通过 `@ai-sdk/anthropic` 直接作为 Anthropic provider 使用。
 - **灵活的认证与部署选项**：支持交互式登录、直接 token、个人 / Business / Enterprise、GitHub Enterprise、opencode OAuth 和自定义数据目录。
@@ -41,7 +41,8 @@
 
 - Bun（>= 1.2.x）
 - 如果要通过 `npx` 运行已发布 CLI，需要 Node.js
-- 已订阅 Copilot 的 GitHub 账号（个人版、Business 或 Enterprise）
+- 只有在使用 GitHub Copilot provider 时，才需要已订阅 Copilot 的 GitHub 账号
+- 如果不使用 GitHub Copilot，需要至少一个已配置 provider 的 API key 或 OAuth 登录
 
 ## 安装
 
@@ -76,21 +77,28 @@ npx @jeffreycao/copilot-api@latest start
 npx @jeffreycao/copilot-api@latest start --port 8080
 ```
 
-如果只想做认证：
+如果只想做认证或 provider 配置：
 
 ```sh
 npx @jeffreycao/copilot-api@latest auth
 ```
 
+如果要不依赖 GitHub Copilot 运行，先配置至少一个 provider，然后正常启动服务：
+
+```sh
+npx @jeffreycao/copilot-api@latest auth login --provider dashscope
+npx @jeffreycao/copilot-api@latest start
+```
+
 ## Electron 桌面应用
 
-如果你更喜欢图形界面，仓库里还提供了位于 `desktop/` 的 Electron 桌面应用。它支持 GitHub Copilot 登录或手动填入 token，可以一键启动或停止本地代理，并在界面里直接查看本地端点、鉴权 Header、可用模型、额度和日志。
+如果你更喜欢图形界面，仓库里还提供了位于 `desktop/` 的 Electron 桌面应用。它支持 GitHub Copilot 登录、OpenAI Codex OAuth，以及 DeepSeek、DashScope、OpenRouter 或自定义 provider 的 API Key 配置。授权或配置 provider 后，可以一键启动或停止本地代理，并在界面里直接查看本地端点、鉴权 Header、可用模型、额度和日志。
 
 设置页还可以配置 `OAuth App`、`API Home`、`Enterprise URL`、详细日志以及最小化到托盘。桌面安装包发布在 GitHub Releases：
 
 https://github.com/caozhiyuan/copilot-api/releases
 
-下载对应平台的安装包后，在应用内登录、选择端口并启动服务，再把你的客户端指向应用里显示的本地端点即可。发布版桌面应用使用随包内置的 Electron 运行时，正常使用不需要额外安装 Node.js；token usage 历史记录会在该内置运行时支持 SQLite 时启用。
+下载对应平台的安装包后，在应用内授权或配置 provider，选择端口并启动服务，再把你的客户端指向应用里显示的本地端点即可。发布版桌面应用使用随包内置的 Electron 运行时，正常使用不需要额外安装 Node.js；token usage 历史记录会在该内置运行时支持 SQLite 时启用。
 
 桌面应用里的高级配置页会通过 `GET/POST /admin/config/model-mappings` 读写这份共享的模型映射。同一份映射会统一作用于 `POST /v1/messages`、`POST /v1/messages/count_tokens`、`POST /v1/responses` 和 `POST /v1/chat/completions`，不再按接口区分。它使用的是 `auth.adminApiKey`，不是普通的 `auth.apiKeys`；应用会在服务启动并自动生成该 key 后，直接从 `config.json` 读取它来发起请求。
 
@@ -118,7 +126,7 @@ mkdir -p ./copilot-data
 docker run -p 4141:4141 -v $(pwd)/copilot-data:/root/.local/share/copilot-api copilot-api
 ```
 
-这会把宿主机上的 `./copilot-data` 映射到容器内的 `/root/.local/share/copilot-api`，用于持久化 GitHub 认证数据。
+这会把宿主机上的 `./copilot-data` 映射到容器内的 `/root/.local/share/copilot-api`，用于持久化 GitHub 认证数据、provider 配置和其他 gateway 状态。
 
 也可以直接通过环境变量传入 GitHub token：
 
@@ -130,9 +138,8 @@ docker run -p 4141:4141 -e GH_TOKEN=your_github_token_here copilot-api
 
 Copilot API 现在使用子命令结构，主要命令包括：
 
-- `start`：启动 Copilot API 服务。如有需要，也会自动处理认证。
-- `auth`：仅执行 GitHub 认证流程，不启动服务。通常用于生成可与 `--github-token` 一起使用的 token，尤其适合非交互环境。
-- `check-usage`：直接在终端中显示当前 GitHub Copilot 用量与额度信息（无需启动服务）。
+- `start`：启动 AI gateway 服务。如果已有 GitHub token，则启用 Copilot 路径；如果没有 GitHub token，但存在至少一个启用中的 provider，则按 provider-only 模式启动；如果两者都没有，会引导你配置 provider。
+- `auth`：仅执行 provider 登录或配置流程，不启动服务。可用于 GitHub Copilot 登录、Codex OAuth，或第三方 provider API key 配置。
 - `debug`：显示诊断信息，包括版本、运行时详情、文件路径以及认证状态，便于排障与支持。
 
 ## 命令行选项
@@ -155,7 +162,6 @@ Copilot API 现在使用子命令结构，主要命令包括：
 | --- | --- | --- | --- |
 | --port | 监听端口 | 4141 | -p |
 | --verbose | 启用详细日志 | false | -v |
-| --account-type | 使用的账号类型（individual、business、enterprise） | individual | -a |
 | --manual | 启用手动请求审批 | false | 无 |
 | --rate-limit | 请求之间的速率限制秒数 | 无 | -r |
 | --wait | 达到速率限制时等待，而不是直接报错 | false | -w |
@@ -168,8 +174,15 @@ Copilot API 现在使用子命令结构，主要命令包括：
 
 | 选项 | 说明 | 默认值 | 别名 |
 | --- | --- | --- | --- |
+| --provider | 要登录或配置的 provider（`copilot`、`codex`、`deepseek`、`dashscope`、`openrouter` 或 `custom`） | 交互选择 | 无 |
 | --verbose | 启用详细日志 | false | -v |
 | --show-token | 认证时显示 GitHub token | false | 无 |
+
+只有在需要启用 GitHub Copilot provider 时，才需要执行 `copilot-api auth login --provider copilot`。使用 `codex` 或第三方 provider-only 模式不要求配置 Copilot。
+
+使用 `copilot-api auth login --provider deepseek`、`--provider dashscope` 或 `--provider openrouter` 可以通过 CLI 快速新增或更新这些常用第三方 provider。DeepSeek 会提示输入掩码显示的 `apiKey`、provider `type`（默认 `anthropic`），以及默认 `https://api.deepseek.com/anthropic` 的 `baseUrl`。DashScope 会提示输入掩码显示的 `apiKey`、provider `type`（默认 `openai-compatible`）和预填默认值的 `baseUrl`。OpenRouter 只提示输入掩码显示的 `apiKey` 和预填默认值的 `baseUrl`，并固定写入 `type: "anthropic"`。配置并启用 provider 后，`copilot-api start` 可在没有 GitHub token 的情况下启动。
+
+使用 `copilot-api auth login --provider custom` 可以通过 CLI 新增或更新其他第三方 provider。命令会依次提示输入 provider name、项目支持的 type（`anthropic`、`openai-compatible` 或 `openai-responses`）、`baseUrl`、掩码显示的 `apiKey` 和 `authType`；`authType` 可保持 type 默认值，也可选择 `x-api-key` / `authorization`。
 
 ### Debug 命令选项
 
@@ -189,39 +202,7 @@ Copilot API 现在使用子命令结构，主要命令包括：
       "apiKeys": [],
       "adminApiKey": "<startup 自动生成>"
     },
-    "providers": {
-      "custom": {
-        "type": "anthropic",
-        "enabled": true,
-        "baseUrl": "your-base-url",
-        "apiKey": "sk-your-provider-key",
-        "authType": "x-api-key"
-      },
-      "dashscope": {
-        "type": "openai-compatible",
-        "enabled": true,
-        "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode",
-        "apiKey": "sk-your-dashscope-key",
-        "models": {
-          "qwen3.6-plus": {
-            "temperature": 1,
-            "topP": 0.95,
-            "topK": 20,
-            "extraBody": {
-              "preserve_thinking": true
-            }
-          },
-          "glm-5.1": {
-            "temperature": 0.7,
-            "topP": 0.95,
-            "contextCache": true,
-            "extraBody": {
-              "preserve_thinking": true
-            }
-          }
-        }
-      }
-    },
+    "providers": {},
     "modelMappings": {},
     "extraPrompts": {
       "gpt-5-mini": "<built-in exploration prompt>",
@@ -253,20 +234,75 @@ Copilot API 现在使用子命令结构，主要命令包括：
 - **auth.adminApiKey：** 仅用于 `/admin/*` 路由的单个 admin key。若未配置，服务会在启动时自动生成一个随机 key，并回写到 `config.json`。它同样使用 `x-api-key` 或 `Authorization: Bearer` 这两种头，但普通 `auth.apiKeys` 不能访问 `/admin/*`。
 - **modelMappings：** 用于顶层 `POST /v1/messages`、`POST /v1/messages/count_tokens`、`POST /v1/responses` 和 `POST /v1/chat/completions` 请求的精确 `sourceModel -> targetModel` 重写映射，这几类接口共用同一份规则。省略该字段或保留为 `{}` 时，不会做模型重写。`source` 和 `target` 都必须是非空字符串。`target` 可以是普通模型 ID，也可以是 `provider/model` 形式的别名，例如 `dashscope/qwen3.6-plus`；重写发生在 provider alias 解析之前。这些映射不再按接口区分。`GET/POST /admin/config/model-mappings` 管理接口读写的也只有这个字段。
 - **extraPrompts：** `model -> prompt` 的映射。把 Anthropic 风格请求翻译给 Copilot 时，会将其附加到第一条 system prompt 后面。你可以借此为不同模型注入护栏或指引。缺失的默认项会自动补齐，但不会覆盖你自定义的 prompt。内置的 `gpt-5.3-codex` 和 `gpt-5.4` prompt 会启用带阶段感知的 commentary，让模型在工具调用或更深层推理前先发出简短的用户可见进度说明。
-- **providers：** 全局上游 provider 映射。每个 provider key（例如 `dashscope`）都会变成一个路由前缀（`/dashscope/v1/messages`）。支持 `type: "anthropic"`、`type: "openai-compatible"` 和 `type: "openai-responses"`。顶层客户端也可以在 `/v1/messages`、`/v1/messages/count_tokens`、`/v1/responses` 和 `/v1/chat/completions` 中使用 `model: "dashscope/model-id"`；AI gateway 会在转发上游前移除 `dashscope/` 前缀。`GET /v1/models` 不聚合 provider 模型；provider 模型列表请使用 `GET /dashscope/v1/models`。
+- **providers：** 全局上游 provider 映射。每个 provider key（例如 `dashscope`）都会变成一个路由前缀（`/dashscope/v1/messages`）。支持 `type: "anthropic"`、`type: "openai-compatible"` 和 `type: "openai-responses"`。顶层客户端也可以在 `/v1/messages`、`/v1/messages/count_tokens`、`/v1/responses` 和 `/v1/chat/completions` 中使用 `model: "dashscope/model-id"`；AI gateway 会在转发上游前移除 `dashscope/` 前缀。`openai-compatible` provider 同时支持 chat 和 Messages 流程：`/v1/chat/completions` 会直连上游 `/v1/chat/completions`，而 `/v1/messages` 和 `/:provider/v1/messages` 会先翻译为上游 Chat Completions，再把响应翻译回 Anthropic Messages。`GET /v1/models` 会聚合已启用 provider 的模型，并以 `provider/model-id` 形式返回；单个 provider 的原始模型列表仍可使用 `GET /dashscope/v1/models`。
   - `enabled`：可选，若省略则默认为 `true`。
   - `baseUrl`：provider API 的基础 URL，不要带结尾的 endpoint。Anthropic provider 不要带 `/v1/messages`；OpenAI 兼容 provider 不要带 `/v1/chat/completions`；OpenAI Responses provider 不要带 `/v1/responses`。
   - `apiKey`：作为上游凭据值使用；普通 provider 必须配置。
   - `authType`：可选，控制 `apiKey` 如何发送到上游。普通 provider 支持 `x-api-key` 和 `authorization`。Anthropic provider 默认 `x-api-key`；OpenAI 兼容和 OpenAI Responses provider 默认 `authorization`。当设置为 `authorization` 时，代理会发送 `Authorization: Bearer <apiKey>`。`oauth2` 仅保留给内置 `codex` provider，并由 `auth login --provider codex` 自动写入。
-  - `adjustInputTokens`：可选，当为 `true` 时，代理会在 usage 响应里用 `input_tokens` 减去 `cache_read_input_tokens` 和 `cache_creation_input_tokens`。
+  - `pricingCurrency`：可选，provider 维度的 token 费用币种，例如 `USD` 或 `CNY`。快捷 provider 默认 DashScope、DeepSeek 为 `CNY`，Codex/OpenRouter 为 `USD`。费用按币种分别汇总，不做汇率换算。
   - `models`：可选，按模型 ID 配置的映射。每个键为请求中的模型名，值支持：
     - `temperature`：可选，当请求未指定时使用的默认温度。
     - `topP`：可选，当请求未指定时使用的默认 `top_p`。
     - `topK`：可选，当请求未指定时使用的默认 `top_k`。
     - `extraBody`：可选，按模型合入上游请求体的动态字段；请求体显式同名字段优先。OpenAI 兼容 provider 可用它配置 `enable_thinking`、`preserve_thinking`、`reasoning_effort` 等字段。`thinking_budget` 是 OpenAI 兼容 provider 的特殊覆盖项：配置在 `extraBody` 后，会在 Anthropic `thinking.budget_tokens` 翻译之后强制写入，并覆盖请求派生出的预算值。
+    - `pricing`：可选，按模型配置 token 单价，币种使用 provider 的 `pricingCurrency`，单位为每 100 万 tokens。支持 `input`、`output`、`cachedInput`（隐式缓存读）、`explicitCachedInput`（显式缓存读）和 `cacheCreationInput`。如需按输入 token 总量分档，可用带 `maxInputTokens` 的 `tiers`。
     - `contextCache`：可选，OpenAI 兼容 provider 默认 `true`，用于启用阿里云百炼/DashScope 的显式缓存（explicit context cache），会按其 Context Cache 格式在最多 4 个 content block 上注入 `cache_control: { "type": "ephemeral" }`。缓存断点策略与 opencode 主链路保持一致：前 2 条 system 消息 + 最后 2 条非 system 消息。标记字符串 content 时会把 `system` / `user` / `assistant` / `tool` 消息转换为 text content part 数组；已有数组 content 则标记最后一个 part。如果模型本身已经支持隐式缓存，或上游不支持该显式缓存扩展字段，可在模型配置中设为 `false`。
     - `supportPdf`：可选，控制该模型是否支持 PDF/document content。默认 `false`，不支持时会把 PDF 转成提示文本；设为 `true` 时会把 PDF/document 转成 OpenAI Chat Completions 的 file part。
     - `toolContentSupportType`：可选，配置该模型的 tool result content 支持能力，值为 `array`、`image`、`pdf` 的数组。provider 侧未配置时默认只发送 string tool content。若 `supportPdf` 为 `true` 但这里不包含 `pdf`，tool result 里的 file part 会被转成 user role 消息。Copilot 主链路不使用这个 provider 默认，仍按 array + image 且不支持 PDF 的能力处理。
+
+  DashScope 模型配置示例：
+  ```json
+  {
+    "providers": {
+      "dashscope": {
+        "type": "openai-compatible",
+        "enabled": true,
+        "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode",
+        "apiKey": "sk-your-dashscope-key",
+        "pricingCurrency": "CNY",
+        "models": {
+          "qwen3.7-plus": {
+            "temperature": 1,
+            "topP": 0.95,
+            "topK": 20,
+            "extraBody": {
+              "preserve_thinking": true
+            }
+          },
+          "glm-5.1": {
+            "temperature": 0.7,
+            "topP": 0.95,
+            "contextCache": true,
+            "pricing": {
+              "tiers": [
+                {
+                  "maxInputTokens": 32000,
+                  "input": 6,
+                  "cachedInput": 1.2,
+                  "explicitCachedInput": 0.6,
+                  "cacheCreationInput": 7.5,
+                  "output": 24
+                },
+                {
+                  "maxInputTokens": 200000,
+                  "input": 8,
+                  "cachedInput": 1.6,
+                  "explicitCachedInput": 0.8,
+                  "cacheCreationInput": 10,
+                  "output": 28
+                }
+              ]
+            },
+            "extraBody": {
+              "preserve_thinking": true
+            }
+          }
+        }
+      }
+    }
+  }
+  ```
+  内置 token 价格覆盖 Codex GPT 模型（USD）、DashScope `qwen3.7-max`、`qwen3.7-plus`、`glm-5.1`、`glm-5.2`（CNY），以及 DeepSeek `deepseek-v4-flash`、`deepseek-v4-pro`、`deepseek-chat`、`deepseek-reasoner`（CNY）。用户配置的 `pricing` 优先于内置价格。DashScope 若上游 usage 中出现 `cache_creation_input_tokens` 字段，cached tokens 按显式缓存读价计费；否则 `cachedInput` 作为隐式缓存读价。DeepSeek 的 `prompt_cache_hit_tokens` 会归入 cached input，`prompt_cache_miss_tokens` 会归入普通 input。
 - **smallModel：** 无工具预热消息的回退模型（例如 Claude Code 的探测请求）；默认是 `gpt-5-mini`。
 - **useResponsesApiContextManagement：** 当为 `true` 时，代理会为 Responses API 附加 `context_management` 压缩指令。默认值为 `true`。如需全局关闭，可设为 `false`。启用后，请求体会带上 `context_management`，并在后续轮次中仅保留最新的压缩承载内容，因此特别适合长任务场景。
 - **modelResponsesApiCompactThresholds：** 按模型覆盖 Responses API 的 `compact_threshold`，仅在代理自动附加 `context_management` 时使用。它的优先级高于 `resolveResponsesCompactThreshold` 基于 `max_prompt_tokens * ratio` 的兜底阈值。默认将 `gpt-5.4` 和 `gpt-5.5` 设为 `217600`（`272000 * 0.8`）。未列出的模型继续使用原有兜底逻辑。
@@ -306,7 +342,7 @@ curl http://localhost:4141/admin/config/model-mappings \
 
 ## API 端点
 
-服务端提供多个端点来与 Copilot API 交互。它支持 OpenAI 兼容端点，也支持 Anthropic 兼容端点，因此可以更灵活地接入不同工具与服务。
+服务端提供多个 OpenAI / Anthropic 兼容端点。请求会根据所选模型和 `provider/model` 别名路由到 GitHub Copilot、内置 `codex` provider 或已配置的 provider。
 
 ### OpenAI 兼容端点
 
@@ -315,8 +351,8 @@ curl http://localhost:4141/admin/config/model-mappings \
 | 端点 | 方法 | 说明 |
 | --- | --- | --- |
 | `POST /v1/responses` | `POST` | OpenAI 中用于生成模型响应的高级接口。支持 `openai-responses` provider 的 `provider/model` 别名。 |
-| `POST /v1/chat/completions` | `POST` | 为给定聊天对话创建模型响应。支持 `openai-compatible` provider 的 `provider/model` 别名。 |
-| `GET /v1/models` | `GET` | 列出当前可用模型。 |
+| `POST /v1/chat/completions` | `POST` | 为给定聊天对话创建模型响应。支持 `openai-compatible` provider 的 `provider/model` 别名；目标 provider 已配置时可在没有 Copilot 的情况下使用。 |
+| `GET /v1/models` | `GET` | 列出 Copilot 模型以及已启用 provider 的 `provider/model-id` 模型。 |
 | `POST /v1/embeddings` | `POST` | 创建表示输入文本的向量嵌入。 |
 
 ### Anthropic 兼容端点
@@ -325,9 +361,9 @@ curl http://localhost:4141/admin/config/model-mappings \
 
 | 端点 | 方法 | 说明 |
 | --- | --- | --- |
-| `POST /v1/messages` | `POST` | 为给定对话创建模型响应。支持已配置 provider 的 `provider/model` 别名。 |
+| `POST /v1/messages` | `POST` | 为给定对话创建模型响应。支持已配置 provider 的 `provider/model` 别名，包括通过 `openai-compatible` provider 做翻译。 |
 | `POST /v1/messages/count_tokens` | `POST` | 计算一组消息的 token 数。支持已配置 provider 的 `provider/model` 别名。 |
-| `POST /:provider/v1/messages` | `POST` | 将 Anthropic Messages 请求代理到已配置的 Anthropic、OpenAI 兼容或 OpenAI Responses provider。 |
+| `POST /:provider/v1/messages` | `POST` | 将 Anthropic Messages 请求代理到已配置的 Anthropic provider，或翻译到 OpenAI 兼容 / OpenAI Responses provider。 |
 | `GET /:provider/v1/models` | `GET` | 将模型列表请求代理到已配置的 provider。 |
 | `POST /:provider/v1/messages/count_tokens` | `POST` | 为 provider 路由请求在本地计算 token 数。 |
 
@@ -363,14 +399,27 @@ npx @jeffreycao/copilot-api@latest start --port 8080 --verbose
 # 执行认证流程
 npx @jeffreycao/copilot-api@latest auth login
 
-# 在终端中查看 Copilot 用量与额度（无需启动服务）
-npx @jeffreycao/copilot-api@latest check-usage
+# 配置第三方 provider，然后不依赖 GitHub Copilot 启动
+npx @jeffreycao/copilot-api@latest auth login --provider dashscope
+npx @jeffreycao/copilot-api@latest start
 
 # 以 JSON 格式输出调试信息
 npx @jeffreycao/copilot-api@latest debug --json
 
 # 用 Bun 而不是 Node.js 运行已发布 CLI
 bunx --bun @jeffreycao/copilot-api@latest start
+```
+
+配置 `dashscope` 后的 OpenAI 兼容 provider 调用示例：
+
+```sh
+curl http://localhost:4141/v1/chat/completions \
+  -H "content-type: application/json" \
+  -d '{"model":"dashscope/qwen3.6-plus","messages":[{"role":"user","content":"hello"}]}'
+
+curl http://localhost:4141/dashscope/v1/messages \
+  -H "content-type: application/json" \
+  -d '{"model":"qwen3.6-plus","max_tokens":1024,"messages":[{"role":"user","content":"hello"}]}'
 ```
 
 ## 与 Claude Code 一起使用
@@ -404,16 +453,15 @@ npx @jeffreycao/copilot-api@latest start --claude-code
   "env": {
     "ANTHROPIC_BASE_URL": "http://localhost:4141",
     "ANTHROPIC_AUTH_TOKEN": "dummy",
-    "ANTHROPIC_MODEL": "gpt-5.4",
-    "ANTHROPIC_DEFAULT_SONNET_MODEL": "gpt-5.4",
-    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "gpt-5-mini",
+    "ANTHROPIC_MODEL": "deepseek/deepseek-v4-pro",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek/deepseek-v4-pro",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "deepseek/deepseek-v4-flash",
     "DISABLE_NON_ESSENTIAL_MODEL_CALLS": "1",
     "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
     "CLAUDE_CODE_ATTRIBUTION_HEADER": "0",
     "CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION": "false",
     "CLAUDE_CODE_DISABLE_TERMINAL_TITLE": "true",
-    "CLAUDE_CODE_ENABLE_AWAY_SUMMARY": "0",
-    "CLAUDE_PLUGIN_ENABLE_QUESTION_RULES": "true"
+    "CLAUDE_CODE_ENABLE_AWAY_SUMMARY": "0"
   },
   "permissions": {
     "deny": [
@@ -484,7 +532,8 @@ OpenCode 已经有直接的 GitHub Copilot provider。本节适用于你希望�
 使用 OpenCode OAuth app 启动 AI gateway：
 
 ```sh
-npx @jeffreycao/copilot-api@latest --oauth-app=opencode start
+npx @jeffreycao/copilot-api@latest auth --oauth-app=opencode
+npx @jeffreycao/copilot-api@latest start
 ```
 
 然后让 OpenCode 通过 `@ai-sdk/anthropic` 指向这个 AI gateway。
@@ -494,23 +543,10 @@ npx @jeffreycao/copilot-api@latest --oauth-app=opencode start
 ```json
 {
   "$schema": "https://opencode.ai/config.json",
-  "model": "local/gpt-5.4",
-  "small_model": "local/gpt-5-mini",
-  "agent": {
-    "build": {
-      "model": "local/gpt-5.4"
-    },
-    "plan": {
-      "model": "local/gpt-5.4"
-    },
-    "explore": {
-      "model": "local/gpt-5-mini"
-    }
-  },
   "provider": {
     "local": {
       "npm": "@ai-sdk/anthropic",
-      "name": "Copilot API Proxy",
+      "name": "My Local",
       "options": {
         "baseURL": "http://localhost:4141/v1",
         "apiKey": "dummy"
@@ -527,13 +563,6 @@ npx @jeffreycao/copilot-api@latest --oauth-app=opencode start
             "output": 128000
           }
         },
-        "gpt-5-mini": {
-          "name": "gpt-5-mini",
-          "limit": {
-            "context": 200000,
-            "output": 64000
-          }
-        },
         "claude-sonnet-4.6": {
           "id": "claude-sonnet-4.6",
           "name": "claude-sonnet-4.6",
@@ -547,9 +576,9 @@ npx @jeffreycao/copilot-api@latest --oauth-app=opencode start
           },
           "options": {
             "thinking": {
-              "type": "enabled",
-              "budgetTokens": 31999
-            }
+              "type": "adaptive"
+            },
+            "effort": "max"
           }
         }
       }
@@ -714,7 +743,6 @@ bun run start start
   - `--manual`：为每个请求启用手动审批，让你完全控制何时发送请求。
   - `--rate-limit <seconds>`：强制请求之间至少保持一定秒数的间隔。例如 `copilot-api start --rate-limit 30` 会确保两次请求之间至少间隔 30 秒。
   - `--wait`：与 `--rate-limit` 配合使用。在命中速率限制时，服务会等待冷却结束，而不是直接返回错误。对于不会自动重试的客户端，这会很有帮助。
-- 如果你使用的是 GitHub Business 或 Enterprise 版 Copilot 账号，请使用 `--account-type` 参数（例如 `--account-type business`）。详见 [官方文档](https://docs.github.com/en/enterprise-cloud@latest/copilot/managing-copilot/managing-github-copilot-in-your-organization/managing-access-to-github-copilot-in-your-organization/managing-github-copilot-access-to-your-organizations-network#configuring-copilot-subscription-based-network-routing-for-your-enterprise-or-organization)。
 
 <a id="claudemd-or-agentsmd-recommended-content"></a>
 

@@ -49,6 +49,7 @@ describe("runServer auto-session prewarm order", () => {
       setupGitHubToken: async () => {},
       setupCopilotToken: async () => {},
       logUser: async () => {},
+      persistCodexCredentials: async () => {},
     }))
 
     await mock.module("srvx", () => ({
@@ -72,7 +73,6 @@ describe("runServer auto-session prewarm order", () => {
     await startModule.runServer({
       port: 4141,
       verbose: false,
-      accountType: "individual",
       manual: false,
       rateLimit: undefined,
       rateLimitWait: false,

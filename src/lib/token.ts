@@ -130,6 +130,7 @@ function syncCodexProviderConfig(options?: { enabled?: boolean }): void {
     enabled: options?.enabled ?? existingProviderConfig.enabled,
     baseUrl: CODEX_API_BASE_URL,
     authType: "oauth2",
+    pricingCurrency: "USD",
   })
 }
 
@@ -393,6 +394,10 @@ export async function logUser() {
   consola.info(`Logged in as ${user.login}`)
 
   const copilotUser = await getCopilotUsage()
+  if (!copilotUser) {
+    throw new Error("GitHub token not found")
+  }
+
   state.copilotApiUrl = copilotUser.endpoints.api
   state.tokenBasedBilling = copilotUser.token_based_billing
 }
