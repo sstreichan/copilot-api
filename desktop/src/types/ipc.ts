@@ -24,7 +24,7 @@ export interface AuthStatus extends AuthResult {
 export type ProviderType = 'anthropic' | 'openai-compatible' | 'openai-responses'
 export type ProviderAuthType = 'authorization' | 'x-api-key'
 export type ProviderAuthTypeInput = ProviderAuthType | '__default__'
-export type QuickProviderName = 'deepseek' | 'dashscope' | 'openrouter'
+export type QuickProviderName = 'opencode-go' | 'deepseek' | 'dashscope' | 'openrouter'
 
 export type ProviderAuthInput =
   | {
@@ -152,6 +152,8 @@ export interface TokenUsageEventsPage {
   total_pages: number
 }
 
+export type ThemePreference = 'light' | 'dark' | 'auto'
+
 export type DesktopProxyMode = 'system' | 'custom' | 'direct'
 
 export interface DesktopProxySettings {
@@ -171,6 +173,7 @@ export interface DesktopSettings {
   verbose: boolean
   showToken: boolean
   language: LangPreference
+  theme: ThemePreference
   proxy: DesktopProxySettings
 }
 

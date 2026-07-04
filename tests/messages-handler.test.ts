@@ -1,14 +1,4 @@
-import type { Context } from "hono"
-
-import {
-  afterEach,
-  beforeEach,
-  describe,
-  expect,
-  mock,
-  spyOn,
-  test,
-} from "bun:test"
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test"
 import { Hono } from "hono"
 
 import type { AnthropicMessagesPayload } from "../src/routes/messages/anthropic-types"
@@ -20,21 +10,31 @@ import {
 
 const actualStateModule = await import("../src/lib/state")
 const actualConfigModule = await import("../src/lib/config")
-const actualModelsModule = await import("../src/lib/models")
-const actualRateLimitModule = await import("../src/lib/rate-limit")
 const actualUtilsModule = await import("../src/lib/utils")
 const { responsesUtilsDependencies } = await import(
   "../src/routes/responses/utils"
 )
 
-const state = actualStateModule.state
+const state = {
+  ...actualStateModule.state,
+  tokenBasedBilling: false,
+  verbose: false,
+}
 
 let messagesApiEnabled = true
 let responsesApiWebSocketEnabled = true
 let modelMappings: Record<string, string> = {}
-type SelectedModel = {
+let defaultResolvedModelId: string | undefined
+
+const setSelectedModel = (model: {
   id: string
   supported_endpoints?: Array<string>
+}) => {
+  state.models = {
+    object: "list",
+    data: [model],
+  } as typeof state.models
+  defaultResolvedModelId = model.id
 }
 
 type FlowCallOptions = {
@@ -44,12 +44,6 @@ type FlowCallOptions = {
   subagentMarker?: unknown
   anthropicBetaHeader?: string
 }
-
-let selectedModel: SelectedModel | undefined
-let handlerImportVersion = 0
-
-const findEndpointModel = mock((_: string) => selectedModel)
-const checkRateLimit = mock(async () => {})
 const handleWithMessagesApi = mock(
   (
     _c: unknown,
@@ -72,68 +66,31 @@ const handleWithChatCompletions = mock(
   ) => Promise.resolve(new Response("chat")),
 )
 
+await mock.module("~/lib/state", () => ({
+  ...actualStateModule,
+  state,
+}))
+await mock.module("~/lib/config", () => ({
+  ...actualConfigModule,
+  getSmallModel: () => "small-model",
+  isMessagesApiEnabled: () => messagesApiEnabled,
+  isResponsesApiWebSocketEnabled: () => responsesApiWebSocketEnabled,
+  resolveMappedModel: (model: string) =>
+    modelMappings[model]
+    ?? (model === "original-model" ? defaultResolvedModelId : model)
+    ?? model,
+}))
+await mock.module("~/lib/utils", () => ({
+  ...actualUtilsModule,
+}))
+const { handleCompletion, messagesFlowHandlers } = await import(
+  "../src/routes/messages/handler"
+)
+
+const defaultMessagesFlowHandlers = { ...messagesFlowHandlers }
 const defaultResponsesUtilsDependencies = { ...responsesUtilsDependencies }
 
-let getSmallModelSpy: ReturnType<
-  typeof spyOn<typeof actualConfigModule, "getSmallModel">
->
-let isMessagesApiEnabledSpy: ReturnType<
-  typeof spyOn<typeof actualConfigModule, "isMessagesApiEnabled">
->
-let isResponsesApiWebSocketEnabledSpy: ReturnType<
-  typeof spyOn<typeof actualConfigModule, "isResponsesApiWebSocketEnabled">
->
-let resolveMappedModelSpy: ReturnType<
-  typeof spyOn<typeof actualConfigModule, "resolveMappedModel">
->
-let findEndpointModelSpy: ReturnType<
-  typeof spyOn<typeof actualModelsModule, "findEndpointModel">
->
-let checkRateLimitSpy: ReturnType<
-  typeof spyOn<typeof actualRateLimitModule, "checkRateLimit">
->
-
-const createApp = async () => {
-  getSmallModelSpy = spyOn(actualConfigModule, "getSmallModel").mockReturnValue(
-    "small-model",
-  )
-  isMessagesApiEnabledSpy = spyOn(
-    actualConfigModule,
-    "isMessagesApiEnabled",
-  ).mockImplementation(() => messagesApiEnabled)
-  isResponsesApiWebSocketEnabledSpy = spyOn(
-    actualConfigModule,
-    "isResponsesApiWebSocketEnabled",
-  ).mockImplementation(() => responsesApiWebSocketEnabled)
-  resolveMappedModelSpy = spyOn(
-    actualConfigModule,
-    "resolveMappedModel",
-  ).mockImplementation((model: string) => modelMappings[model] ?? model)
-  findEndpointModelSpy = spyOn(
-    actualModelsModule,
-    "findEndpointModel",
-  ).mockImplementation(findEndpointModel as never)
-  checkRateLimitSpy = spyOn(
-    actualRateLimitModule,
-    "checkRateLimit",
-  ).mockImplementation(checkRateLimit as never)
-
-  const handlerModule = (await import(
-    `../src/routes/messages/handler?messages-handler-test-${++handlerImportVersion}`
-  )) as {
-    handleCompletion: (c: Context) => Promise<Response>
-    messagesFlowHandlers: {
-      handleWithMessagesApi: typeof handleWithMessagesApi
-      handleWithResponsesApi: typeof handleWithResponsesApi
-      handleWithChatCompletions: typeof handleWithChatCompletions
-    }
-  }
-  const { handleCompletion, messagesFlowHandlers } = handlerModule
-
-  messagesFlowHandlers.handleWithMessagesApi = handleWithMessagesApi
-  messagesFlowHandlers.handleWithResponsesApi = handleWithResponsesApi
-  messagesFlowHandlers.handleWithChatCompletions = handleWithChatCompletions
-
+const createApp = () => {
   const app = new Hono()
   app.post("/", handleCompletion)
   return app
@@ -149,41 +106,44 @@ const createPayload = (
 })
 
 beforeEach(() => {
-  state.manualApprove = false
-  state.tokenBasedBilling = false
   state.verbose = false
   messagesApiEnabled = true
   responsesApiWebSocketEnabled = true
   modelMappings = {}
-  selectedModel = undefined
+  defaultResolvedModelId = undefined
+  setSelectedModel({
+    id: "messages-model",
+    supported_endpoints: ["/v1/messages"],
+  })
 
   responsesUtilsDependencies.isResponsesApiWebSocketEnabled = () =>
     responsesApiWebSocketEnabled
 
-  checkRateLimit.mockClear()
-  findEndpointModel.mockClear()
+  messagesFlowHandlers.handleWithMessagesApi = handleWithMessagesApi
+  messagesFlowHandlers.handleWithResponsesApi = handleWithResponsesApi
+  messagesFlowHandlers.handleWithChatCompletions = handleWithChatCompletions
+
   handleWithMessagesApi.mockClear()
   handleWithResponsesApi.mockClear()
   handleWithChatCompletions.mockClear()
 })
 
 afterEach(() => {
+  messagesFlowHandlers.handleWithMessagesApi =
+    defaultMessagesFlowHandlers.handleWithMessagesApi
+  messagesFlowHandlers.handleWithResponsesApi =
+    defaultMessagesFlowHandlers.handleWithResponsesApi
+  messagesFlowHandlers.handleWithChatCompletions =
+    defaultMessagesFlowHandlers.handleWithChatCompletions
   Object.assign(responsesUtilsDependencies, defaultResponsesUtilsDependencies)
-
-  getSmallModelSpy?.mockRestore()
-  isMessagesApiEnabledSpy?.mockRestore()
-  isResponsesApiWebSocketEnabledSpy?.mockRestore()
-  resolveMappedModelSpy?.mockRestore()
-  findEndpointModelSpy?.mockRestore()
-  checkRateLimitSpy?.mockRestore()
 })
 
 describe("messages handler orchestration", () => {
   test("merges message-level system prompts before forwarding to the selected flow", async () => {
-    selectedModel = {
+    setSelectedModel({
       id: "messages-model",
       supported_endpoints: ["/v1/messages"],
-    }
+    })
 
     const payload: AnthropicMessagesPayload = {
       model: "original-model",
@@ -222,7 +182,7 @@ describe("messages handler orchestration", () => {
       ],
     }
 
-    const app = await createApp()
+    const app = createApp()
     const response = await app.request("/", {
       method: "POST",
       headers: {
@@ -259,12 +219,12 @@ describe("messages handler orchestration", () => {
   })
 
   test("removes executeCode and rewrites getDiagnostics before forwarding tools", async () => {
-    selectedModel = {
+    setSelectedModel({
       id: "messages-model",
       supported_endpoints: ["/v1/messages"],
-    }
+    })
 
-    const app = await createApp()
+    const app = createApp()
     const response = await app.request("/", {
       method: "POST",
       headers: {
@@ -313,10 +273,10 @@ describe("messages handler orchestration", () => {
   })
 
   test("adds cache_control to the last content block after merging tool_result content", async () => {
-    selectedModel = {
+    setSelectedModel({
       id: "messages-model",
       supported_endpoints: ["/v1/messages"],
-    }
+    })
 
     const payload: AnthropicMessagesPayload = {
       model: "original-model",
@@ -339,7 +299,7 @@ describe("messages handler orchestration", () => {
       ],
     }
 
-    const app = await createApp()
+    const app = createApp()
     const response = await app.request("/", {
       method: "POST",
       headers: {
@@ -368,10 +328,10 @@ describe("messages handler orchestration", () => {
   })
 
   test("preserves cache_control captured before Tool loaded is stripped", async () => {
-    selectedModel = {
+    setSelectedModel({
       id: "messages-model",
       supported_endpoints: ["/v1/messages"],
-    }
+    })
 
     const payload: AnthropicMessagesPayload = {
       model: "original-model",
@@ -403,7 +363,7 @@ describe("messages handler orchestration", () => {
       ],
     }
 
-    const app = await createApp()
+    const app = createApp()
     const response = await app.request("/", {
       method: "POST",
       headers: {
@@ -438,12 +398,12 @@ describe("messages handler orchestration", () => {
   })
 
   test("delegates to the Messages API flow when the model supports /v1/messages", async () => {
-    selectedModel = {
+    setSelectedModel({
       id: "messages-model",
       supported_endpoints: ["/v1/messages"],
-    }
+    })
 
-    const app = await createApp()
+    const app = createApp()
     const response = await app.request("/", {
       method: "POST",
       headers: {
@@ -466,12 +426,12 @@ describe("messages handler orchestration", () => {
     modelMappings = {
       "claude-opus-4-7": "messages-model",
     }
-    selectedModel = {
+    setSelectedModel({
       id: "messages-model",
       supported_endpoints: ["/v1/messages"],
-    }
+    })
 
-    const app = await createApp()
+    const app = createApp()
     const response = await app.request("/", {
       method: "POST",
       headers: {
@@ -482,19 +442,17 @@ describe("messages handler orchestration", () => {
 
     expect(response.status).toBe(200)
     expect(await response.text()).toBe("messages")
-    expect(findEndpointModel).toHaveBeenCalledWith("messages-model")
-
     const [, forwardedPayload] = handleWithMessagesApi.mock.calls[0]
     expect(forwardedPayload.model).toBe("messages-model")
   })
 
   test("stabilizes Claude Code billing header before forwarding to the Messages API flow", async () => {
-    selectedModel = {
+    setSelectedModel({
       id: "messages-model",
       supported_endpoints: ["/v1/messages"],
-    }
+    })
 
-    const app = await createApp()
+    const app = createApp()
     const response = await app.request("/", {
       method: "POST",
       headers: {
@@ -533,12 +491,12 @@ describe("messages handler orchestration", () => {
   })
 
   test("stabilizes Claude Code billing header before forwarding to the Responses API flow", async () => {
-    selectedModel = {
+    setSelectedModel({
       id: "responses-model",
       supported_endpoints: ["/responses"],
-    }
+    })
 
-    const app = await createApp()
+    const app = createApp()
     const response = await app.request("/", {
       method: "POST",
       headers: {
@@ -581,12 +539,12 @@ describe("messages handler orchestration", () => {
 
   test("delegates to the Responses API flow when the model supports ws:/responses", async () => {
     responsesApiWebSocketEnabled = true
-    selectedModel = {
+    setSelectedModel({
       id: "responses-ws-model",
       supported_endpoints: ["ws:/responses"],
-    }
+    })
 
-    const app = await createApp()
+    const app = createApp()
     const response = await app.request("/", {
       method: "POST",
       headers: {
@@ -603,12 +561,12 @@ describe("messages handler orchestration", () => {
   })
 
   test("does not delegate compact requests to a ws-only Responses API model", async () => {
-    selectedModel = {
+    setSelectedModel({
       id: "responses-ws-model",
       supported_endpoints: ["ws:/responses"],
-    }
+    })
 
-    const app = await createApp()
+    const app = createApp()
     const response = await app.request("/", {
       method: "POST",
       headers: {
@@ -634,12 +592,12 @@ describe("messages handler orchestration", () => {
   })
 
   test("stabilizes Claude Code billing header before falling back to the Chat Completions flow", async () => {
-    selectedModel = {
+    setSelectedModel({
       id: "chat-model",
       supported_endpoints: [],
-    }
+    })
 
-    const app = await createApp()
+    const app = createApp()
     const response = await app.request("/", {
       method: "POST",
       headers: {
@@ -681,10 +639,10 @@ describe("messages handler orchestration", () => {
   })
 
   test("applies warmup model override and passes request metadata to the selected flow", async () => {
-    selectedModel = {
-      id: "messages-model",
+    setSelectedModel({
+      id: "small-model",
       supported_endpoints: ["/v1/messages"],
-    }
+    })
 
     const payload = createPayload({
       messages: [
@@ -704,7 +662,7 @@ describe("messages handler orchestration", () => {
       ],
     })
 
-    const app = await createApp()
+    const app = createApp()
     const response = await app.request("/", {
       method: "POST",
       headers: {
@@ -717,7 +675,8 @@ describe("messages handler orchestration", () => {
 
     expect(response.status).toBe(200)
     expect(await response.text()).toBe("messages")
-    expect(findEndpointModel).toHaveBeenCalledWith("small-model")
+    const [, forwardedPayload] = handleWithMessagesApi.mock.calls[0]
+    expect(forwardedPayload.model).toBe("small-model")
 
     const expectedSessionId = actualUtilsModule.getUUID("session-123")
     const expectedRequestId = actualUtilsModule.generateRequestIdFromPayload(

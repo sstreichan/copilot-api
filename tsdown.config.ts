@@ -10,8 +10,4 @@ export default defineConfig({
   sourcemap: true,
   clean: true,
   removeNodeProtocol: false,
-
-  env: {
-    NODE_ENV: "production",
-  },
 })

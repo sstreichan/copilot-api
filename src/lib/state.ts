@@ -27,13 +27,8 @@ export interface State {
   vsCodeSessionId?: string
   vsCodeDeviceId: string
 
-  manualApprove: boolean
-  rateLimitWait: boolean
   showToken: boolean
 
-  // Rate limiting configuration
-  rateLimitSeconds?: number
-  lastRequestTimestamp?: number
   verbose: boolean
   forceAgent: boolean
   nativeMessages: boolean
@@ -48,8 +43,6 @@ export interface State {
 export const state: State = {
   interactionId: randomUUID(),
   accountType: "individual",
-  manualApprove: false,
-  rateLimitWait: false,
   showToken: false,
   verbose: false,
   forceAgent: false,

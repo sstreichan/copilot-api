@@ -329,7 +329,8 @@ export const getStableSessionKeyFromResponsesPayload = (
     return sessionFromUserId
   }
 
-  const sessionFromHeader = c.req.header("x-session-id")
+  const sessionFromHeader =
+    c.req.header("x-session-id") ?? c.req.header("session-id")
   if (
     typeof sessionFromHeader === "string"
     && sessionFromHeader.trim().length > 0

@@ -73,9 +73,6 @@ describe("runServer auto-session prewarm order", () => {
     await startModule.runServer({
       port: 4141,
       verbose: false,
-      manual: false,
-      rateLimit: undefined,
-      rateLimitWait: false,
       githubToken: "provided-token",
       claudeCode: false,
       showToken: false,

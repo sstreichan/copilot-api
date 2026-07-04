@@ -75,9 +75,9 @@ const createApp = () => {
 
 beforeEach(() => {
   providerConfig = {
-    name: "dash",
+    name: "dashscope",
     type: "openai-compatible",
-    baseUrl: "https://dashscope.example/compatible-mode",
+    baseUrl: "https://dashscope.aliyuncs.com/compatible-mode",
     apiKey: "provider-key",
     authType: "authorization",
     models: {
@@ -174,7 +174,7 @@ describe("openai-compatible provider messages", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1)
     const [url, init] = fetchMock.mock.calls[0]
     expect(url).toBe(
-      "https://dashscope.example/compatible-mode/v1/chat/completions",
+      "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
     )
     expect((init as RequestInit).headers).toEqual({
       "content-type": "application/json",
@@ -364,7 +364,7 @@ describe("openai-compatible provider messages", () => {
 })
 
 describe("openai-compatible provider context cache", () => {
-  test("marks first system and last two non-system messages for OpenAI-compatible context cache", async () => {
+  test("marks first system and last non-system message for OpenAI-compatible context cache", async () => {
     const app = createApp()
     const response = await app.request("/dash/v1/messages", {
       method: "POST",
@@ -401,7 +401,7 @@ describe("openai-compatible provider context cache", () => {
         ),
     )
 
-    expect(markedMessages).toHaveLength(3)
+    expect(markedMessages).toHaveLength(2)
     expect(body.messages[0]).toEqual({
       role: "system",
       content: [
@@ -428,15 +428,7 @@ describe("openai-compatible provider context cache", () => {
     })
     expect(body.messages[4]).toEqual({
       role: "assistant",
-      content: [
-        {
-          type: "text",
-          text: "second answer",
-          cache_control: {
-            type: "ephemeral",
-          },
-        },
-      ],
+      content: "second answer",
     })
     expect(body.messages[5]).toEqual({
       role: "user",
@@ -801,15 +793,7 @@ describe("openai-compatible provider PDF message content", () => {
     expect(body.messages[0]).toEqual({
       role: "tool",
       tool_call_id: "tool_pdf",
-      content: [
-        {
-          type: "text",
-          text: "PDF file read: report.pdf",
-          cache_control: {
-            type: "ephemeral",
-          },
-        },
-      ],
+      content: "PDF file read: report.pdf",
     })
     expect(body.messages[1]).toEqual({
       role: "user",
@@ -834,5 +818,291 @@ describe("openai-compatible provider PDF message content", () => {
         },
       ],
     })
+  })
+})
+
+describe("non-dashscope openai-compatible provider restrictions", () => {
+  test("strips request-derived thinking_budget for non-dashscope providers", async () => {
+    providerConfig = {
+      ...providerConfig,
+      name: "custom",
+      baseUrl: "https://api.example.com/v1",
+      models: {
+        "qwen-plus": {
+          toolContentSupportType: [],
+        },
+      },
+    } as ResolvedProviderConfig
+
+    const app = createApp()
+    const response = await app.request("/custom/v1/messages", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        max_tokens: 128,
+        messages: [{ role: "user", content: "hello" }],
+        model: "qwen-plus",
+        thinking: {
+          type: "enabled",
+          budget_tokens: 4096,
+        },
+      }),
+    })
+
+    expect(response.status).toBe(200)
+    const init = fetchMock.mock.calls[0][1] as RequestInit
+    const body = JSON.parse(init.body as string) as Record<string, unknown>
+    expect(body).not.toHaveProperty("thinking_budget")
+  })
+
+  test("keeps extraBody thinking_budget for non-dashscope providers", async () => {
+    providerConfig = {
+      ...providerConfig,
+      name: "custom",
+      baseUrl: "https://api.example.com/v1",
+      models: {
+        "qwen-plus": {
+          extraBody: {
+            thinking_budget: 8192,
+          },
+          toolContentSupportType: [],
+        },
+      },
+    } as ResolvedProviderConfig
+
+    const app = createApp()
+    const response = await app.request("/custom/v1/messages", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        max_tokens: 128,
+        messages: [{ role: "user", content: "hello" }],
+        model: "qwen-plus",
+        thinking: {
+          type: "enabled",
+          budget_tokens: 4096,
+        },
+      }),
+    })
+
+    expect(response.status).toBe(200)
+    const init = fetchMock.mock.calls[0][1] as RequestInit
+    const body = JSON.parse(init.body as string) as Record<string, unknown>
+    expect(body.thinking_budget).toBe(8192)
+  })
+
+  test("does not apply context cache for non-dashscope providers by default", async () => {
+    providerConfig = {
+      ...providerConfig,
+      name: "custom",
+      baseUrl: "https://api.example.com/v1",
+      models: {
+        "qwen-plus": {
+          toolContentSupportType: [],
+        },
+      },
+    } as ResolvedProviderConfig
+
+    const app = createApp()
+    const response = await app.request("/custom/v1/messages", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        max_tokens: 128,
+        system: "system prompt",
+        messages: [{ role: "user", content: "hello" }],
+        model: "qwen-plus",
+      }),
+    })
+
+    expect(response.status).toBe(200)
+    const init = fetchMock.mock.calls[0][1] as RequestInit
+    const body = JSON.parse(init.body as string) as {
+      messages: Array<{ content: unknown; role: string }>
+    }
+    for (const message of body.messages) {
+      if (Array.isArray(message.content)) {
+        for (const part of message.content) {
+          if (typeof part === "object" && part !== null) {
+            expect(part).not.toHaveProperty("cache_control")
+          }
+        }
+      }
+    }
+  })
+
+  test("applies context cache for non-dashscope providers when explicitly enabled", async () => {
+    providerConfig = {
+      ...providerConfig,
+      name: "custom",
+      baseUrl: "https://api.example.com/v1",
+      models: {
+        "qwen-plus": {
+          contextCache: true,
+          toolContentSupportType: [],
+        },
+      },
+    } as ResolvedProviderConfig
+
+    const app = createApp()
+    const response = await app.request("/custom/v1/messages", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        max_tokens: 128,
+        system: "system prompt",
+        messages: [{ role: "user", content: "hello" }],
+        model: "qwen-plus",
+      }),
+    })
+
+    expect(response.status).toBe(200)
+    const init = fetchMock.mock.calls[0][1] as RequestInit
+    const body = JSON.parse(init.body as string) as {
+      messages: Array<{ content: unknown; role: string }>
+    }
+    const systemMessage = body.messages[0]
+    expect(Array.isArray(systemMessage.content)).toBe(true)
+    const systemPart = (
+      systemMessage.content as Array<Record<string, unknown>>
+    )[0]
+    expect(systemPart.cache_control).toEqual({ type: "ephemeral" })
+  })
+
+  test("detects dashscope via aliyuncs.com in baseUrl", async () => {
+    providerConfig = {
+      ...providerConfig,
+      name: "my-bailian",
+      baseUrl: "https://bailian.aliyuncs.com/api/v1",
+      models: {
+        "qwen-plus": {
+          toolContentSupportType: [],
+        },
+      },
+    } as ResolvedProviderConfig
+
+    const app = createApp()
+    const response = await app.request("/my-bailian/v1/messages", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        max_tokens: 128,
+        messages: [{ role: "user", content: "hello" }],
+        model: "qwen-plus",
+        thinking: {
+          type: "enabled",
+          budget_tokens: 4096,
+        },
+      }),
+    })
+
+    expect(response.status).toBe(200)
+    const init = fetchMock.mock.calls[0][1] as RequestInit
+    const body = JSON.parse(init.body as string) as Record<string, unknown>
+    expect(body.thinking_budget).toBe(4096)
+  })
+})
+
+describe("dashscope preserve_thinking default", () => {
+  test("defaults preserve_thinking to true for dashscope when not set", async () => {
+    providerConfig = {
+      ...providerConfig,
+      models: {
+        "qwen-plus": {
+          toolContentSupportType: [],
+        },
+      },
+    } as ResolvedProviderConfig
+
+    const app = createApp()
+    const response = await app.request("/dash/v1/messages", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        max_tokens: 128,
+        messages: [{ role: "user", content: "hello" }],
+        model: "qwen-plus",
+      }),
+    })
+
+    expect(response.status).toBe(200)
+    const init = fetchMock.mock.calls[0][1] as RequestInit
+    const body = JSON.parse(init.body as string) as Record<string, unknown>
+    expect(body.preserve_thinking).toBe(true)
+  })
+
+  test("keeps explicit preserve_thinking false from extraBody", async () => {
+    providerConfig = {
+      ...providerConfig,
+      models: {
+        "qwen-plus": {
+          extraBody: {
+            preserve_thinking: false,
+          },
+          toolContentSupportType: [],
+        },
+      },
+    } as ResolvedProviderConfig
+
+    const app = createApp()
+    const response = await app.request("/dash/v1/messages", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        max_tokens: 128,
+        messages: [{ role: "user", content: "hello" }],
+        model: "qwen-plus",
+      }),
+    })
+
+    expect(response.status).toBe(200)
+    const init = fetchMock.mock.calls[0][1] as RequestInit
+    const body = JSON.parse(init.body as string) as Record<string, unknown>
+    expect(body.preserve_thinking).toBe(false)
+  })
+
+  test("does not set preserve_thinking for non-dashscope providers", async () => {
+    providerConfig = {
+      ...providerConfig,
+      name: "custom",
+      baseUrl: "https://api.example.com/v1",
+      models: {
+        "qwen-plus": {
+          toolContentSupportType: [],
+        },
+      },
+    } as ResolvedProviderConfig
+
+    const app = createApp()
+    const response = await app.request("/custom/v1/messages", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        max_tokens: 128,
+        messages: [{ role: "user", content: "hello" }],
+        model: "qwen-plus",
+      }),
+    })
+
+    expect(response.status).toBe(200)
+    const init = fetchMock.mock.calls[0][1] as RequestInit
+    const body = JSON.parse(init.body as string) as Record<string, unknown>
+    expect(body).not.toHaveProperty("preserve_thinking")
   })
 })

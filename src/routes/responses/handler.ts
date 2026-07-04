@@ -5,7 +5,6 @@ import { streamSSE } from "hono/streaming"
 
 import type { Model } from "~/services/copilot/get-models"
 
-import { awaitApproval } from "~/lib/approval"
 import {
   getConfig as getConfiguredConfig,
   isResponsesApiWebSearchEnabled as isConfiguredResponsesApiWebSearchEnabled,
@@ -24,14 +23,7 @@ import {
 } from "~/lib/logger"
 import { findEndpointModel } from "~/lib/models"
 import { parseProviderModelAlias } from "~/lib/provider-model"
-import { checkRateLimit as checkConfiguredRateLimit } from "~/lib/rate-limit"
-import {
-  applyForwardableResponseHeaders,
-  getAttachedResponseHeaders,
-  jsonWithForwardedHeaders,
-} from "~/lib/response-headers"
 import { handleProviderResponsesForProvider } from "~/routes/provider/responses/handler"
-import { state } from "~/lib/state"
 import {
   copilotUsageFromResponsesEvent,
   createCopilotTokenUsageRecorder,
@@ -59,7 +51,7 @@ import {
 } from "~/services/copilot/create-chat-completions"
 import { createMessages } from "~/services/copilot/create-messages"
 import {
-  createResponses,
+  createResponses as createCopilotResponses,
   type Reasoning,
   type ResponsesPayload,
   type ResponsesResult,
@@ -122,8 +114,7 @@ type CopilotResponsesContext = {
   subagentMarker: SubagentMarker | null
 }
 export const responsesHandlerDependencies = {
-  checkRateLimit: checkConfiguredRateLimit,
-  createResponses,
+  createResponses: createCopilotResponses,
   getConfig: getConfiguredConfig,
   isResponsesApiWebSearchEnabled: isConfiguredResponsesApiWebSearchEnabled,
 }
@@ -148,7 +139,6 @@ export const handleResponses = async (c: Context) => {
   }
 
   debugJson(logger, "Responses request payload:", payload)
-  await responsesHandlerDependencies.checkRateLimit(state)
 
   const stableSessionKey = getStableSessionKeyFromResponsesPayload(payload, c)
   if (!payload.prompt_cache_key?.trim() && stableSessionKey) {
@@ -258,15 +248,11 @@ const handleWithMessagesBackend = async (
 
   consola.info(`IN ${cm(payload.model)} [messages-backend]`)
 
-  if (state.manualApprove) {
-    await awaitApproval()
-  }
-
   const { initiator } = getResponsesRequestOptions(payload)
 
   let response: Awaited<ReturnType<typeof createMessages>>
   try {
-    response = await createMessages(anthropicPayload, {
+    response = await createMessages(anthropicPayload, undefined, {
       initiator,
       requestId,
       sessionId,
@@ -277,19 +263,22 @@ const handleWithMessagesBackend = async (
     return c.json({ error: { message, type: "server_error" } }, 500)
   }
 
-  if (isStreamingRequested(payload)) {
-    applyStreamingHeaders(c, response)
-
+  if (isStreamingRequested(payload) && isAsyncIterable(response)) {
     return streamSSE(c, async (stream) => {
       const streamState = createAnthropicToResponsesStreamState()
       let chunkCount = 0
       let usage: UsageTokens = {}
       let copilotUsage: CopilotUsageTokens = {}
       try {
-        for await (const event of parseAnthropicSSEBody(response.body)) {
-          usage = mergeAnthropicStreamUsage(usage, event)
-          copilotUsage = copilotUsageFromAnthropicEvent(event) ?? copilotUsage
-          await writeAnthropicStreamEvents(stream, event, streamState)
+        for await (const event of response) {
+          if (!event.data || event.data === "[DONE]") {
+            continue
+          }
+          const parsedEvent = parseAnthropicSSEData(event.data)
+          usage = mergeAnthropicStreamUsage(usage, parsedEvent)
+          copilotUsage =
+            copilotUsageFromAnthropicEvent(parsedEvent) ?? copilotUsage
+          await writeAnthropicStreamEvents(stream, parsedEvent, streamState)
           chunkCount++
         }
       } catch (err) {
@@ -317,7 +306,7 @@ const handleWithMessagesBackend = async (
   // Non-stream path
   let jsonResponse: unknown
   try {
-    jsonResponse = await response.json()
+    jsonResponse = response
   } catch (err) {
     const message =
       err instanceof Error ? err.message : "Failed to parse response"
@@ -340,10 +329,7 @@ const handleWithMessagesBackend = async (
     "responses/path-b/non-stream",
   )
   writeStreamLog({ model: payload.model, chunks: 0, done: true, premium }, true)
-  return jsonWithForwardedHeaders(
-    result,
-    getAttachedResponseHeaders(response) ?? response.headers,
-  )
+  return c.json(result)
 }
 
 const handleWithChatFallback = async (
@@ -353,10 +339,6 @@ const handleWithChatFallback = async (
   const chatPayload = translateResponsesToChatCompletions(payload)
 
   consola.info(`IN ${cm(payload.model)} [chat-fallback]`)
-
-  if (state.manualApprove) {
-    await awaitApproval()
-  }
 
   let response: Awaited<ReturnType<typeof createChatCompletions>>
   try {
@@ -371,11 +353,6 @@ const handleWithChatFallback = async (
   }
 
   if (isStreamingRequested(payload)) {
-    applyForwardableResponseHeaders(c, getAttachedResponseHeaders(response), {
-      "content-type": null,
-      "cache-control": null,
-      connection: null,
-    })
     return streamSSE(c, async (stream) => {
       const streamState = createChatCompletionToResponsesStreamState()
       let usage: UsageTokens = {}
@@ -453,10 +430,7 @@ const handleWithChatFallback = async (
     "responses/path-c/non-stream",
   )
   writeStreamLog({ model: payload.model, chunks: 0, done: true, premium }, true)
-  return jsonWithForwardedHeaders(
-    responsesResult,
-    getAttachedResponseHeaders(response),
-  )
+  return c.json(responsesResult)
 }
 const handleWithCopilotResponses = async ({
   c,
@@ -494,10 +468,6 @@ const handleWithCopilotResponses = async ({
     `IN ${cm(payload.model)} [effort=${effortForLog.value} (${effortForLog.source})]`,
   )
 
-  if (state.manualApprove) {
-    await awaitApproval()
-  }
-
   const responseOptions = {
     vision,
     initiator,
@@ -506,7 +476,7 @@ const handleWithCopilotResponses = async ({
     sessionId,
     transport,
   }
-  let response: Awaited<ReturnType<typeof createResponses>>
+  let response: Awaited<ReturnType<typeof createCopilotResponses>>
   try {
     response = await responsesHandlerDependencies.createResponses(
       payload,
@@ -554,10 +524,7 @@ const handleWithCopilotResponses = async ({
   )
   const premium = await resolvePremiumInfo(response, "responses/non-stream")
   writeStreamLog({ model: payload.model, chunks: 0, done: true, premium }, true)
-  return jsonWithForwardedHeaders(
-    response as ResponsesResult,
-    getAttachedResponseHeaders(response),
-  )
+  return c.json(response as ResponsesResult)
 }
 
 const isAsyncIterable = <T>(value: unknown): value is AsyncIterable<T> =>
@@ -572,11 +539,6 @@ const handleStreamingResponse = (options: {
 }) => {
   const { c, model, recordUsage, response } = options
   logger.debug("Forwarding native Responses stream")
-  applyForwardableResponseHeaders(c, getAttachedResponseHeaders(response), {
-    "content-type": null,
-    "cache-control": null,
-    connection: null,
-  })
 
   return streamSSE(c, async (stream) => {
     let chunkCount = 0
@@ -630,18 +592,6 @@ const handleStreamingResponse = (options: {
       }
     }
   })
-}
-
-const applyStreamingHeaders = (c: Context, response: { headers?: Headers }) => {
-  applyForwardableResponseHeaders(
-    c,
-    getAttachedResponseHeaders(response) ?? response.headers,
-    {
-      "content-type": null,
-      "cache-control": null,
-      connection: null,
-    },
-  )
 }
 
 const writeAnthropicStreamEvents = async (
@@ -787,79 +737,6 @@ function copilotUsageFromAnthropicEvent(
     return null
   }
   return copilotUsageToTokens(event.copilot_usage)
-}
-
-const parseAnthropicSSEBody = async function* (
-  body: ReadableStream<Uint8Array> | null,
-) {
-  if (!body) {
-    return
-  }
-
-  const reader = body.getReader()
-  const decoder = new TextDecoder()
-  const bufferState = { value: "" }
-
-  try {
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-
-      bufferState.value += decoder.decode(value, { stream: true })
-
-      while (true) {
-        const nextEvent = consumeAnthropicSSEEvent(bufferState)
-        if (nextEvent === null) {
-          break
-        }
-        if (!nextEvent || nextEvent === "[DONE]") {
-          continue
-        }
-
-        yield parseAnthropicSSEData(nextEvent)
-      }
-    }
-
-    const rest = extractAnthropicSSEData(
-      `${bufferState.value}${decoder.decode()}`,
-    )
-    if (!rest) {
-      return
-    }
-
-    if (rest === "[DONE]") {
-      return
-    }
-
-    yield parseAnthropicSSEData(rest)
-  } finally {
-    reader.releaseLock()
-  }
-}
-
-const consumeAnthropicSSEEvent = (bufferRef: {
-  value: string
-}): string | null => {
-  const boundaryIndex = bufferRef.value.indexOf("\n\n")
-  if (boundaryIndex === -1) {
-    return null
-  }
-
-  const rawEvent = bufferRef.value.slice(0, boundaryIndex)
-  bufferRef.value = bufferRef.value.slice(boundaryIndex + 2)
-  return extractAnthropicSSEData(rawEvent)
-}
-
-const extractAnthropicSSEData = (rawEvent: string): string => {
-  const lines = rawEvent.split("\n").map((line) => line.replace(/\r$/, ""))
-  let data = ""
-  for (const line of lines) {
-    if (line.startsWith("data:")) {
-      data += `${line.slice(5).trimStart()}\n`
-    }
-  }
-
-  return data.trim()
 }
 
 const parseAnthropicSSEData = (data: string): AnthropicStreamEventData =>

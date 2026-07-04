@@ -95,7 +95,7 @@ test("calls /v1/messages endpoint", async () => {
     max_tokens: 1024,
     messages: [{ role: "user", content: "hi" }],
   }
-  await createMessages(payload)
+  await createMessages(payload, undefined)
   expect(fetchMock).toHaveBeenCalled()
   const url = findMessagesCall()[0]
   expect(url).toContain("/v1/messages")
@@ -107,7 +107,7 @@ test("sets X-Initiator to user by default", async () => {
     max_tokens: 1024,
     messages: [{ role: "user", content: "hi" }],
   }
-  await createMessages(payload, { initiator: "user" })
+  await createMessages(payload, undefined, { initiator: "user" })
   const headers = getMessagesHeaders()
   expect(headers["x-initiator"]).toBe("user")
 })
@@ -118,7 +118,7 @@ test("sets X-Initiator to agent when specified", async () => {
     max_tokens: 1024,
     messages: [{ role: "user", content: "hi" }],
   }
-  await createMessages(payload, { initiator: "agent" })
+  await createMessages(payload, undefined, { initiator: "agent" })
   const headers = getMessagesHeaders()
   expect(headers["x-initiator"]).toBe("agent")
 })
@@ -132,7 +132,7 @@ test("forces X-Initiator to agent when state.forceAgent is true", async () => {
     max_tokens: 1024,
     messages: [{ role: "user", content: "hi" }],
   }
-  await createMessages(payload, { initiator: "user" })
+  await createMessages(payload, undefined, { initiator: "user" })
 
   // With smart agent mode, first call is usage API, second is messages API
   // Find the /v1/messages call
@@ -151,9 +151,7 @@ test("forwards allowed anthropic-beta header when provided", async () => {
     max_tokens: 1024,
     messages: [{ role: "user", content: "hi" }],
   }
-  await createMessages(payload, {
-    anthropicBeta: "context-management-2025-06-27",
-  })
+  await createMessages(payload, "context-management-2025-06-27", {})
   const headers = getMessagesHeaders()
   expect(headers["anthropic-beta"]).toBe("context-management-2025-06-27")
 })
@@ -164,9 +162,7 @@ test("filters unsupported anthropic-beta header when provided", async () => {
     max_tokens: 1024,
     messages: [{ role: "user", content: "hi" }],
   }
-  await createMessages(payload, {
-    anthropicBeta: "max-tokens-3-5-sonnet-2024-07-15",
-  })
+  await createMessages(payload, "max-tokens-3-5-sonnet-2024-07-15", {})
   const headers = getMessagesHeaders()
   expect(headers["anthropic-beta"]).toBeUndefined()
 })
@@ -177,7 +173,7 @@ test("does not include anthropic-beta header when not provided", async () => {
     max_tokens: 1024,
     messages: [{ role: "user", content: "hi" }],
   }
-  await createMessages(payload)
+  await createMessages(payload, undefined)
   const headers = getMessagesHeaders()
   expect(headers["anthropic-beta"]).toBeUndefined()
 })
@@ -194,7 +190,7 @@ test("passes payload with forced temperature=1 to endpoint", async () => {
     system: "You are a helpful assistant.",
     temperature: 0.7, // This should be overridden to 1
   }
-  await createMessages(payload)
+  await createMessages(payload, undefined)
   const body = getMessagesBody()
   const parsed = JSON.parse(body) as AnthropicMessagesPayload
   // temperature is forced to 1 for deep thinking
@@ -255,7 +251,7 @@ test("does not enable adaptive thinking when tool_choice forces tool use", async
     },
   }
 
-  await createMessages(payload)
+  await createMessages(payload, undefined)
   const body = getMessagesBody()
   const parsed = JSON.parse(body) as AnthropicMessagesPayload
 
@@ -297,7 +293,7 @@ test("preserves request output_config effort when adaptive thinking enabled", as
     output_config: { effort: "medium" },
   }
 
-  await createMessages(payload)
+  await createMessages(payload, undefined)
 
   const body = getMessagesBody()
   const parsed = JSON.parse(body) as AnthropicMessagesPayload
@@ -327,12 +323,11 @@ test("returns raw Response object", async () => {
     max_tokens: 1024,
     messages: [{ role: "user", content: "hi" }],
   }
-  const response = await createMessages(payload)
-  // Should return the mock response object
-  expect(response).toHaveProperty("ok")
-  expect(response).toHaveProperty("status")
-  expect(response).toHaveProperty("body")
-  expect(response).toHaveProperty("json")
+  const response = await createMessages(payload, undefined)
+  // Should return the parsed AnthropicResponse (JSON branch)
+  expect(response).toHaveProperty("id")
+  expect(response).toHaveProperty("role")
+  expect(response).toHaveProperty("content")
 })
 
 test("attaches premium info from response header", async () => {
@@ -342,7 +337,7 @@ test("attaches premium info from response header", async () => {
     messages: [{ role: "user", content: "hi" }],
   }
 
-  const response = await createMessages(payload)
+  const response = await createMessages(payload, undefined)
 
   expect(getAttachedPremiumInfo(response)).toEqual({
     remaining: 106.5,
@@ -357,7 +352,7 @@ test("attaches upstream response headers from native messages response", async (
     messages: [{ role: "user", content: "hi" }],
   }
 
-  const response = await createMessages(payload)
+  const response = await createMessages(payload, undefined)
 
   expect(
     getAttachedResponseHeaders(response)?.get(
@@ -377,7 +372,7 @@ test("throws error when copilot token is missing", async () => {
   }
 
   try {
-    await createMessages(payload)
+    await createMessages(payload, undefined)
     expect.unreachable("Should have thrown")
   } catch (error) {
     expect((error as Error).message).toBe("Copilot token not found")
@@ -406,7 +401,7 @@ test("throws HTTPError when response is not ok", async () => {
   }
 
   try {
-    await createMessages(payload)
+    await createMessages(payload, undefined)
     expect.unreachable("Should have thrown")
   } catch (error) {
     expect((error as Error).message).toBe("Failed to create native messages")
@@ -434,7 +429,7 @@ test("sets copilot-vision-request header when payload contains image block", asy
       },
     ],
   }
-  await createMessages(payload)
+  await createMessages(payload, undefined)
   const headers = getMessagesHeaders()
   expect(headers["copilot-vision-request"]).toBe("true")
 })
@@ -478,7 +473,7 @@ test("sets copilot-vision-request header when tool_result contains nested image"
       },
     ],
   }
-  await createMessages(payload)
+  await createMessages(payload, undefined)
   const headers = getMessagesHeaders()
   expect(headers["copilot-vision-request"]).toBe("true")
 })
@@ -489,7 +484,7 @@ test("does not set copilot-vision-request header for text-only messages", async 
     max_tokens: 1024,
     messages: [{ role: "user", content: "Hello, how are you?" }],
   }
-  await createMessages(payload)
+  await createMessages(payload, undefined)
   const headers = getMessagesHeaders()
   expect(headers["copilot-vision-request"]).toBeUndefined()
 })
@@ -502,7 +497,7 @@ test("includes X-Interaction-Id from state.interactionId (Wave 1/2)", async () =
     max_tokens: 1024,
     messages: [{ role: "user", content: "hi" }],
   }
-  await createMessages(payload)
+  await createMessages(payload, undefined)
   const headers = getMessagesHeaders()
   expect(headers["x-interaction-id"]).toBe("test-interaction-id")
   // eslint-disable-next-line require-atomic-updates
@@ -515,7 +510,7 @@ test("X-Agent-Task-Id equals x-request-id (Wave 1/2)", async () => {
     max_tokens: 1024,
     messages: [{ role: "user", content: "hi" }],
   }
-  await createMessages(payload)
+  await createMessages(payload, undefined)
   const headers = getMessagesHeaders()
   expect(headers["x-agent-task-id"]).toBe(headers["x-request-id"])
 })
@@ -526,7 +521,7 @@ test("passes non-empty modelCallId to telemetry (Wave 1/2)", async () => {
     max_tokens: 1024,
     messages: [{ role: "user", content: "hi" }],
   }
-  await createMessages(payload)
+  await createMessages(payload, undefined)
   expect(capturedModelCallId).toBeDefined()
   expect(typeof capturedModelCallId).toBe("string")
   expect(capturedModelCallId!.length).toBeGreaterThan(0)
@@ -538,7 +533,7 @@ test("X-Interaction-Type equals openai-intent (Wave 1/2)", async () => {
     max_tokens: 1024,
     messages: [{ role: "user", content: "hi" }],
   }
-  await createMessages(payload)
+  await createMessages(payload, undefined)
   const headers = getMessagesHeaders()
   expect(headers["x-interaction-type"]).toBe(headers["openai-intent"])
 })

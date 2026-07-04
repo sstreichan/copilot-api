@@ -10,8 +10,8 @@ import {
   compactTextOnlyGuard,
   type CompactType,
 } from "~/lib/compact"
+import { getReasoningEffortForModel } from "~/lib/config"
 import { normalizeSdkModelId } from "~/lib/models"
-import { getAnthropicEffortForModel } from "~/services/copilot/create-messages"
 
 import type {
   AnthropicAssistantContentBlock,
@@ -251,19 +251,14 @@ type IndexedAttachment = {
   order: number
 }
 
-type CacheControlContentBlock = AnthropicMessageContentBlock & {
-  cache_control?: AnthropicCacheControl | null
-}
-
-const hasCacheControlField = (
-  block: AnthropicMessageContentBlock,
-): block is CacheControlContentBlock =>
-  block.type !== "thinking" && block.type !== "redacted_thinking"
-
 const getBlockCacheControl = (
   block: AnthropicMessageContentBlock | undefined,
 ): AnthropicCacheControl | undefined => {
-  if (!block || !hasCacheControlField(block)) {
+  if (
+    !block
+    || block.type === "thinking"
+    || block.type === "redacted_thinking"
+  ) {
     return undefined
   }
 
@@ -304,7 +299,8 @@ export const applyLastMessageCacheControl = (
   const lastBlock = lastMessage.content.at(-1)
   if (
     !lastBlock
-    || !hasCacheControlField(lastBlock)
+    || lastBlock.type === "thinking"
+    || lastBlock.type === "redacted_thinking"
     || lastBlock.cache_control
   ) {
     return
@@ -395,25 +391,16 @@ const mergeContentWithText = (
   tr: AnthropicToolResultBlock,
   textBlock: AnthropicTextBlock,
 ): AnthropicToolResultBlock => {
-  const normalizedToolResult = normalizeToolResultContentCacheControl(tr)
-  const mergedToolResult = mergeToolResultCacheControl(normalizedToolResult, [
-    textBlock,
-  ])
-  const sanitizedTextBlock = stripContentBlockCacheControl(textBlock)
-
   if (typeof tr.content === "string") {
-    return {
-      ...mergedToolResult,
-      content: `${tr.content}\n\n${textBlock.text}`,
-    }
+    return { ...tr, content: `${tr.content}\n\n${textBlock.text}` }
   }
   // Unable to merge, discard other text blocks, wait for the next round of re-request
   if (hasToolRef(tr)) {
     return tr
   }
   return {
-    ...mergedToolResult,
-    content: [...normalizedToolResult.content, sanitizedTextBlock],
+    ...tr,
+    content: [...tr.content, stripContentBlockCacheControl(textBlock)],
   }
 }
 
@@ -421,73 +408,18 @@ const mergeContentWithTexts = (
   tr: AnthropicToolResultBlock,
   textBlocks: Array<AnthropicTextBlock>,
 ): AnthropicToolResultBlock => {
-  const normalizedToolResult = normalizeToolResultContentCacheControl(tr)
-  const mergedToolResult = mergeToolResultCacheControl(
-    normalizedToolResult,
-    textBlocks,
-  )
-  const sanitizedTextBlocks = textBlocks.map(stripContentBlockCacheControl)
-
   if (typeof tr.content === "string") {
     const appendedTexts = textBlocks.map((tb) => tb.text).join("\n\n")
-    return {
-      ...mergedToolResult,
-      content: `${tr.content}\n\n${appendedTexts}`,
-    }
+    return { ...tr, content: `${tr.content}\n\n${appendedTexts}` }
   }
   // Unable to merge, discard other text blocks, wait for the next round of re-request
   if (hasToolRef(tr)) {
     return tr
   }
   return {
-    ...mergedToolResult,
-    content: [...normalizedToolResult.content, ...sanitizedTextBlocks],
+    ...tr,
+    content: [...tr.content, ...textBlocks.map(stripContentBlockCacheControl)],
   }
-}
-
-const mergeToolResultCacheControl = (
-  tr: AnthropicToolResultBlock,
-  textBlocks: Array<AnthropicTextBlock>,
-): AnthropicToolResultBlock => {
-  const cacheControl = textBlocks
-    .map((block) => block.cache_control)
-    .findLast(
-      (candidate): candidate is AnthropicCacheControl =>
-        Boolean(candidate) && typeof candidate === "object",
-    )
-
-  if (cacheControl) {
-    return { ...tr, cache_control: { ...cacheControl } }
-  }
-
-  return tr.cache_control ?
-      { ...tr, cache_control: { ...tr.cache_control } }
-    : tr
-}
-
-const normalizeToolResultContentCacheControl = (
-  tr: AnthropicToolResultBlock,
-): AnthropicToolResultBlock & {
-  content: Array<AnthropicToolResultContentBlock>
-} => {
-  if (typeof tr.content === "string") {
-    return { ...tr, content: [{ type: "text", text: tr.content }] }
-  }
-
-  let cacheControl = tr.cache_control
-  const content = tr.content.map((block) => {
-    if (!("cache_control" in block) || !block.cache_control) {
-      return block
-    }
-
-    cacheControl = block.cache_control
-    const { cache_control: _cacheControl, ...rest } = block
-    return rest
-  })
-
-  return cacheControl ?
-      { ...tr, cache_control: cacheControl, content }
-    : { ...tr, content }
 }
 
 const mergeContentWithAttachments = (
@@ -964,31 +896,46 @@ export const prepareMessagesApiPayload = (
     if (shouldSummarizeThinkingDisplayForModel(payload.model)) {
       payload.thinking.display = "summarized"
     }
-    let finalEffort: "low" | "medium" | "high" | "xhigh" | "max" =
-      payload.output_config?.effort ?? getAnthropicEffortForModel(payload.model)
+    let effort =
+      payload.output_config?.effort ?? getReasoningEffortForModel(payload.model)
+    if (effort === "none" || effort === "minimal") {
+      effort = "low"
+    }
     const reasoningEffort = selectedModel.capabilities.supports.reasoning_effort
-    if (reasoningEffort && !reasoningEffort.includes(finalEffort)) {
-      finalEffort = reasoningEffort.at(-1) as typeof finalEffort
+    if (reasoningEffort && !reasoningEffort.includes(effort)) {
+      effort = reasoningEffort.at(-1) as
+        | "low"
+        | "medium"
+        | "high"
+        | "xhigh"
+        | "max"
     }
     payload.output_config = {
-      effort: finalEffort,
+      effort: effort,
     }
   }
 
-  // Drop reasoning effort for models that can't use it. A model that supports
-  // adaptive_thinking accepts an effort (handled in the branch above), so this
-  // only targets non-adaptive_thinking models (e.g. claude-haiku-4.5) that also
-  // declare no supported efforts. For those, an effort arriving on the request
-  // would otherwise be forwarded and rejected with `invalid_reasoning_effort`.
-  if (
-    !selectedModel?.capabilities.supports.adaptive_thinking
-    && payload.output_config?.effort
-  ) {
-    const supported = selectedModel?.capabilities.supports.reasoning_effort
-    if (!supported || supported.length === 0) {
-      delete payload.output_config.effort
-      if (Object.keys(payload.output_config).length === 0) {
-        delete payload.output_config
+  const modelSupports = selectedModel?.capabilities.supports
+  if (!modelSupports?.adaptive_thinking) {
+    const reasoningEfforts = modelSupports?.reasoning_effort
+    if (!reasoningEfforts || reasoningEfforts.length === 0) {
+      if (payload.output_config?.effort) {
+        delete payload.output_config.effort
+        if (Object.keys(payload.output_config).length === 0) {
+          delete payload.output_config
+        }
+      }
+    }
+
+    if (disableThink) {
+      delete payload.thinking
+    } else {
+      const budgetTokens = modelSupports?.max_thinking_budget ?? 4096
+      if (payload.thinking?.type === "adaptive") {
+        payload.thinking = {
+          type: "enabled",
+          budget_tokens: budgetTokens - 1,
+        }
       }
     }
   }

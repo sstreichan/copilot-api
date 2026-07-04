@@ -503,10 +503,6 @@ describe("mergeToolResultForClaude", () => {
         {
           type: "tool_result",
           tool_use_id: "tool-1",
-          cache_control: {
-            type: "ephemeral",
-            scope: "user",
-          },
           content: [
             {
               type: "text",
@@ -1132,7 +1128,7 @@ describe("prepareMessagesApiPayload", () => {
       type: "adaptive",
       display: "summarized",
     })
-    expect(payload.output_config).toEqual({ effort: "max" })
+    expect(payload.output_config).toEqual({ effort: "xhigh" })
   })
 
   test("sets summarized display for Claude versions at least 4.7", () => {

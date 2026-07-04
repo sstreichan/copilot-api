@@ -14,8 +14,6 @@ import { state } from "../src/lib/state"
 const baseState = (): State => ({
   interactionId: "test-interaction-id",
   accountType: "individual",
-  manualApprove: false,
-  rateLimitWait: false,
   showToken: false,
   verbose: false,
   forceAgent: false,

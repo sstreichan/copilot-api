@@ -4,7 +4,6 @@ import consola from "consola"
 
 import type { Model } from "~/services/copilot/get-models"
 
-import { awaitApproval } from "~/lib/approval"
 import { COMPACT_REQUEST } from "~/lib/compact"
 import {
   getSmallModel,
@@ -21,7 +20,6 @@ import {
 } from "~/lib/logger"
 import { findEndpointModel } from "~/lib/models"
 import { parseProviderModelAlias } from "~/lib/provider-model"
-import { checkRateLimit } from "~/lib/rate-limit"
 import { state } from "~/lib/state"
 import {
   generateRequestIdFromPayload,
@@ -91,8 +89,6 @@ export async function handleCompletion(c: Context) {
   normalizeClaudeCodeBillingHeaderInSystem(anthropicPayload)
   normalizeSystemMessages(anthropicPayload)
 
-  await checkRateLimit(state)
-
   const originalModel = anthropicPayload.model
 
   const compactType = getCompactType(anthropicPayload)
@@ -157,10 +153,6 @@ export async function handleCompletion(c: Context) {
     `IN ${cm(originalModel)} → ${cm(anthropicPayload.model)} [effort=${effortValue} (${effortSource})]`,
   )
 
-  if (state.manualApprove) {
-    await awaitApproval()
-  }
-
   if (shouldUseMessagesApi(selectedModel)) {
     return await messagesFlowHandlers.handleWithMessagesApi(
       c,
@@ -170,8 +162,6 @@ export async function handleCompletion(c: Context) {
         subagentMarker,
         selectedModel,
         requestId,
-        requestSessionAffinity: c.req.header("x-session-affinity"),
-        requestTraceId: c.req.header("x-trace-id"),
         sessionId,
         compactType,
         logger,
@@ -187,8 +177,6 @@ export async function handleCompletion(c: Context) {
         subagentMarker,
         selectedModel,
         requestId,
-        requestSessionAffinity: c.req.header("x-session-affinity"),
-        requestTraceId: c.req.header("x-trace-id"),
         sessionId,
         compactType,
         logger,
@@ -203,8 +191,6 @@ export async function handleCompletion(c: Context) {
       subagentMarker,
       selectedModel,
       requestId,
-      requestSessionAffinity: c.req.header("x-session-affinity"),
-      requestTraceId: c.req.header("x-trace-id"),
       sessionId,
       compactType,
       logger,

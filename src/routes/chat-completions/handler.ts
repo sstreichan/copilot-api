@@ -3,30 +3,21 @@ import type { Context } from "hono"
 
 import { streamSSE, type SSEMessage } from "hono/streaming"
 
-import { awaitApproval } from "~/lib/approval"
 import { resolveMappedModel } from "~/lib/config"
-import {
-  createHandlerLogger,
-  debugJson,
-  debugJsonTail,
-  resolvePremiumInfo,
-  writeStreamLog,
-} from "~/lib/logger"
+import { createHandlerLogger, debugJson } from "~/lib/logger"
 import { parseProviderModelAlias } from "~/lib/provider-model"
-import { checkRateLimit } from "~/lib/rate-limit"
+import { state } from "~/lib/state"
+import {
+  createCopilotTokenUsageRecorder,
+  normalizeOpenAIUsage,
+  normalizeOptionalToken,
+  type UsageTokens,
+} from "~/lib/token-usage"
 import {
   applyForwardableResponseHeaders,
   getAttachedResponseHeaders,
   jsonWithForwardedHeaders,
 } from "~/lib/response-headers"
-import { state } from "~/lib/state"
-import {
-  createCopilotTokenUsageRecorder,
-  normalizeOpenAIUsage,
-  copilotUsageToTokens,
-  type CopilotUsageTokens,
-  type UsageTokens,
-} from "~/lib/token-usage"
 import { generateRequestIdFromPayload, getUUID, isNullish } from "~/lib/utils"
 import { handleProviderChatCompletionsForProvider } from "~/routes/provider/chat-completions/handler"
 import {
@@ -57,27 +48,12 @@ export async function handleCompletion(c: Context) {
     })
   }
 
-  await checkRateLimit(state)
-
-  debugJsonTail(logger, "Request payload:", { value: payload, tailLength: 400 })
+  debugJson(logger, "Request payload:", payload)
 
   // Find the selected model
   const selectedModel = state.models?.data.find(
     (model) => model.id === payload.model,
   )
-
-  if (selectedModel?.id === "gpt-5.4") {
-    return c.json(
-      {
-        error: {
-          message: "Please use `/v1/responses` or `/v1/messages` API",
-          type: "invalid_request_error",
-        },
-      },
-      400,
-    )
-  }
-  if (state.manualApprove) await awaitApproval()
 
   if (
     isNullish(payload.max_tokens)
@@ -113,75 +89,39 @@ export async function handleCompletion(c: Context) {
     requestId,
     sessionId,
   })
+  const sourceHeaders = getAttachedResponseHeaders(response)
 
   if (isNonStreaming(response)) {
     debugJson(logger, "Non-streaming response:", response)
-    recordUsage(
-      normalizeOpenAIUsage(response.usage),
-      copilotUsageToTokens(response.copilot_usage),
-    )
-    const premium = await resolvePremiumInfo(
-      response,
-      "chat-completions/non-stream",
-    )
-    writeStreamLog(
-      { model: payload.model, chunks: 0, done: true, premium },
-      true,
-    )
-    return jsonWithForwardedHeaders(
-      response,
-      getAttachedResponseHeaders(response),
-    )
+    recordUsage({
+      ...normalizeOpenAIUsage(response.usage),
+      total_nano_aiu: normalizeOptionalToken(
+        response.copilot_usage?.total_nano_aiu,
+      ),
+    })
+    return jsonWithForwardedHeaders(response, sourceHeaders)
   }
 
   logger.debug("Streaming response")
-  applyForwardableResponseHeaders(c, getAttachedResponseHeaders(response), {
-    "content-type": null,
-    "cache-control": null,
-    connection: null,
-  })
+  applyForwardableResponseHeaders(c, sourceHeaders)
   return streamSSE(c, async (stream) => {
-    let chunkCount = 0
     let usage: UsageTokens = {}
-    let copilotUsage: CopilotUsageTokens = {}
-    try {
-      for await (const chunk of response) {
-        debugJson(logger, "Streaming chunk:", chunk)
 
-        // Check for [DONE] marker
-        const sseChunk = chunk as SSEMessage
-        const chunkData = normalizeSSEData(await sseChunk.data)
-        if (chunkData === "[DONE]") {
-          await stream.writeSSE({ ...sseChunk, data: chunkData })
-          break
+    for await (const chunk of response) {
+      debugJson(logger, "Streaming chunk:", chunk)
+      const parsedChunk = parseChatCompletionChunk(chunk)
+      if (parsedChunk?.usage || parsedChunk?.copilot_usage) {
+        usage = {
+          ...normalizeOpenAIUsage(parsedChunk.usage),
+          total_nano_aiu: normalizeOptionalToken(
+            parsedChunk.copilot_usage?.total_nano_aiu,
+          ),
         }
-
-        if (chunkData === undefined) {
-          continue
-        }
-
-        chunkCount++
-        const parsedChunk = parseChatCompletionChunk(chunkData)
-        if (parsedChunk?.usage) {
-          usage = normalizeOpenAIUsage(parsedChunk.usage)
-        }
-        if (parsedChunk?.copilot_usage) {
-          copilotUsage = copilotUsageToTokens(parsedChunk.copilot_usage)
-        }
-
-        await stream.writeSSE({ ...sseChunk, data: chunkData })
       }
-    } finally {
-      const premium = await resolvePremiumInfo(
-        response,
-        "chat-completions/stream",
-      )
-      writeStreamLog(
-        { model: payload.model, chunks: chunkCount, done: true, premium },
-        true,
-      )
-      recordUsage(usage, copilotUsage)
+      await stream.writeSSE(chunk as SSEMessage)
     }
+
+    recordUsage(usage)
   })
 }
 
@@ -190,8 +130,9 @@ const isNonStreaming = (
 ): response is ChatCompletionResponse => Object.hasOwn(response, "choices")
 
 const parseChatCompletionChunk = (
-  data: string | undefined,
+  chunk: unknown,
 ): ChatCompletionChunk | null => {
+  const data = (chunk as { data?: string }).data
   if (!data || data === "[DONE]") {
     return null
   }
@@ -201,16 +142,4 @@ const parseChatCompletionChunk = (
   } catch {
     return null
   }
-}
-
-const normalizeSSEData = (data: string | undefined): string | undefined => {
-  if (!data?.startsWith("data:")) {
-    return data
-  }
-
-  return data
-    .split("\n")
-    .filter((line) => line.startsWith("data:"))
-    .map((line) => line.slice(5).trim())
-    .join("\n")
 }

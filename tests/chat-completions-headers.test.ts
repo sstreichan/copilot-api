@@ -1,13 +1,6 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test"
 import { Hono } from "hono"
 
-const actualRateLimitModule = await import("../src/lib/rate-limit")
-
-await mock.module("~/lib/rate-limit", () => ({
-  ...actualRateLimitModule,
-  checkRateLimit: () => {},
-}))
-
 import { state } from "../src/lib/state"
 import { completionRoutes } from "../src/routes/chat-completions/route"
 
@@ -15,11 +8,7 @@ const originalFetch = globalThis.fetch
 const originalState = {
   accountType: state.accountType,
   copilotToken: state.copilotToken,
-  lastRequestTimestamp: state.lastRequestTimestamp,
-  manualApprove: state.manualApprove,
   models: state.models,
-  rateLimitSeconds: state.rateLimitSeconds,
-  rateLimitWait: state.rateLimitWait,
   verbose: state.verbose,
   vsCodeVersion: state.vsCodeVersion,
 }
@@ -120,12 +109,8 @@ const createApp = () => {
 beforeEach(() => {
   state.accountType = "individual"
   state.copilotToken = "test-token"
-  state.manualApprove = false
   state.verbose = false
   state.vsCodeVersion = "1.0.0"
-  state.rateLimitWait = false
-  state.rateLimitSeconds = undefined
-  state.lastRequestTimestamp = undefined
   state.models = createModels()
 
   fetchMock.mockClear()
@@ -136,18 +121,14 @@ beforeEach(() => {
 afterEach(() => {
   state.accountType = originalState.accountType
   state.copilotToken = originalState.copilotToken
-  state.manualApprove = originalState.manualApprove
   state.verbose = originalState.verbose
   state.vsCodeVersion = originalState.vsCodeVersion
-  state.rateLimitWait = originalState.rateLimitWait
-  state.rateLimitSeconds = originalState.rateLimitSeconds
-  state.lastRequestTimestamp = originalState.lastRequestTimestamp
   state.models = originalState.models
   ;(globalThis as unknown as { fetch: typeof fetch }).fetch = originalFetch
 })
 
 describe("chat completions handler", () => {
-  test("rejects gpt-5.4 requests with invalid request error", async () => {
+  test("allows gpt-5.4 requests when the model is available", async () => {
     const app = createApp()
     const response = await app.request("/v1/chat/completions", {
       method: "POST",
@@ -160,8 +141,8 @@ describe("chat completions handler", () => {
       }),
     })
 
-    expect(response.status).toBe(400)
-    expect(fetchMock).not.toHaveBeenCalled()
+    expect(response.status).toBe(200)
+    expect(fetchMock).toHaveBeenCalled()
   })
 
   test("forwards upstream quota headers on non-stream success", async () => {

@@ -1,7 +1,5 @@
 // Anthropic API Types
 
-import type { CopilotUsage } from "~/lib/token-usage"
-
 export interface AnthropicMessagesPayload {
   model: string
   messages: Array<AnthropicInputMessage>
@@ -204,6 +202,10 @@ export interface AnthropicUsage {
   }
 }
 
+export interface CopilotUsage {
+  total_nano_aiu?: number | null
+}
+
 export type AnthropicResponseContentBlock =
   | AnthropicAssistantContentBlock
   | AnthropicWebSearchContentBlock
@@ -216,6 +218,7 @@ export interface AnthropicResponse<
   type: "message"
   role: "assistant"
   content: Array<TContentBlock>
+  copilot_usage?: CopilotUsage | null
   model: string
   stop_reason:
     | "end_turn"
@@ -227,7 +230,6 @@ export interface AnthropicResponse<
     | null
   stop_sequence: string | null
   usage?: AnthropicUsage
-  copilot_usage?: CopilotUsage | null
 }
 
 // Anthropic Stream Event Types
@@ -273,12 +275,12 @@ export interface AnthropicContentBlockStopEvent {
 
 export interface AnthropicMessageDeltaEvent {
   type: "message_delta"
+  copilot_usage?: CopilotUsage | null
   delta: {
     stop_reason?: AnthropicResponse["stop_reason"]
     stop_sequence?: string | null
   }
   copilot_quota_snapshots?: unknown
-  copilot_usage?: CopilotUsage | null
   usage?: {
     input_tokens?: number
     output_tokens: number

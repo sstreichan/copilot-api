@@ -1,4 +1,5 @@
 import consola from "consola"
+import { events } from "fetch-event-stream"
 import { randomUUID } from "node:crypto"
 
 import type { CompactType } from "~/lib/compact"
@@ -6,6 +7,7 @@ import type { SubagentMarker } from "~/lib/subagent"
 import type {
   AnthropicAssistantMessage,
   AnthropicMessagesPayload,
+  AnthropicResponse,
 } from "~/routes/messages/anthropic-types"
 
 import {
@@ -36,9 +38,11 @@ import {
 
 import { retryAfterInvalidAutoModeSelector } from "./auto-session-retry"
 
+export type MessagesStream = ReturnType<typeof events>
+export type CreateMessagesReturn = AnthropicResponse | MessagesStream
+
 export interface CreateMessagesOptions {
   initiator?: "user" | "agent"
-  anthropicBeta?: string
   subagentMarker?: SubagentMarker | null
   requestId?: string
   sessionId?: string
@@ -392,8 +396,9 @@ const sendWithSignatureRetry = async (
  */
 export const createMessages = async (
   payload: AnthropicMessagesPayload,
+  anthropicBetaHeader: string | undefined,
   options: CreateMessagesOptions = {},
-): Promise<Response> => {
+): Promise<CreateMessagesReturn> => {
   if (!state.copilotToken) throw new Error("Copilot token not found")
 
   const modelCallId = randomUUID()
@@ -432,7 +437,7 @@ export const createMessages = async (
     supportsAdaptive && !shouldDisableThinkingForToolChoice(payload)
 
   const betaHeader = buildAnthropicBetaHeader(
-    options.anthropicBeta,
+    anthropicBetaHeader,
     adaptiveThinkingEnabled,
     payload.thinking,
   )
@@ -499,8 +504,14 @@ export const createMessages = async (
     requestId,
     modelCallId,
   })
-  return attachResponseHeaders(
-    attachPremiumInfo(result, getPremiumInfoFromHeaders(result.headers)),
-    result.headers,
-  )
+
+  const premium = getPremiumInfoFromHeaders(result.headers)
+  if (payload.stream) {
+    return attachResponseHeaders(
+      attachPremiumInfo(events(result), premium),
+      result.headers,
+    )
+  }
+  const json = (await result.json()) as AnthropicResponse
+  return attachResponseHeaders(attachPremiumInfo(json, premium), result.headers)
 }

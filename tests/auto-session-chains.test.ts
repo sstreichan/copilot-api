@@ -202,7 +202,9 @@ describe("auto-session token injection across chains", () => {
     )
 
     await prewarmAutoSession()
-    await createMessages(createMessagesPayload, { initiator: "user" })
+    await createMessages(createMessagesPayload, undefined, {
+      initiator: "user",
+    })
 
     const [, init] = findCall(fetchMock, "/v1/messages")
     expect(getSessionHeader(init)).toBe("session-hit")
@@ -222,7 +224,9 @@ describe("auto-session token injection across chains", () => {
     )
 
     await prewarmAutoSession()
-    await createMessages(createMessagesPayload, { initiator: "user" })
+    await createMessages(createMessagesPayload, undefined, {
+      initiator: "user",
+    })
 
     const [, init] = findCall(fetchMock, "/v1/messages")
     const headers = init.headers as Record<string, string>
@@ -492,7 +496,7 @@ describe("auto-session token injection across chains", () => {
     })
 
     await prewarmAutoSession()
-    const result = await createMessages(createMessagesPayload, {
+    const result = await createMessages(createMessagesPayload, undefined, {
       initiator: "user",
     })
 
@@ -500,7 +504,7 @@ describe("auto-session token injection across chains", () => {
     expect(messageCalls).toHaveLength(2)
     expect(getSessionHeader(messageCalls[0][1])).toBe("session-stale")
     expect(getSessionHeader(messageCalls[1][1])).toBe("session-fresh")
-    const body = (await result.json()) as { id: string }
+    const body = result as { id: string }
     expect(body.id).toBe("msg-retried")
   })
 })

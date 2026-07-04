@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 
 import {
   configureDesktopProvider,
+  configureProviderWithAuthStatus,
   getDesktopAuthStatus,
   loginCodexForDesktop,
   shouldStartInProviderMode,
@@ -121,6 +122,35 @@ describe("desktop provider auth", () => {
       enabled: true,
       pricingCurrency: "USD",
       type: "anthropic",
+    })
+  })
+
+  test("configures opencode-go with a fixed openai-compatible provider type", () => {
+    let writtenProviderConfig: ProviderConfig | undefined
+
+    configureDesktopProvider(
+      {
+        apiKey: "opencode-key",
+        baseUrl: "https://opencode.example/zen/go///",
+        provider: "opencode-go",
+        type: "anthropic",
+      },
+      {
+        getEnabledProviders: () => ["opencode-go"],
+        getRawProviderConfig: () => null,
+        setProviderConfig(_name, provider) {
+          writtenProviderConfig = provider
+          return provider
+        },
+      },
+    )
+
+    expect(writtenProviderConfig).toEqual({
+      apiKey: "opencode-key",
+      baseUrl: "https://opencode.example/zen/go",
+      enabled: true,
+      pricingCurrency: "USD",
+      type: "openai-compatible",
     })
   })
 
@@ -291,5 +321,77 @@ describe("desktop provider auth", () => {
     expect(shouldStartInProviderMode("provider")).toBe(true)
     expect(shouldStartInProviderMode("copilot")).toBe(false)
     expect(shouldStartInProviderMode(undefined)).toBe(false)
+  })
+
+  test("configureProviderWithAuthStatus keeps copilot mode when a valid token exists", async () => {
+    const result = await configureProviderWithAuthStatus(
+      { apiKey: "deepseek-key", provider: "deepseek" },
+      {
+        getEnabledProviders: () => ["deepseek"],
+        getRawProviderConfig: () => null,
+        setProviderConfig: () => ({}),
+        listEnabledProviders: () => ["deepseek"],
+        readToken: async () => "valid-token",
+        verifyGitHubToken: async () => {},
+      },
+    )
+
+    expect(result).toEqual({ success: true, mode: "copilot" })
+  })
+
+  test("configureProviderWithAuthStatus falls back to provider mode without a token", async () => {
+    const result = await configureProviderWithAuthStatus(
+      { apiKey: "deepseek-key", provider: "deepseek" },
+      {
+        getEnabledProviders: () => ["deepseek"],
+        getRawProviderConfig: () => null,
+        setProviderConfig: () => ({}),
+        listEnabledProviders: () => ["deepseek"],
+        readToken: async () => null,
+      },
+    )
+
+    expect(result).toEqual({
+      mode: "provider",
+      providers: ["deepseek"],
+      success: true,
+    })
+  })
+
+  test("configureProviderWithAuthStatus drops to provider mode when the token is stale", async () => {
+    const result = await configureProviderWithAuthStatus(
+      { apiKey: "deepseek-key", provider: "deepseek" },
+      {
+        getEnabledProviders: () => ["deepseek"],
+        getRawProviderConfig: () => null,
+        setProviderConfig: () => ({}),
+        listEnabledProviders: () => ["deepseek"],
+        readToken: async () => "stale-token",
+        verifyGitHubToken: async () => {
+          throw new Error("stale")
+        },
+      },
+    )
+
+    expect(result).toEqual({
+      mode: "provider",
+      providers: ["deepseek"],
+      success: true,
+    })
+  })
+
+  test("configureProviderWithAuthStatus rethrows configuration validation errors", async () => {
+    await expect(
+      configureProviderWithAuthStatus(
+        { apiKey: "   ", baseUrl: "https://example.com", provider: "deepseek", type: "anthropic" },
+        {
+          getEnabledProviders: () => [],
+          getRawProviderConfig: () => null,
+          setProviderConfig: () => ({}),
+          listEnabledProviders: () => [],
+          readToken: async () => null,
+        },
+      ),
+    ).rejects.toThrow("apiKey must be a non-empty string")
   })
 })
