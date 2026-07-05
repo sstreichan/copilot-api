@@ -16,6 +16,7 @@ import {
 import { HTTPError } from "~/lib/error"
 import { createHandlerLogger, debugJson } from "~/lib/logger"
 import { resolveProviderConfig } from "~/lib/provider-resolver"
+import { applyForwardableResponseHeaders } from "~/lib/response-headers"
 import {
   createProviderTokenUsageRecorder,
   normalizeOpenAIUsage,
@@ -186,6 +187,7 @@ const streamProviderChatCompletions = (
   logger.debug("provider.chat_completions.streaming", {
     provider: options.provider,
   })
+  applyForwardableResponseHeaders(c, upstreamResponse.headers)
   return streamSSE(c, async (stream) => {
     let usage: UsageTokens = {}
 

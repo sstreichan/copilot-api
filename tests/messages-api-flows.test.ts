@@ -19,6 +19,7 @@ import type {
 } from "../src/services/copilot/create-responses"
 
 import { COMPACT_REQUEST } from "../src/lib/compact"
+import { attachResponseHeaders } from "../src/lib/response-headers"
 import {
   closeUsageStore,
   getTokenUsageEventsPage,
@@ -923,4 +924,149 @@ const createResponsesResult = (model: string): ResponsesResult => ({
   tools: [],
   top_p: null,
   usage: null,
+})
+
+test("messages Chat Completions flow forwards upstream quota headers", async () => {
+  createChatCompletions.mockImplementationOnce(
+    (payload: ChatCompletionsPayload): Promise<ChatCompletionResponse> => {
+      capturedPayload = payload
+      return Promise.resolve(
+        attachResponseHeaders(
+          {
+            id: "chatcmpl-test",
+            object: "chat.completion",
+            created: 0,
+            model: payload.model,
+            choices: [
+              {
+                index: 0,
+                message: {
+                  role: "assistant",
+                  content: "ok",
+                },
+                logprobs: null,
+                finish_reason: "stop",
+              },
+            ],
+          },
+          new Headers({
+            "x-quota-snapshot-premium_interactions": "ent=100;rem=75",
+            "x-usage-ratelimit-session":
+              "remaining=12;resetAt=2026-07-05T12:00:00.000Z",
+          }),
+        ),
+      )
+    },
+  )
+
+  const payload: AnthropicMessagesPayload = {
+    model: "gpt-test",
+    max_tokens: 128,
+    messages: [{ role: "user", content: "hello" }],
+  }
+
+  const response = await handleWithChatCompletions(createContext(), payload, {
+    logger,
+    requestId: "request-headers-chat",
+  })
+
+  expect(response.status).toBe(200)
+  expect(response.headers.get("x-quota-snapshot-premium_interactions")).toBe(
+    "ent=100;rem=75",
+  )
+  expect(response.headers.get("x-usage-ratelimit-session")).toBe(
+    "remaining=12;resetAt=2026-07-05T12:00:00.000Z",
+  )
+})
+
+test("messages Responses flow forwards upstream quota headers", async () => {
+  createResponses.mockImplementationOnce(
+    (
+      payload: ResponsesPayload,
+      options: { transport?: ResponsesTransport },
+    ) => {
+      capturedResponsesPayload = payload
+      capturedResponsesOptions = options
+      return Promise.resolve(
+        attachResponseHeaders(
+          {
+            ...createResponsesResult(payload.model),
+            usage: {
+              input_tokens: 1,
+              output_tokens: 1,
+              total_tokens: 2,
+            },
+          },
+          new Headers({
+            "x-quota-snapshot-premium_interactions": "ent=200;rem=50",
+            "x-usage-ratelimit-weekly":
+              "remaining=6;resetAt=2026-07-07T12:00:00.000Z",
+          }),
+        ),
+      )
+    },
+  )
+
+  const payload: AnthropicMessagesPayload = {
+    max_tokens: 128,
+    messages: [{ role: "user", content: "hello" }],
+    model: "gpt-test",
+  }
+
+  const response = await handleWithResponsesApi(createContext(), payload, {
+    logger,
+    requestId: "request-headers-responses",
+    selectedModel: createModel(["/responses"]),
+  })
+
+  expect(response.status).toBe(200)
+  expect(response.headers.get("x-quota-snapshot-premium_interactions")).toBe(
+    "ent=200;rem=50",
+  )
+  expect(response.headers.get("x-usage-ratelimit-weekly")).toBe(
+    "remaining=6;resetAt=2026-07-07T12:00:00.000Z",
+  )
+})
+
+test("messages Messages flow forwards upstream quota headers", async () => {
+  createMessages.mockImplementationOnce(
+    (payload: AnthropicMessagesPayload): Promise<CreateMessagesReturn> => {
+      capturedMessagesPayload = payload
+      return Promise.resolve(
+        attachResponseHeaders(
+          {
+            ...createMessagesResult(payload.model),
+            usage: {
+              input_tokens: 12,
+              output_tokens: 8,
+            },
+          },
+          new Headers({
+            "x-quota-snapshot-premium_interactions": "ent=300;rem=60",
+            "x-usage-ratelimit-session":
+              "remaining=4;resetAt=2026-07-05T14:00:00.000Z",
+          }),
+        ),
+      )
+    },
+  )
+
+  const payload: AnthropicMessagesPayload = {
+    max_tokens: 128,
+    messages: [{ role: "user", content: "hello" }],
+    model: "claude-sonnet-4.6",
+  }
+
+  const response = await handleWithMessagesApi(createContext(), payload, {
+    logger,
+    requestId: "request-headers-messages",
+  })
+
+  expect(response.status).toBe(200)
+  expect(response.headers.get("x-quota-snapshot-premium_interactions")).toBe(
+    "ent=300;rem=60",
+  )
+  expect(response.headers.get("x-usage-ratelimit-session")).toBe(
+    "remaining=4;resetAt=2026-07-05T14:00:00.000Z",
+  )
 })

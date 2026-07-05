@@ -13,6 +13,11 @@ import {
 } from "~/lib/config"
 import { findEndpointModel } from "~/lib/models"
 import {
+  applyForwardableResponseHeaders,
+  getAttachedResponseHeaders,
+  jsonWithForwardedHeaders,
+} from "~/lib/response-headers"
+import {
   parseProviderModelAlias,
   type ProviderModelAlias,
 } from "~/lib/provider-model"
@@ -487,6 +492,7 @@ export const handleWebSearchViaResponses = async (
       compactType: options.compactType,
     },
   )
+  const sourceHeaders = getAttachedResponseHeaders(upstreamResult)
 
   const result =
     isWebSearchResponsesStream(upstreamResult) ?
@@ -518,9 +524,10 @@ export const handleWebSearchViaResponses = async (
   )
 
   if (!wantsStream) {
-    return c.json(response)
+    return jsonWithForwardedHeaders(response, sourceHeaders)
   }
 
+  applyForwardableResponseHeaders(c, sourceHeaders)
   return streamSSE(c, async (stream) => {
     for (const event of buildSyntheticStreamEvents(response)) {
       const data = JSON.stringify(event)

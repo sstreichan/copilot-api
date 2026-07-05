@@ -403,15 +403,19 @@ describe("handleWebSearchViaResponses", () => {
     }) as never
     webSearchFlowDependencies.createUsageRecorder = (() => () => {}) as never
 
-    const { c, captured } = makeContext()
-    await handleWebSearchViaResponses(c, makePayload(), baseOptions)
+    const { c } = makeContext()
+    const upstreamResponse = await handleWebSearchViaResponses(
+      c,
+      makePayload(),
+      baseOptions,
+    )
 
     // Request was switched to the GPT model with a Responses web_search tool.
     expect(sentPayload?.model).toBe("gpt-5-mini")
     expect(sentPayload?.stream).toBe(true)
     expect(sentPayload?.tools).toEqual([{ type: "web_search" }])
 
-    const response = captured.json as AnthropicResponse
+    const response = (await upstreamResponse.json()) as AnthropicResponse
     const types = response.content.map((b) => b.type as string)
     expect(types).toEqual(["server_tool_use", "web_search_tool_result", "text"])
 
@@ -455,10 +459,14 @@ describe("handleWebSearchViaResponses", () => {
       )) as never
     webSearchFlowDependencies.createUsageRecorder = (() => () => {}) as never
 
-    const { c, captured } = makeContext()
-    await handleWebSearchViaResponses(c, makePayload(), baseOptions)
+    const { c } = makeContext()
+    const upstreamResponse = await handleWebSearchViaResponses(
+      c,
+      makePayload(),
+      baseOptions,
+    )
 
-    const response = captured.json as AnthropicResponse
+    const response = (await upstreamResponse.json()) as AnthropicResponse
     expect(response.content.map((b) => b.type as string)).toEqual(["text"])
   })
 })

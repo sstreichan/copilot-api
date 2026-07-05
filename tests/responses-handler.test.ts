@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test"
 import { Hono } from "hono"
 
 import type { createResponses as createCopilotResponses } from "../src/services/copilot/create-responses"
+import { attachResponseHeaders } from "../src/lib/response-headers"
 
 let responsesApiWebSocketEnabled = true
 
@@ -131,6 +132,99 @@ afterEach(async () => {
 })
 
 describe("responses handler token usage", () => {
+  test("forwards upstream quota headers for native Responses non-stream", async () => {
+    createResponses.mockImplementation((payload) =>
+      Promise.resolve(
+        attachResponseHeaders(
+          createResponsesResult(payload.model),
+          new Headers({
+            "x-quota-snapshot-premium_interactions": "ent=100;rem=75",
+            "x-usage-ratelimit-session":
+              "remaining=12;resetAt=2026-07-05T12:00:00.000Z",
+            "x-usage-ratelimit-weekly":
+              "remaining=34;resetAt=2026-07-06T12:00:00.000Z",
+          }),
+        ),
+      ),
+    )
+
+    const app = createApp()
+    const response = await app.request("/v1/responses", {
+      body: JSON.stringify({
+        input: "hello",
+        model: "gpt-responses-test",
+      }),
+      headers: {
+        "content-type": "application/json",
+      },
+      method: "POST",
+    })
+
+    expect(response.status).toBe(200)
+    expect(response.headers.get("x-quota-snapshot-premium_interactions")).toBe(
+      "ent=100;rem=75",
+    )
+    expect(response.headers.get("x-usage-ratelimit-session")).toBe(
+      "remaining=12;resetAt=2026-07-05T12:00:00.000Z",
+    )
+    expect(response.headers.get("x-usage-ratelimit-weekly")).toBe(
+      "remaining=34;resetAt=2026-07-06T12:00:00.000Z",
+    )
+  })
+
+  test("forwards upstream quota headers for native Responses stream", async () => {
+    createResponses.mockImplementation(() =>
+      Promise.resolve(
+        attachResponseHeaders(
+          streamChunks([
+            {
+              data: JSON.stringify({
+                sequence_number: 1,
+                type: "response.completed",
+                response: {
+                  ...createResponsesResult("gpt-responses-test"),
+                  usage: {
+                    input_tokens: 1,
+                    output_tokens: 1,
+                    total_tokens: 2,
+                  },
+                },
+              }),
+              event: "response.completed",
+            },
+          ]),
+          new Headers({
+            "x-quota-snapshot-premium_interactions": "ent=200;rem=50",
+            "x-usage-ratelimit-session":
+              "remaining=8;resetAt=2026-07-05T13:00:00.000Z",
+          }),
+        ),
+      ),
+    )
+
+    const app = createApp()
+    const response = await app.request("/v1/responses", {
+      body: JSON.stringify({
+        input: "hello",
+        model: "gpt-responses-test",
+        stream: true,
+      }),
+      headers: {
+        "content-type": "application/json",
+      },
+      method: "POST",
+    })
+
+    expect(response.status).toBe(200)
+    expect(response.headers.get("x-quota-snapshot-premium_interactions")).toBe(
+      "ent=200;rem=50",
+    )
+    expect(response.headers.get("x-usage-ratelimit-session")).toBe(
+      "remaining=8;resetAt=2026-07-05T13:00:00.000Z",
+    )
+    await response.text()
+  })
+
   test("uses websocket transport by default for dual-endpoint models", async () => {
     state.models = {
       object: "list",
@@ -776,5 +870,157 @@ describe("responses handler token usage", () => {
     expect(page.items[0]?.output_tokens).toBe(2)
     expect(page.items[0]?.total_nano_aiu).toBe(1234)
     expect(page.items[0]?.total_tokens).toBe(7)
+  })
+})
+
+describe("responses handler upstream header forwarding across fallbacks", () => {
+  test("forwards upstream quota headers for messages fallback non-stream", async () => {
+    state.models = {
+      object: "list",
+      data: [
+        {
+          capabilities: {
+            limits: {
+              max_prompt_tokens: 128000,
+            },
+          },
+          id: "claude-fallback-test",
+          supported_endpoints: ["/v1/messages"],
+        },
+      ],
+    } as typeof state.models
+
+    responsesHandlerDependencies.createMessages = mock(() =>
+      Promise.resolve(
+        attachResponseHeaders(
+          {
+            id: "msg_123",
+            type: "message",
+            role: "assistant",
+            model: "claude-fallback-test",
+            content: [],
+            stop_reason: "end_turn",
+            stop_sequence: null,
+            usage: {
+              input_tokens: 1,
+              output_tokens: 2,
+            },
+          },
+          new Headers({
+            "x-quota-snapshot-premium_interactions": "ent=300;rem=60",
+            "x-usage-ratelimit-weekly":
+              "remaining=6;resetAt=2026-07-07T12:00:00.000Z",
+          }),
+        ),
+      ),
+    ) as typeof responsesHandlerDependencies.createMessages
+
+    const app = createApp()
+    const response = await app.request("/v1/responses", {
+      body: JSON.stringify({
+        input: "hello",
+        model: "claude-fallback-test",
+      }),
+      headers: {
+        "content-type": "application/json",
+      },
+      method: "POST",
+    })
+
+    expect(response.status).toBe(200)
+    expect(response.headers.get("x-quota-snapshot-premium_interactions")).toBe(
+      "ent=300;rem=60",
+    )
+    expect(response.headers.get("x-usage-ratelimit-weekly")).toBe(
+      "remaining=6;resetAt=2026-07-07T12:00:00.000Z",
+    )
+  })
+
+  test("forwards upstream quota headers for chat fallback stream", async () => {
+    state.models = {
+      object: "list",
+      data: [
+        {
+          capabilities: {
+            limits: {
+              max_prompt_tokens: 128000,
+            },
+          },
+          id: "chat-fallback-test",
+          supported_endpoints: ["/v1/chat/completions"],
+        },
+      ],
+    } as typeof state.models
+
+    responsesHandlerDependencies.createChatCompletions = mock(() =>
+      Promise.resolve(
+        attachResponseHeaders(
+          streamChunks([
+            {
+              data: JSON.stringify({
+                id: "chatcmpl_1",
+                object: "chat.completion.chunk",
+                created: 0,
+                model: "chat-fallback-test",
+                choices: [
+                  {
+                    index: 0,
+                    delta: { content: "hi" },
+                    finish_reason: null,
+                  },
+                ],
+              }),
+            },
+            {
+              data: JSON.stringify({
+                id: "chatcmpl_1",
+                object: "chat.completion.chunk",
+                created: 0,
+                model: "chat-fallback-test",
+                choices: [
+                  {
+                    index: 0,
+                    delta: {},
+                    finish_reason: "stop",
+                  },
+                ],
+                usage: {
+                  prompt_tokens: 1,
+                  completion_tokens: 1,
+                  total_tokens: 2,
+                },
+              }),
+            },
+          ]),
+          new Headers({
+            "x-quota-snapshot-premium_interactions": "ent=400;rem=80",
+            "x-usage-ratelimit-session":
+              "remaining=4;resetAt=2026-07-05T14:00:00.000Z",
+          }),
+        ),
+      ),
+    ) as typeof responsesHandlerDependencies.createChatCompletions
+
+    const app = createApp()
+    const response = await app.request("/v1/responses", {
+      body: JSON.stringify({
+        input: "hello",
+        model: "chat-fallback-test",
+        stream: true,
+      }),
+      headers: {
+        "content-type": "application/json",
+      },
+      method: "POST",
+    })
+
+    expect(response.status).toBe(200)
+    expect(response.headers.get("x-quota-snapshot-premium_interactions")).toBe(
+      "ent=400;rem=80",
+    )
+    expect(response.headers.get("x-usage-ratelimit-session")).toBe(
+      "remaining=4;resetAt=2026-07-05T14:00:00.000Z",
+    )
+    await response.text()
   })
 })

@@ -23,6 +23,11 @@ import {
 } from "~/lib/logger"
 import { findEndpointModel } from "~/lib/models"
 import { parseProviderModelAlias } from "~/lib/provider-model"
+import {
+  applyForwardableResponseHeaders,
+  getAttachedResponseHeaders,
+  jsonWithForwardedHeaders,
+} from "~/lib/response-headers"
 import { handleProviderResponsesForProvider } from "~/routes/provider/responses/handler"
 import {
   copilotUsageFromResponsesEvent,
@@ -114,6 +119,8 @@ type CopilotResponsesContext = {
   subagentMarker: SubagentMarker | null
 }
 export const responsesHandlerDependencies = {
+  createChatCompletions,
+  createMessages,
   createResponses: createCopilotResponses,
   getConfig: getConfiguredConfig,
   isResponsesApiWebSearchEnabled: isConfiguredResponsesApiWebSearchEnabled,
@@ -252,18 +259,24 @@ const handleWithMessagesBackend = async (
 
   let response: Awaited<ReturnType<typeof createMessages>>
   try {
-    response = await createMessages(anthropicPayload, undefined, {
-      initiator,
-      requestId,
-      sessionId,
-    })
+    response = await responsesHandlerDependencies.createMessages(
+      anthropicPayload,
+      undefined,
+      {
+        initiator,
+        requestId,
+        sessionId,
+      },
+    )
   } catch (err) {
     const message =
       err instanceof Error ? err.message : "Messages backend failed"
     return c.json({ error: { message, type: "server_error" } }, 500)
   }
+  const sourceHeaders = getAttachedResponseHeaders(response)
 
   if (isStreamingRequested(payload) && isAsyncIterable(response)) {
+    applyForwardableResponseHeaders(c, sourceHeaders)
     return streamSSE(c, async (stream) => {
       const streamState = createAnthropicToResponsesStreamState()
       let chunkCount = 0
@@ -329,7 +342,7 @@ const handleWithMessagesBackend = async (
     "responses/path-b/non-stream",
   )
   writeStreamLog({ model: payload.model, chunks: 0, done: true, premium }, true)
-  return c.json(result)
+  return jsonWithForwardedHeaders(result, sourceHeaders)
 }
 
 const handleWithChatFallback = async (
@@ -342,17 +355,22 @@ const handleWithChatFallback = async (
 
   let response: Awaited<ReturnType<typeof createChatCompletions>>
   try {
-    response = await createChatCompletions(chatPayload, {
-      requestId,
-      sessionId,
-    })
+    response = await responsesHandlerDependencies.createChatCompletions(
+      chatPayload,
+      {
+        requestId,
+        sessionId,
+      },
+    )
   } catch (err) {
     const message =
       err instanceof Error ? err.message : "Chat completions fallback failed"
     return c.json({ error: { message, type: "server_error" } }, 500)
   }
+  const sourceHeaders = getAttachedResponseHeaders(response)
 
   if (isStreamingRequested(payload)) {
+    applyForwardableResponseHeaders(c, sourceHeaders)
     return streamSSE(c, async (stream) => {
       const streamState = createChatCompletionToResponsesStreamState()
       let usage: UsageTokens = {}
@@ -430,7 +448,7 @@ const handleWithChatFallback = async (
     "responses/path-c/non-stream",
   )
   writeStreamLog({ model: payload.model, chunks: 0, done: true, premium }, true)
-  return c.json(responsesResult)
+  return jsonWithForwardedHeaders(responsesResult, sourceHeaders)
 }
 const handleWithCopilotResponses = async ({
   c,
@@ -511,6 +529,7 @@ const handleWithCopilotResponses = async ({
       model: payload.model,
       recordUsage,
       response,
+      sourceHeaders: getAttachedResponseHeaders(response),
     })
   }
 
@@ -524,7 +543,10 @@ const handleWithCopilotResponses = async ({
   )
   const premium = await resolvePremiumInfo(response, "responses/non-stream")
   writeStreamLog({ model: payload.model, chunks: 0, done: true, premium }, true)
-  return c.json(response as ResponsesResult)
+  return jsonWithForwardedHeaders(
+    response as ResponsesResult,
+    getAttachedResponseHeaders(response),
+  )
 }
 
 const isAsyncIterable = <T>(value: unknown): value is AsyncIterable<T> =>
@@ -536,9 +558,11 @@ const handleStreamingResponse = (options: {
   model: string
   recordUsage: ResponsesUsageRecorder
   response: AsyncIterable<unknown>
+  sourceHeaders?: Headers | null
 }) => {
-  const { c, model, recordUsage, response } = options
+  const { c, model, recordUsage, response, sourceHeaders } = options
   logger.debug("Forwarding native Responses stream")
+  applyForwardableResponseHeaders(c, sourceHeaders)
 
   return streamSSE(c, async (stream) => {
     let chunkCount = 0

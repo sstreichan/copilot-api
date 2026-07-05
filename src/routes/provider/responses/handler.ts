@@ -8,6 +8,11 @@ import { type ModelConfig, resolveEffectiveProviderType } from "~/lib/config"
 import { HTTPError } from "~/lib/error"
 import { createHandlerLogger, debugJson } from "~/lib/logger"
 import { resolveProviderConfig } from "~/lib/provider-resolver"
+import {
+  applyForwardableResponseHeaders,
+  getAttachedResponseHeaders,
+  jsonWithForwardedHeaders,
+} from "~/lib/response-headers"
 import { requestContext } from "~/lib/request-context"
 import {
   createProviderTokenUsageRecorder,
@@ -104,7 +109,10 @@ export async function handleProviderResponsesForProvider(
 
     const responseBody = upstreamResponse as ResponsesResult
     recordUsage(normalizeResponsesUsage(responseBody.usage))
-    return c.json(responseBody)
+    return jsonWithForwardedHeaders(
+      responseBody,
+      getAttachedResponseHeaders(upstreamResponse),
+    )
   }
 
   const upstreamResponse = await forwardProviderResponses(
@@ -171,6 +179,7 @@ const streamProviderResponses = async (
     recordUsage: (usage: UsageTokens) => void
   },
 ): Promise<Response> => {
+  const sourceHeaders = getAttachedResponseHeaders(upstreamResponse)
   const iterator = upstreamResponse[Symbol.asyncIterator]()
   const firstResult = await iterator.next()
   if (firstResult.done) {
@@ -189,19 +198,28 @@ const streamProviderResponses = async (
     if (event?.type === "error") {
       const errorEvent = event
       const statusCode = errorEvent.status_code ?? 500
-      return c.json(
+      return jsonWithForwardedHeaders(
         {
           error: {
             message: errorEvent.message,
             ...errorEvent.error,
           },
         },
-        statusCode as ContentfulStatusCode,
-        errorEvent.headers ?? undefined,
+        sourceHeaders,
+        {
+          status: statusCode as ContentfulStatusCode,
+          overrides: Object.fromEntries(
+            Object.entries(errorEvent.headers ?? {}).map(([name, value]) => [
+              name,
+              value,
+            ]),
+          ),
+        },
       )
     }
   }
 
+  applyForwardableResponseHeaders(c, sourceHeaders)
   return streamSSE(c, async (stream) => {
     let usage: UsageTokens = {}
 

@@ -8,6 +8,11 @@ import type { SubagentMarker } from "~/lib/subagent"
 import type { Model } from "~/services/copilot/get-models"
 
 import { debugJson, debugJsonTail, debugLazy } from "~/lib/logger"
+import {
+  applyForwardableResponseHeaders,
+  getAttachedResponseHeaders,
+  jsonWithForwardedHeaders,
+} from "~/lib/response-headers"
 import { resolveBridgeToolSearchName } from "~/lib/tool-search"
 import {
   createCopilotTokenUsageRecorder,
@@ -135,6 +140,7 @@ export const handleWithChatCompletions = async (
       compactType,
     },
   )
+  const sourceHeaders = getAttachedResponseHeaders(response)
 
   if (isNonStreaming(response)) {
     debugJson(logger, "Non-streaming response from Copilot:", response)
@@ -146,10 +152,11 @@ export const handleWithChatCompletions = async (
     })
     const anthropicResponse = translateToAnthropic(response)
     debugJson(logger, "Translated Anthropic response:", anthropicResponse)
-    return c.json(anthropicResponse)
+    return jsonWithForwardedHeaders(anthropicResponse, sourceHeaders)
   }
 
   logger.debug("Streaming response from Copilot")
+  applyForwardableResponseHeaders(c, sourceHeaders)
   return streamSSE(c, async (stream) => {
     let usage: UsageTokens = {}
     const streamState: AnthropicStreamState = {
@@ -245,9 +252,11 @@ export const handleWithResponsesApi = async (
       ...requestOptions,
     },
   )
+  const sourceHeaders = getAttachedResponseHeaders(response)
 
   if (responsesPayload.stream && isAsyncIterable(response)) {
     logger.debug("Streaming response from Copilot (Responses API)")
+    applyForwardableResponseHeaders(c, sourceHeaders)
     return streamSSE(c, async (stream) => {
       const streamState = createResponsesStreamState({
         toolSearchName: resolveBridgeToolSearchName(anthropicPayload.tools),
@@ -341,7 +350,7 @@ export const handleWithResponsesApi = async (
     ),
   })
   debugJson(logger, "Translated Anthropic response:", anthropicResponse)
-  return c.json(anthropicResponse)
+  return jsonWithForwardedHeaders(anthropicResponse, sourceHeaders)
 }
 
 export const handleWithMessagesApi = async (
@@ -379,9 +388,11 @@ export const handleWithMessagesApi = async (
       compactType,
     },
   )
+  const sourceHeaders = getAttachedResponseHeaders(response)
 
   if (isAsyncIterable(response)) {
     logger.debug("Streaming response from Copilot (Messages API)")
+    applyForwardableResponseHeaders(c, sourceHeaders)
     return streamSSE(c, async (stream) => {
       let usage: UsageTokens = {}
 
@@ -425,7 +436,7 @@ export const handleWithMessagesApi = async (
     ...normalizeAnthropicUsage(response.usage),
     ...normalizeCopilotUsage(response.copilot_usage),
   })
-  return c.json(response)
+  return jsonWithForwardedHeaders(response, sourceHeaders)
 }
 
 export const prepareCopilotChatCompletionsPayload = (

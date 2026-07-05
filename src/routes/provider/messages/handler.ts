@@ -35,6 +35,10 @@ import {
 import { HTTPError } from "~/lib/error"
 import { createHandlerLogger, debugJson, debugLazy } from "~/lib/logger"
 import { resolveProviderConfig } from "~/lib/provider-resolver"
+import {
+  applyForwardableResponseHeaders,
+  jsonWithForwardedHeaders,
+} from "~/lib/response-headers"
 import { resolveBridgeToolSearchName } from "~/lib/tool-search"
 import {
   createProviderTokenUsageRecorder,
@@ -211,6 +215,7 @@ export async function handleProviderMessagesForProvider(
       payload,
       pricingCurrency: providerConfig.pricingCurrency,
       provider,
+      sourceHeaders: upstreamResponse.headers,
     })
   } catch (error) {
     logger.error("provider.messages.error", {
@@ -313,6 +318,7 @@ const handleOpenAIResponsesProviderWebSearchMessages = async (
     payload,
     pricingCurrency: providerConfig.pricingCurrency,
     provider,
+    sourceHeaders: upstreamResponse.headers,
   })
 }
 
@@ -523,6 +529,7 @@ const handleOpenAICompatibleProviderMessages = async (
     payload,
     pricingCurrency: providerConfig.pricingCurrency,
     provider,
+    sourceHeaders: upstreamResponse.headers,
   })
 }
 
@@ -637,6 +644,7 @@ const streamProviderMessages = ({
   upstreamResponse: Response
 }): Response => {
   logger.debug("provider.messages.streaming")
+  applyForwardableResponseHeaders(c, upstreamResponse.headers)
   const recordUsage = createProviderMessagesUsageRecorder(
     payload,
     provider,
@@ -695,6 +703,7 @@ const streamOpenAICompatibleProviderMessages = ({
   upstreamResponse: Response
 }): Response => {
   logger.debug("provider.messages.openai_compatible.streaming")
+  applyForwardableResponseHeaders(c, upstreamResponse.headers)
   const recordUsage = createProviderMessagesUsageRecorder(
     payload,
     provider,
@@ -788,6 +797,12 @@ const streamResponsesProviderMessages = ({
   logger.debug("provider.messages.responses.streaming", {
     provider,
   })
+  if ("headers" in upstreamResponse) {
+    applyForwardableResponseHeaders(
+      c,
+      (upstreamResponse as unknown as { headers: Headers }).headers,
+    )
+  }
   const recordUsage = createProviderMessagesUsageRecorder(
     payload,
     provider,
@@ -930,16 +945,24 @@ const parseProviderStreamEvent = (
 }
 
 const respondProviderMessagesJson = (
-  c: Context,
+  _c: Context,
   options: {
     body: AnthropicResponse
     modelConfig: ModelConfig | undefined
     payload: AnthropicMessagesPayload
     pricingCurrency: string | undefined
     provider: string
+    sourceHeaders?: Headers | null
   },
 ): Response => {
-  const { body, modelConfig, payload, pricingCurrency, provider } = options
+  const {
+    body,
+    modelConfig,
+    payload,
+    pricingCurrency,
+    provider,
+    sourceHeaders,
+  } = options
   const recordUsage = createProviderMessagesUsageRecorder(
     payload,
     provider,
@@ -949,20 +972,28 @@ const respondProviderMessagesJson = (
   recordUsage(normalizeAnthropicUsage(body.usage))
 
   debugJson(logger, "provider.messages.no_stream result:", body)
-  return c.json(body)
+  return jsonWithForwardedHeaders(body, sourceHeaders)
 }
 
 const respondOpenAICompatibleProviderMessagesJson = (
-  c: Context,
+  _c: Context,
   options: {
     body: ChatCompletionResponse
     modelConfig: ModelConfig | undefined
     payload: AnthropicMessagesPayload
     pricingCurrency: string | undefined
     provider: string
+    sourceHeaders?: Headers | null
   },
 ): Response => {
-  const { body, modelConfig, payload, pricingCurrency, provider } = options
+  const {
+    body,
+    modelConfig,
+    payload,
+    pricingCurrency,
+    provider,
+    sourceHeaders,
+  } = options
   const recordUsage = createProviderMessagesUsageRecorder(
     payload,
     provider,
@@ -977,11 +1008,11 @@ const respondOpenAICompatibleProviderMessagesJson = (
     "provider.messages.openai_compatible.no_stream result:",
     anthropicResponse,
   )
-  return c.json(anthropicResponse)
+  return jsonWithForwardedHeaders(anthropicResponse, sourceHeaders)
 }
 
 const respondResponsesProviderMessagesJson = (
-  c: Context,
+  _c: Context,
   options: {
     body: ResponsesResult
     modelConfig: ModelConfig | undefined
@@ -989,6 +1020,7 @@ const respondResponsesProviderMessagesJson = (
     pricingCurrency: string | undefined
     provider: string
     providerConfig: ResolvedProviderConfig
+    sourceHeaders?: Headers | null
   },
 ): Response => {
   const {
@@ -998,6 +1030,7 @@ const respondResponsesProviderMessagesJson = (
     pricingCurrency,
     provider,
     providerConfig,
+    sourceHeaders,
   } = options
   const recordUsage = createProviderMessagesUsageRecorder(
     payload,
@@ -1019,7 +1052,7 @@ const respondResponsesProviderMessagesJson = (
   if (providerConfig.name === "codex") {
     logger.debug("provider.messages.codex.no_stream.result")
   }
-  return c.json(anthropicResponse)
+  return jsonWithForwardedHeaders(anthropicResponse, sourceHeaders)
 }
 
 const respondWebSearchProviderMessagesJson = (
@@ -1030,9 +1063,17 @@ const respondWebSearchProviderMessagesJson = (
     payload: AnthropicMessagesPayload
     pricingCurrency: string | undefined
     provider: string
+    sourceHeaders?: Headers | null
   },
 ): Response => {
-  const { body, modelConfig, payload, pricingCurrency, provider } = options
+  const {
+    body,
+    modelConfig,
+    payload,
+    pricingCurrency,
+    provider,
+    sourceHeaders,
+  } = options
   const recordUsage = createProviderMessagesUsageRecorder(
     payload,
     provider,
@@ -1052,9 +1093,10 @@ const respondWebSearchProviderMessagesJson = (
   )
 
   if (!payload.stream) {
-    return c.json(response)
+    return jsonWithForwardedHeaders(response, sourceHeaders)
   }
 
+  applyForwardableResponseHeaders(c, sourceHeaders)
   return streamSSE(c, async (stream) => {
     for (const event of buildSyntheticStreamEvents(response)) {
       const data = JSON.stringify(event)

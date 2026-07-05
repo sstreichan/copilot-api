@@ -16,6 +16,7 @@ import type {
 
 import { isResponsesApiWebSocketEnabled as isConfiguredResponsesApiWebSocketEnabled } from "~/lib/config"
 import { HTTPError } from "~/lib/error"
+import { attachResponseHeaders } from "~/lib/response-headers"
 import { state } from "~/lib/state"
 import {
   createPooledWebSocketStream,
@@ -246,10 +247,13 @@ export async function forwardCodexResponses(
   }
 
   if (normalizedPayload.stream) {
-    return events(response)
+    return attachResponseHeaders(events(response), response.headers)
   }
 
-  return (await response.json()) as ResponsesResult
+  return attachResponseHeaders(
+    (await response.json()) as ResponsesResult,
+    response.headers,
+  )
 }
 
 const normalizeCodexResponsesPayload = (

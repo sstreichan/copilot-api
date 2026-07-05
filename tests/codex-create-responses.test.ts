@@ -1,5 +1,6 @@
-import { afterEach, describe, expect, test } from "bun:test"
+import { afterEach, describe, expect, mock, test } from "bun:test"
 
+import { getAttachedResponseHeaders } from "../src/lib/response-headers"
 import { requestContext } from "~/lib/request-context"
 import { state } from "~/lib/state"
 import { getModels } from "~/services/codex/get-models"
@@ -7,16 +8,19 @@ import {
   buildCodexResponsesWebSocketPayload,
   buildCodexResponsesWebSocketUrl,
   buildCodexResponsesHeaders,
+  forwardCodexResponses,
   prepareCodexResponsesWebSocketRequest,
   resolveCodexResponsesUrl,
 } from "~/services/codex/create-responses"
 
 const originalCodexAccessToken = state.codexAccessToken
 const originalCodexAccountId = state.codexAccountId
+const originalFetch = globalThis.fetch
 
 afterEach(() => {
   state.codexAccessToken = originalCodexAccessToken
   state.codexAccountId = originalCodexAccountId
+  ;(globalThis as unknown as { fetch: typeof fetch }).fetch = originalFetch
 })
 
 describe("codex api helpers", () => {
@@ -218,5 +222,57 @@ describe("codex api helpers", () => {
         (model) => !model.supported_endpoints?.includes("/v1/embeddings"),
       ),
     ).toBe(true)
+  })
+
+  test("attaches upstream response headers on non-stream path", async () => {
+    state.codexAccessToken = "codex-token"
+    state.codexAccountId = "codex-account"
+    ;(globalThis as unknown as { fetch: typeof fetch }).fetch = mock(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            created_at: 0,
+            error: null,
+            id: "resp_123",
+            incomplete_details: null,
+            instructions: null,
+            metadata: null,
+            model: "gpt-5.4",
+            object: "response",
+            output: [],
+            output_text: "",
+            parallel_tool_calls: false,
+            status: "completed",
+            temperature: null,
+            tool_choice: "auto",
+            tools: [],
+            top_p: null,
+            usage: null,
+          }),
+          {
+            headers: {
+              "content-type": "application/json",
+              "x-quota-snapshot-premium_interactions": "ent=500;rem=80",
+            },
+          },
+        ),
+      ),
+    ) as unknown as typeof fetch
+
+    const result = await forwardCodexResponses(
+      {
+        input: "hello",
+        model: "gpt-5.4",
+      },
+      new Headers(),
+      "https://chatgpt.com/backend-api",
+      { transport: "http" },
+    )
+
+    expect(
+      getAttachedResponseHeaders(result)?.get(
+        "x-quota-snapshot-premium_interactions",
+      ),
+    ).toBe("ent=500;rem=80")
   })
 })
