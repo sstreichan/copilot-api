@@ -225,6 +225,8 @@
 
           <span class="muted" id="budget-snapshot-note"></span>
 
+          <button id="pip-btn" class="btn" type="button" title="Pop out as always-on-top Picture-in-Picture window">📌 PiP</button>
+
         </div>
 
         <div class="scroll">
@@ -756,6 +758,75 @@
 
     byId('clear-bindings').addEventListener('click', () => clearData('bindings'))
     byId('clear-history').addEventListener('click', () => clearData('history'))
+
+    byId('pip-btn').addEventListener('click', async () => {
+      if (!('documentPictureInPicture' in window)) {
+        alert('Document Picture-in-Picture not supported. Use Chrome 116+ or Edge 116+.')
+        return
+      }
+      const pipWindow = await documentPictureInPicture.requestWindow({ width: 240, height: 120 })
+      const doc = pipWindow.document
+      doc.head.innerHTML = `<style>
+        body { font-family: ui-monospace, monospace; font-size: 12px; padding: 4px 6px; background: #1a1a1a; color: #ccc; line-height: 1.35; white-space: nowrap; display: flex; justify-content: center; }
+        .root { display: inline-grid; grid-template-columns: max-content max-content; gap: 1px 8px; }
+        .k { color: #777; }
+        .v { color: #eee; font-weight: 600; font-variant-numeric: tabular-nums; }
+        .danger { color: #d9534f; }
+        .warn { color: #f0ad4e; }
+        .ok { color: #5cb85c; }
+      </style>`
+      const root = doc.createElement('div')
+      root.className = 'root'
+      root.innerHTML = `
+        <span class="k">Used</span><span class="v" id="pip-used">-</span>
+        <span class="k">Total</span><span class="v" id="pip-total">-</span>
+        <span class="k">Pace/day</span><span class="v" id="pip-pace">-</span>
+        <span class="k">Forecast</span><span class="v" id="pip-forecast">-</span>
+        <span class="k">History</span><span class="v" id="pip-history">-</span>`
+      doc.body.appendChild(root)
+
+      const fmtUsd = (n) => '$' + Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+
+      async function pipRefresh() {
+        try {
+          const res = await fetch('/api/status')
+          const payload = await res.json()
+          const instances = payload.instances || []
+          const reporting = instances.filter(i => {
+            const u = i?.headerSnapshot?.premiumUsage
+            return u && Number.isFinite(Number(u.used)) && Number.isFinite(Number(u.total))
+          })
+          const totalUsedCredits = reporting.reduce((s, i) => s + Number(i.headerSnapshot.premiumUsage.used), 0)
+          const totalCapCredits = reporting.reduce((s, i) => s + Number(i.headerSnapshot.premiumUsage.total), 0)
+          const totalUsedUsd = totalUsedCredits * 0.01
+          const totalCapUsd = totalCapCredits * 0.01
+          const now = new Date()
+          const elapsed = now.getDate()
+          const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate()
+          const paceUsd = elapsed > 0 ? totalUsedUsd / elapsed : 0
+          const forecastUsd = paceUsd * daysInMonth
+          const dailyBudgetUsd = (daysInMonth - elapsed) > 0 ? (totalCapUsd - totalUsedUsd) / (daysInMonth - elapsed) : 0
+          const ratio = dailyBudgetUsd > 0 ? paceUsd / dailyBudgetUsd : Infinity
+          let fcClass = 'ok'
+          if (ratio > 1.1) fcClass = 'danger'
+          else if (ratio > 0.9) fcClass = 'warn'
+          const histUsd = Number(payload.totalNanoAiuSinceStart || 0) / 100000000000
+
+          const set = (id, val) => { const el = doc.getElementById(id); if (el) el.textContent = val }
+          set('pip-used', fmtUsd(totalUsedUsd))
+          set('pip-total', fmtUsd(totalCapUsd))
+          set('pip-pace', paceUsd > 0 ? fmtUsd(paceUsd) : '-')
+          const fcEl = doc.getElementById('pip-forecast')
+          if (fcEl) { fcEl.textContent = forecastUsd > 0 ? fmtUsd(forecastUsd) : '-'; fcEl.className = 'v ' + fcClass }
+          set('pip-history', fmtUsd(histUsd))
+        } catch (e) {
+          console.error('PiP refresh failed', e)
+        }
+      }
+      requestAnimationFrame(pipRefresh)
+      const interval = setInterval(pipRefresh, 5000)
+      pipWindow.addEventListener('pagehide', () => clearInterval(interval))
+    })
 
     byId('instances-body').addEventListener('change', async (event) => {
       const input = event.target
