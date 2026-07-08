@@ -114,6 +114,20 @@ export interface Locale {
     showWindow: string
     quit: string
   }
+  menu: {
+    file: string
+    fileSettings: string
+    fileQuit: string
+    view: string
+    viewReload: string
+    viewZoomIn: string
+    viewZoomOut: string
+    viewZoomReset: string
+    help: string
+    helpAbout: string
+    aboutVersion: string
+    helpDocs: string
+  }
   server: {
     tokenNotFound: string
     authRequired: string
@@ -195,9 +209,8 @@ export type LocaleVars = Record<string, string | number>
 
 // Dot-path key type with autocomplete and compile-time missing-key checks.
 type DotPaths<T, P extends string = ''> = {
-  [K in keyof T & string]: T[K] extends string
-    ? `${P}${K}`
-    : DotPaths<T[K], `${P}${K}.`>
+  [K in keyof T & string]: T[K] extends string ? `${P}${K}`
+  : DotPaths<T[K], `${P}${K}.`>
 }[keyof T & string]
 
 export type LocaleKey = DotPaths<Locale>
@@ -210,7 +223,10 @@ function detectLanguage(systemLocale: string): Language {
   return 'en'
 }
 
-export function resolveLanguage(pref: LangPreference, systemLocale: string): Language {
+export function resolveLanguage(
+  pref: LangPreference,
+  systemLocale: string,
+): Language {
   if (pref === 'auto') return detectLanguage(systemLocale)
   return pref
 }
@@ -238,7 +254,7 @@ export function translate(
   key: LocaleKey,
   pref: LangPreference,
   vars?: LocaleVars,
-  systemLocale = 'en'
+  systemLocale = 'en',
 ): string {
   const lang = resolveLanguage(pref, systemLocale)
   return interpolate(getNestedValue(locales[lang], key), vars)

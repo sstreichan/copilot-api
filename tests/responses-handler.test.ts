@@ -102,6 +102,8 @@ beforeEach(async () => {
   } as typeof state.models
 
   responsesApiWebSocketEnabled = true
+  responsesHandlerDependencies.findEndpointModel = (model) =>
+    state.models?.data.find((candidate) => candidate.id === model) ?? undefined
   responsesHandlerDependencies.createResponses = createResponses
   responsesHandlerDependencies.isResponsesApiWebSearchEnabled = () => true
   responsesUtilsDependencies.getModelResponsesApiCompactThreshold = () =>

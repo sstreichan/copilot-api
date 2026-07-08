@@ -122,6 +122,7 @@ export const responsesHandlerDependencies = {
   createChatCompletions,
   createMessages,
   createResponses: createCopilotResponses,
+  findEndpointModel,
   getConfig: getConfiguredConfig,
   isResponsesApiWebSearchEnabled: isConfiguredResponsesApiWebSearchEnabled,
 }
@@ -184,7 +185,9 @@ export const handleResponses = async (c: Context) => {
 
   preflightResponsesPayload(payload)
 
-  const selectedModel = findEndpointModel(payload.model)
+  const selectedModel = responsesHandlerDependencies.findEndpointModel(
+    payload.model,
+  )
   if (!selectedModel) {
     return c.json(
       {

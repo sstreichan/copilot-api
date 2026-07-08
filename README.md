@@ -7,7 +7,7 @@ English | [简体中文](./README.zh-CN.md)
 > [!IMPORTANT]
 > **Before using, please be aware of the following:**
 >
-> 1. **Claude Code configuration:** When using with Claude Code, please configure the model ID as `claude-opus-4-8`. Example claude `settings.json` see [Manual Configuration with `settings.json`](#manual-configuration-with-settingsjson).
+> 1. **Claude Code configuration:** When using with Claude Code, please configure the model ID as `claude-opus-4-8`. Example claude `settings.json` see [Manual Configuration with `settings.json`](#manual-configuration-with-settingsjson). 
 >
 > 2. **Built-in `copilot`, `codex` and third-party providers:** Run `npx @jeffreycao/copilot-api@latest auth` and choose `copilot`, `codex`, `deepseek`, `custom`, or other providers.
 >
@@ -195,7 +195,7 @@ Here is an example `.claude/settings.json` file:
 }
 ```
 
-- Replace `ANTHROPIC_MODEL`, `ANTHROPIC_DEFAULT_OPUS_MODEL`, `ANTHROPIC_DEFAULT_SONNET_MODEL`, and `ANTHROPIC_DEFAULT_HAIKU_MODEL` according to your needs. After configuration, please install the claude code plugin [Plugin Integrations](#plugin-integrations).
+- Replace `ANTHROPIC_MODEL`, `ANTHROPIC_DEFAULT_OPUS_MODEL`, `ANTHROPIC_DEFAULT_SONNET_MODEL`, and `ANTHROPIC_DEFAULT_HAIKU_MODEL` according to your needs. After configuration, please install the claude code plugin [Plugin Integrations](#plugin-integrations).  
 - Setting CLAUDE_CODE_ATTRIBUTION_HEADER to 0 can prevent Claude code from adding billing and version information in system prompts, thereby avoiding prompt cache invalidation.
 - Turning off CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION and CLAUDE_CODE_ENABLE_AWAY_SUMMARY can prevent quota from being consumed unnecessarily.
 - Claude Code WebSearch is supported for pure search requests. For Copilot, keep the global `messageApiWebSearchModel` set to a Responses-capable GPT model or a `provider/model` alias. For provider routes, use a native Anthropic provider or an `openai-responses` provider. Add `WebSearch` to `permissions.deny` only if you want to forbid this traffic.
@@ -242,7 +242,8 @@ Example `~/.config/opencode/opencode.json`:
             "output": ["text"]
           },
           "limit": {
-            "context": 300000,
+            "context": 400000,
+            "input": 272000,
             "output": 128000
           }
         },
@@ -608,7 +609,7 @@ Use `copilot-api auth login --provider custom` to add or update another third-pa
 - **smallModel:** Fallback model used for tool-less warmup messages (e.g., Claude Code probe requests); defaults to gpt-5-mini.
 - **useResponsesApiContextManagement:** When `true`, the proxy adds Responses API `context_management` compaction instructions. Defaults to `true`. Set it to `false` to disable this globally. When enabled, the request includes `context_management` in the body and keeps only the latest compaction carrier on follow-up turns. This is especially useful for long-running tasks.
 - **modelResponsesApiCompactThresholds:** Per-model Responses API `compact_threshold` overrides used when the proxy adds `context_management`. These values take precedence over the fallback threshold from `resolveResponsesCompactThreshold` (`max_prompt_tokens * ratio`, or the default fallback). Defaults set `gpt-5.4` and `gpt-5.5` to `217600` (`272000 * 0.8`). Models not listed continue to use the normal fallback logic.
-- **modelReasoningEfforts:** Per-model `reasoning.effort` sent to the Responses API. Allowed values are `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`. If a model isn't listed, `high` is used by default; GPT-5.3+ models fall back to `xhigh` when not explicitly configured.
+- **modelReasoningEfforts:** Per-model reasoning effort applied to `/v1/messages` requests. When routed to the Copilot native Messages API it sets `output_config.effort`; when translated to the Responses API it sets `reasoning.effort`. Allowed values are `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`. If a model isn't listed, `high` is used by default; GPT-5.3+ models fall back to `xhigh` when not explicitly configured.
 - **useMessagesApi:** When `true`, Claude-family models that support Copilot's native `/v1/messages` endpoint will use the Messages API; otherwise they fall back to `/chat/completions`. Set to `false` to disable Messages API routing and always use `/chat/completions`. Defaults to `true`.
 - **useResponsesApiWebSocket:** When `true`, Responses API requests use Copilot's websocket transport for models that advertise `ws:/responses`; models that only advertise `/responses` continue to use HTTP. Set to `false` to disable websocket routing and use HTTP `/responses` whenever the selected model supports it. Defaults to `true`.
 - **useResponsesApiWebSearch:** When `true`, the server keeps Responses API tools with `type: "web_search"` and forwards them upstream. Set to `false` to strip those tools from `/responses` payloads. Defaults to `true`.

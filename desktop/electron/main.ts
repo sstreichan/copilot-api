@@ -1,24 +1,34 @@
-import { app, BrowserWindow, Tray, Menu, nativeImage, nativeTheme } from 'electron'
+import {
+  app,
+  BrowserWindow,
+  Tray,
+  Menu,
+  nativeImage,
+  nativeTheme,
+} from 'electron'
 import path from 'node:path'
 
 import { bindElectronFetch } from '../../src/lib/electron-fetch'
-import type { DesktopProxySettings, DesktopSettings } from '../src/types/ipc'
+import type {
+  DesktopProxySettings,
+  DesktopSettings,
+  ThemePreference,
+} from '../src/types/ipc'
 import {
   applyElectronProxy,
-  applyElectronProxyCommandLine
+  applyElectronProxyCommandLine,
 } from './electron-proxy'
 import {
   applyNoProxyServerOverride,
-  hasNoProxyServerSwitch
+  hasNoProxyServerSwitch,
 } from './electron-proxy-config'
 import { tMain } from './i18n'
 import { readSettings, readSettingsSync } from './settings-store'
-import type { ThemePreference } from '../src/types/ipc'
 
 const CLI_ENV_FLAGS = {
   '--api-home': 'COPILOT_API_HOME',
   '--oauth-app': 'COPILOT_API_OAUTH_APP',
-  '--enterprise-url': 'COPILOT_API_ENTERPRISE_URL'
+  '--enterprise-url': 'COPILOT_API_ENTERPRISE_URL',
 } as const
 
 function applyCliEnvOverrides(argv: string[]): void {
@@ -57,6 +67,13 @@ function resolveNativeBackgroundColor(theme: ThemePreference): string {
   return nativeTheme.shouldUseDarkColors ? '#0a0a0c' : '#fafafa'
 }
 
+function resolveTitleBarOptions(): Electron.BaseWindowConstructorOptions {
+  if (process.platform === 'darwin') {
+    return { titleBarStyle: 'hiddenInset' as const }
+  }
+  return { frame: false }
+}
+
 interface RuntimeDependencies {
   registerIpcHandlers: typeof import('./ipc-handlers').registerIpcHandlers
   stopServer: typeof import('./server-manager').stopServer
@@ -66,7 +83,9 @@ interface RuntimeDependencies {
   readSettings: typeof readSettings
 }
 
-function getEffectiveProxySettings(settings: DesktopSettings): DesktopProxySettings {
+function getEffectiveProxySettings(
+  settings: DesktopSettings,
+): DesktopProxySettings {
   return applyNoProxyServerOverride(settings.proxy, noProxyServerOverride)
 }
 
@@ -101,10 +120,10 @@ function getRuntimeDependencies(): Promise<RuntimeDependencies> {
 
     const [
       { registerIpcHandlers },
-      { stopServer, onStatusChange, onLog, clearCallbacks }
+      { stopServer, onStatusChange, onLog, clearCallbacks },
     ] = await Promise.all([
       import('./ipc-handlers'),
-      import('./server-manager')
+      import('./server-manager'),
     ])
 
     return {
@@ -113,7 +132,7 @@ function getRuntimeDependencies(): Promise<RuntimeDependencies> {
       onStatusChange,
       onLog,
       clearCallbacks,
-      readSettings
+      readSettings,
     }
   })()
 
@@ -130,7 +149,10 @@ function createTrayNativeImage(): Electron.NativeImage {
   // Windows and Linux use the colored icon variant.
   const isMac = process.platform === 'darwin'
   const baseName = isMac ? 'tray-iconTemplate.png' : 'tray-icon.png'
-  const iconDir = app.isPackaged ? process.resourcesPath : path.join(app.getAppPath(), 'assets')
+  const iconDir =
+    app.isPackaged ?
+      process.resourcesPath
+    : path.join(app.getAppPath(), 'assets')
   const iconPath = path.join(iconDir, baseName)
 
   const image = nativeImage.createFromPath(iconPath)
@@ -141,18 +163,26 @@ function createTrayNativeImage(): Electron.NativeImage {
 }
 
 function getWindowIconPath(): string {
-  return app.isPackaged
-    ? path.join(process.resourcesPath, 'icon.png')
+  return app.isPackaged ?
+      path.join(process.resourcesPath, 'icon.png')
     : path.join(app.getAppPath(), 'assets', 'icon.png')
 }
 
 function showWindow(win: BrowserWindow): void {
   // Restore the Dock icon before showing the window on macOS.
   if (process.platform === 'darwin') {
-    app.dock?.show()
+    void app.dock?.show()
   }
   win.show()
   win.focus()
+}
+
+async function quitApplication(): Promise<void> {
+  isQuitting = true
+  const { clearCallbacks, stopServer } = await getRuntimeDependencies()
+  clearCallbacks()
+  await stopServer()
+  app.quit()
 }
 
 async function refreshTrayContextMenu(win: BrowserWindow): Promise<void> {
@@ -160,24 +190,21 @@ async function refreshTrayContextMenu(win: BrowserWindow): Promise<void> {
 
   const [showWindowLabel, quitLabel] = await Promise.all([
     tMain('tray.showWindow'),
-    tMain('tray.quit')
+    tMain('tray.quit'),
   ])
 
   const contextMenu = Menu.buildFromTemplate([
     {
       label: showWindowLabel,
-      click: () => showWindow(win)
+      click: () => showWindow(win),
     },
     { type: 'separator' },
     {
       label: quitLabel,
-      click: async () => {
-        isQuitting = true
-        const { stopServer } = await getRuntimeDependencies()
-        await stopServer()
-        app.quit()
-      }
-    }
+      click: () => {
+        void quitApplication()
+      },
+    },
   ])
 
   tray.setContextMenu(contextMenu)
@@ -204,7 +231,7 @@ function destroyTray(): void {
   }
   // Restore the Dock icon when destroying the tray on macOS.
   if (process.platform === 'darwin') {
-    app.dock?.show()
+    void app.dock?.show()
   }
 }
 
@@ -217,12 +244,12 @@ function createWindow(): BrowserWindow {
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.js'),
       contextIsolation: true,
-      nodeIntegration: false
+      nodeIntegration: false,
     },
-    titleBarStyle: 'hiddenInset',
+    ...resolveTitleBarOptions(),
     icon: process.platform === 'darwin' ? undefined : getWindowIconPath(),
     backgroundColor: resolveNativeBackgroundColor(initialSettings.theme),
-    show: false
+    show: false,
   })
 
   win.removeMenu()
@@ -235,6 +262,18 @@ function createWindow(): BrowserWindow {
   win.on('closed', () => {
     if (mainWindow === win) {
       mainWindow = null
+    }
+  })
+
+  win.on('maximize', () => {
+    if (!win.isDestroyed()) {
+      win.webContents.send('window:maximize-changed', true)
+    }
+  })
+
+  win.on('unmaximize', () => {
+    if (!win.isDestroyed()) {
+      win.webContents.send('window:maximize-changed', false)
     }
   })
 
@@ -261,16 +300,17 @@ function createWindow(): BrowserWindow {
   })
 
   if (process.env.ELECTRON_RENDERER_URL) {
-    win.loadURL(process.env.ELECTRON_RENDERER_URL)
+    void win.loadURL(process.env.ELECTRON_RENDERER_URL)
   } else {
-    win.loadFile(path.join(__dirname, '../renderer/index.html'))
+    void win.loadFile(path.join(__dirname, '../renderer/index.html'))
   }
 
   return win
 }
 
-app.whenReady().then(async () => {
-  const { registerIpcHandlers, readSettings, onStatusChange, onLog } = await getRuntimeDependencies()
+void app.whenReady().then(async () => {
+  const { registerIpcHandlers, readSettings, onStatusChange, onLog } =
+    await getRuntimeDependencies()
   const settings = await readSettings()
   await applyElectronProxy(getEffectiveProxySettings(settings))
 
@@ -278,11 +318,18 @@ app.whenReady().then(async () => {
 
   registerIpcHandlers(win, {
     getEffectiveProxySettings,
+    onQuit: quitApplication,
     onSettingsChange: async (settings, prevSettings) => {
       await applyElectronProxy(getEffectiveProxySettings(settings))
 
-      if (settings.theme !== prevSettings.theme && mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.setBackgroundColor(resolveNativeBackgroundColor(settings.theme))
+      if (
+        settings.theme !== prevSettings.theme
+        && mainWindow
+        && !mainWindow.isDestroyed()
+      ) {
+        mainWindow.setBackgroundColor(
+          resolveNativeBackgroundColor(settings.theme),
+        )
       }
 
       if (settings.minimizeToTray) {
@@ -298,7 +345,7 @@ app.whenReady().then(async () => {
           showWindow(win)
         }
       }
-    }
+    },
   })
 
   // Only create the tray when minimize-to-tray is enabled.

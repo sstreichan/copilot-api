@@ -759,7 +759,8 @@
     byId('clear-bindings').addEventListener('click', () => clearData('bindings'))
     byId('clear-history').addEventListener('click', () => clearData('history'))
 
-    byId('pip-btn').addEventListener('click', async () => {
+const pipButton = byId('pip-btn')
+if (pipButton) pipButton.addEventListener('click', async () => {
       if (!('documentPictureInPicture' in window)) {
         alert('Document Picture-in-Picture not supported. Use Chrome 116+ or Edge 116+.')
         return
