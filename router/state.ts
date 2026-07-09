@@ -840,14 +840,23 @@ function handleBuiltinRoutes(
 
   return null
 }
-
 function buildRequestContext(params: {
   req: Request
   url: URL
   bodyText: string
   requestNowMs: number
 }): RouterRequestContext {
-  const sessionId = params.req.headers.get("x-session-id")
+  const sessionId =
+    (
+      [
+        "x-session-id",
+        "x-claude-code-session-id",
+        "session-id",
+        "session_id",
+      ] as const
+    )
+      .map((name) => params.req.headers.get(name)?.trim())
+      .find(Boolean) ?? null
   const agent = getHeaderValue(params.req, "x-oc-agent")
   const provider = getHeaderValue(params.req, "x-oc-provider")
   const headerModel = getHeaderValue(params.req, "x-oc-model")

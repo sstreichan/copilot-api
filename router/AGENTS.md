@@ -57,10 +57,9 @@ bun run typecheck                         # 类型检查
 
 ### Sticky Binding
 
-请求通常携三元标识：`x-session-id`、`x-oc-agent`、`x-oc-model`。
-仅当 `x-session-id` 存在时，才会生成 binding key（`{session}:{agent}:{model}`）。
+请求通常携会话与路由三元标识：session header、`x-oc-agent`、`x-oc-model`。兼容 session header 为 `x-session-id`、`X-Claude-Code-Session-Id`、`session-id`、`session_id`（大小写不敏感）；router 取首个非空值生成 binding key（`{session}:{agent}:{model}`）。
 已有绑定且端口仍支持该模型 → **sticky**（复用旧端口）。
-无绑定或无 `x-session-id` → **least-loaded**（总请求数最少之端口，平局随机）。
+无绑定或无兼容 session header → **least-loaded**（总请求数最少之端口，平局随机）。
 已有绑定但原端口不再支持该模型 → **rebalance**（重新选择并覆盖绑定）。
 
 另可见 `x-oc-provider`。此项只入 `RouteRecord` 与日志，供人辨来路；
@@ -115,13 +114,11 @@ Router 只取 `name` 与 `port`；`token` 与可选 `flags`/`accountType` 由 `s
 
 仓库内随附之 OpenCode 插件位于 `.opencode/plugins/subagent-marker.js`；它专司注入 `__SUBAGENT_MARKER__`，并不主持多实例路由。
 
-若外场另配 session-sticky 所用插件，其职责当是在 `chat.headers` 钩子中注入下列四个 header：
-- `x-session-id` — `input.sessionID`，会话标识（binding key 之首段）
+若外场另配 session-sticky 所用插件，其职责通常是在 `chat.headers` 钩子中注入上文兼容列表中的会话 header，并同时注入：
 - `x-oc-agent` — `input.agent` 的 name，代理名称
 - `x-oc-model` — `input.model.id`，模型 ID
 - `x-oc-provider` — `input.provider.id`，提供商标识（仅入日志与 `RouteRecord`，**不入 binding key**）
 
-前三者构成 binding key（`{session}:{agent}:{model}`），为 router 判定路由之全部信号。
 插件自带日志轮转（写入同目录 `session-router.log`，上限 200 行，超限裁至 150 行）。
 
 ### Dashboard

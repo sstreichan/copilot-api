@@ -35,16 +35,28 @@ function createState() {
   ])
 }
 
-function createRouterRequest(body: string): Request {
-  return new Request("http://localhost/v1/messages", {
+function createRouterRequest(
+  body: string,
+  headers: Record<string, string> = {},
+  url = "http://localhost/v1/messages",
+): Request {
+  return new Request(url, {
     method: "POST",
     headers: {
       "content-type": "application/json",
       "x-oc-agent": "atlas",
       "x-oc-provider": "openai",
+      ...headers,
     },
     body,
   })
+}
+
+function createResponsesRequest(
+  body: string,
+  headers: Record<string, string> = {},
+): Request {
+  return createRouterRequest(body, headers, "http://localhost/v1/responses")
 }
 
 function createRouterHandlerForTest(options: {
@@ -71,6 +83,38 @@ function createRouterHandlerForTest(options: {
     now,
     nowMs: () => fixedNowMs,
   })
+}
+
+async function expectStickySessionRouting(options: {
+  state: ReturnType<typeof createState>
+  firstRequest: Request
+  secondRequest: Request
+  expectedSessionId: string
+}) {
+  const proxiedPorts: Array<string> = []
+  const fetchImpl = createFetchStub((input) => {
+    proxiedPorts.push(new URL(toInputUrl(input)).port)
+    return Promise.resolve(new Response("ok"))
+  })
+  const handler = createRouterHandlerForTest({
+    state: options.state,
+    fetchImpl,
+  })
+
+  const first = await handler(options.firstRequest)
+  const second = await handler(options.secondRequest)
+
+  expect(first.status).toBe(200)
+  expect(second.status).toBe(200)
+  expect(proxiedPorts[0]).toBe(proxiedPorts[1])
+  expect(options.state.routeHistory.map((entry) => entry.sid)).toEqual([
+    options.expectedSessionId,
+    options.expectedSessionId,
+  ])
+  expect(options.state.routeHistory.map((entry) => entry.reason)).toEqual([
+    "new",
+    "sticky",
+  ])
 }
 
 describe("router discovery and proxy helpers", () => {
@@ -332,6 +376,126 @@ describe("router discovery and proxy helpers", () => {
           total_nano_aiu: 3,
         },
       },
+    ])
+  })
+  test("router handler keeps sticky routing for Claude Code session header case-insensitively", async () => {
+    const state = createState()
+    state.modelToPorts.set("gpt-4.1", [4141, 4142])
+
+    await expectStickySessionRouting({
+      state,
+      firstRequest: createRouterRequest('{"model":"gpt-4.1"}', {
+        "X-Claude-Code-Session-Id": "claude-session-1",
+      }),
+      secondRequest: createRouterRequest('{"model":"gpt-4.1"}', {
+        "x-Claude-Code-SESSION-id": "claude-session-1",
+      }),
+      expectedSessionId: "claude-session-1",
+    })
+  })
+
+  test("router handler keeps sticky routing for Codex fallback session headers case-insensitively", async () => {
+    const body = JSON.stringify({
+      model: "gpt-5.4",
+      prompt_cache_key: "responses-session-1",
+      input: [{ role: "user", content: "hello" }],
+    })
+
+    const testCases: Array<{
+      firstHeaders: Record<string, string>
+      secondHeaders: Record<string, string>
+      expectedSessionId: string
+    }> = [
+      {
+        firstHeaders: { "session-id": "codex-session-1" },
+        secondHeaders: { "SESSION-ID": "codex-session-1" },
+        expectedSessionId: "codex-session-1",
+      },
+      {
+        firstHeaders: { session_id: "codex-session-2" },
+        secondHeaders: { SESSION_ID: "codex-session-2" },
+        expectedSessionId: "codex-session-2",
+      },
+    ]
+
+    for (const testCase of testCases) {
+      const state = createState()
+      state.modelToPorts.set("gpt-5.4", [4141, 4142])
+
+      await expectStickySessionRouting({
+        state,
+        firstRequest: createResponsesRequest(body, testCase.firstHeaders),
+        secondRequest: createResponsesRequest(body, testCase.secondHeaders),
+        expectedSessionId: testCase.expectedSessionId,
+      })
+    }
+  })
+
+  test("router handler prefers x-session-id over compatible fallback headers case-insensitively", async () => {
+    const state = createState()
+    state.modelToPorts.set("gpt-4.1", [4141, 4142])
+
+    const fetchImpl = createFetchStub(() => Promise.resolve(new Response("ok")))
+
+    const handler = createRouterHandler({
+      state,
+      logger: () => {},
+      fetchImpl,
+      now: () => "2026-03-13T00:00:00.000Z",
+    })
+
+    const response = await handler(
+      createRouterRequest('{"model":"gpt-4.1"}', {
+        "X-SESSION-ID": "preferred-session",
+        "X-Claude-Code-Session-Id": "claude-session-1",
+        "SESSION-ID": "codex-session-1",
+      }),
+    )
+
+    expect(response.status).toBe(200)
+    expect(state.routeHistory.at(-1)?.sid).toBe("preferred-session")
+    expect(state.sessionBindings.has("preferred-session:atlas:gpt-4.1")).toBe(
+      true,
+    )
+  })
+
+  test("router handler keeps least-loaded routing when responses request lacks compatible session headers", async () => {
+    const state = createState()
+    const proxiedPorts: Array<string> = []
+    state.modelToPorts.set("gpt-5.4", [4141, 4142])
+
+    const fetchImpl = createFetchStub((input) => {
+      proxiedPorts.push(new URL(toInputUrl(input)).port)
+      return Promise.resolve(new Response("ok"))
+    })
+
+    const handler = createRouterHandler({
+      state,
+      logger: () => {},
+      fetchImpl,
+      now: () => "2026-03-13T00:00:00.000Z",
+    })
+
+    const body = JSON.stringify({
+      model: "gpt-5.4",
+      prompt_cache_key: "responses-session-1",
+      input: [{ role: "user", content: "hello" }],
+    })
+
+    const first = await handler(createResponsesRequest(body))
+    const second = await handler(
+      createResponsesRequest(body, {
+        "thread-id": "thread-only-1",
+      }),
+    )
+
+    expect(first.status).toBe(200)
+    expect(second.status).toBe(200)
+    expect(proxiedPorts.sort()).toEqual(["4141", "4142"])
+    expect(state.routeHistory.map((entry) => entry.sid)).toEqual(["-", "-"])
+    expect(state.routeHistory.map((entry) => entry.reason)).toEqual([
+      "new",
+      "new",
     ])
   })
 })
