@@ -164,6 +164,41 @@
     .usage-summary:hover {
       color: var(--text);
     }
+    .usage-highlight {
+      display: inline-block;
+      border: 1px solid transparent;
+      border-radius: 999px;
+      padding: 0 6px;
+      font-weight: 600;
+      font-variant-numeric: tabular-nums;
+    }
+    .usage-rank {
+      display: inline-block;
+      margin-right: 4px;
+      font-size: 10px;
+      line-height: 1;
+      opacity: .9;
+    }
+    .usage-low-cache {
+      color: #39d0d8;
+      background: rgba(57,208,216,.14);
+      border-color: rgba(57,208,216,.45);
+    }
+    .usage-high-cache {
+      color: #bc8cff;
+      background: rgba(188,140,255,.14);
+      border-color: rgba(188,140,255,.45);
+    }
+    .usage-high-cost {
+      color: var(--warn);
+      background: rgba(210,153,34,.18);
+      border-color: rgba(210,153,34,.45);
+    }
+    .usage-low-cost {
+      color: var(--good);
+      background: rgba(63,185,80,.14);
+      border-color: rgba(63,185,80,.45);
+    }
     .usage-details {
       min-width: 420px;
     }
@@ -573,16 +608,64 @@
       return value == null ? 'null' : JSON.stringify(value, null, 2)
     }
 
-    function usageSummary(item) {
+    function historyCached(item) {
       const usage = item.usage
-      const copilotUsage = item.copilotUsage
-      if (!usage && !copilotUsage) return '-'
       const cached =
         usage?.input_tokens_details?.cached_tokens
         ?? usage?.cache_read_input_tokens
-      const nano = copilotUsage?.total_nano_aiu
+      const value = Number(cached)
+      return Number.isFinite(value) ? value : null
+    }
+
+    function historyUsd(item) {
+      const nano = item.copilotUsage?.total_nano_aiu
+      const value = Number(nano)
+      return Number.isFinite(value) ? value / 100000000000 : null
+    }
+
+    function highlightUsagePart(text, className, rank, direction) {
+      return rank
+        ? `<span class="usage-highlight ${className}"><span class="usage-rank">${direction === 'high' ? '▲' : '▼'}${rank}</span>${escapeHtml(text)}</span>`
+        : escapeHtml(text)
+    }
+    function historyRankKey(item, index) {
+      return item.historyId || item.ts || String(index)
+    }
+
+    function chooseUsageRank(lowRank, highRank) {
+      const hasLow = lowRank != null
+      const hasHigh = highRank != null
+      if (hasLow && hasHigh) {
+        if (lowRank === 1 && highRank !== 1) return { rank: lowRank, direction: 'low' }
+        if (highRank === 1 && lowRank !== 1) return { rank: highRank, direction: 'high' }
+        return null
+      }
+      if (hasLow) return { rank: lowRank, direction: 'low' }
+      if (hasHigh) return { rank: highRank, direction: 'high' }
+      return null
+    }
+
+    function cacheRankClass(direction) {
+      return direction === 'low' ? 'usage-low-cache' : 'usage-high-cache'
+    }
+
+    function costRankClass(direction) {
+      return direction === 'low' ? 'usage-low-cost' : 'usage-high-cost'
+    }
+
+
+    function usageSummary(item, ranks = {}, index = 0) {
+      const usage = item.usage
+      const copilotUsage = item.copilotUsage
+      if (!usage && !copilotUsage) return '-'
       const parts = []
-      const usd = Number.isFinite(Number(nano)) ? Number(nano) / 100000000000 : null
+      const cached = historyCached(item)
+      const usd = historyUsd(item)
+      const rankKey = historyRankKey(item, index)
+      const lowCacheRank = ranks.lowCache?.get(rankKey)
+      const highCacheRank = ranks.highCache?.get(rankKey)
+      const highCostRank = ranks.highCost?.get(rankKey)
+      const lowCostRank = ranks.lowCost?.get(rankKey)
       const tokenDetails = Array.isArray(copilotUsage?.token_details) ? copilotUsage.token_details : []
       const typeOrder = ["input", "cache_read", "cache_write", "output"]
       const typeLabel = {
@@ -603,22 +686,34 @@
         if (!Number.isFinite(nanoCost)) continue
         typeCosts[tokenType] = (typeCosts[tokenType] || 0) + nanoCost
       }
-      if (cached !== undefined) parts.push(`cached=${cached}`)
-      if (usd !== null) parts.push(`$${usd.toFixed(6)}`)
+      if (cached !== null) {
+        const text = `cached=${cached}`
+        const rank = chooseUsageRank(lowCacheRank, highCacheRank)
+        parts.push(rank
+          ? highlightUsagePart(text, cacheRankClass(rank.direction), rank.rank, rank.direction)
+          : escapeHtml(text))
+      }
+      if (usd !== null) {
+        const text = `$${usd.toFixed(6)}`
+        const rank = chooseUsageRank(lowCostRank, highCostRank)
+        parts.push(rank
+          ? highlightUsagePart(text, costRankClass(rank.direction), rank.rank, rank.direction)
+          : escapeHtml(text))
+      }
       for (const tokenType of typeOrder) {
         const typeNano = typeCosts[tokenType]
         if (!Number.isFinite(typeNano)) continue
         const typeUsd = typeNano / 100000000000
-        parts.push(`${typeLabel[tokenType] || tokenType}=$${typeUsd.toFixed(6)}`)
+        parts.push(escapeHtml(`${typeLabel[tokenType] || tokenType}=$${typeUsd.toFixed(6)}`))
       }
       return parts.length ? parts.join(' · ') : 'details'
     }
 
-    function usageCell(item) {
+    function usageCell(item, ranks, index) {
       if (!item.usage && !item.copilotUsage) return '-'
       return `
         <details class="usage-details">
-          <summary class="usage-summary">${usageSummary(item)}</summary>
+          <summary class="usage-summary">${usageSummary(item, ranks, index)}</summary>
           <pre>usage:\n${escapeHtml(toPrettyJson(item.usage))}\n\ncopilot_usage:\n${escapeHtml(toPrettyJson(item.copilotUsage))}</pre>
         </details>
       `
@@ -631,7 +726,7 @@
         .replaceAll('>', '&gt;')
     }
 
-    function historyRow(item) {
+    function historyRow(item, ranks, index) {
       return `
         <tr>
           <td>${fmtTime(item.ts)}</td>
@@ -640,9 +735,34 @@
           <td>${cut(item.model, 28)}</td>
           <td><strong>${item.port || '-'}</strong></td>
           <td>${item.reason || '-'}</td>
-          <td>${usageCell(item)}</td>
+          <td>${usageCell(item, ranks, index)}</td>
         </tr>
       `
+    }
+
+    function rankHistoryValues(history, getter, direction) {
+      const rows = history
+        .map((item, index) => ({ key: historyRankKey(item, index), value: getter(item) }))
+        .filter((row) => row.value !== null)
+        .sort((a, b) => direction === 'asc' ? a.value - b.value : b.value - a.value)
+      const ranks = new Map()
+      let previousValue = null
+      let rank = 0
+      rows.forEach((row, index) => {
+        if (previousValue === null || row.value !== previousValue) rank = index + 1
+        previousValue = row.value
+        if (rank <= 3) ranks.set(row.key, rank)
+      })
+      return ranks
+    }
+
+    function historyRanks(history) {
+      return {
+        lowCache: rankHistoryValues(history, historyCached, 'asc'),
+        highCache: rankHistoryValues(history, historyCached, 'desc'),
+        highCost: rankHistoryValues(history, historyUsd, 'desc'),
+        lowCost: rankHistoryValues(history, historyUsd, 'asc'),
+      }
     }
 
     function renderHistory(history) {
@@ -653,7 +773,8 @@
         body.innerHTML = '<tr><td colspan="7" class="empty">No routes yet.</td></tr>'
         return
       }
-      body.innerHTML = state.history.map(historyRow).join('')
+      const ranks = historyRanks(state.history)
+      body.innerHTML = state.history.map((item, index) => historyRow(item, ranks, index)).join('')
     }
 
     function renderHistoryTotal(totalNanoAiuSinceStart) {
