@@ -82,6 +82,7 @@ import {
 import { createStreamIdTracker, fixStreamIds } from "./stream-id-sync"
 import {
   applyResponsesApiContextManagement,
+  compactInputByLatestCompaction,
   getResponsesTransportForModel,
   getResponsesRequestOptions,
   sanitizeAllInputImages,
@@ -254,6 +255,7 @@ const handleWithMessagesBackend = async (
   c: Context,
   { payload, recordUsage, requestId, sessionId }: ResponsesHandlerContext,
 ) => {
+  compactInputByLatestCompaction(payload)
   const anthropicPayload = translateResponsesToAnthropicMessages(payload)
 
   consola.info(`IN ${cm(payload.model)} [messages-backend]`)
@@ -352,6 +354,7 @@ const handleWithChatFallback = async (
   c: Context,
   { payload, recordUsage, requestId, sessionId }: ResponsesHandlerContext,
 ) => {
+  compactInputByLatestCompaction(payload)
   const chatPayload = translateResponsesToChatCompletions(payload)
 
   consola.info(`IN ${cm(payload.model)} [chat-fallback]`)
@@ -474,7 +477,17 @@ const handleWithCopilotResponses = async ({
 
   // Smaller than the client compaction threshold, use server-side compaction to maintain cache hit rate
   const maxPromptTokens = selectedModel?.capabilities.limits.max_prompt_tokens
-  applyResponsesApiContextManagement(payload, maxPromptTokens, 0.8)
+  const shouldCompactInput = applyResponsesApiContextManagement(
+    payload,
+    maxPromptTokens,
+    {
+      compactThresholdRatio: 0.8,
+      source: "responses",
+    },
+  )
+  if (shouldCompactInput) {
+    compactInputByLatestCompaction(payload)
+  }
 
   debugJson(logger, "Translated Responses payload:", payload)
 

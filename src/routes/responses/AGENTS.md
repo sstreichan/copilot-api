@@ -11,9 +11,9 @@
 | Route entry | `route.ts`, `handler.ts` | stream / non-stream 共用 `handleResponses()` |
 | Stream ID sync | `stream-id-sync.ts` | 修正 added/done 事件 ID 不一致 |
 | Vision / initiator detection | `utils.ts` | 只看 `payload.input` 与最后一项 role |
-| Payload preflight | `preflight.ts` | 4-step mutation: `removeUnsupportedTools` → `removeWebSearchTool`（条件）→ input normalize → compact |
+| Payload preflight | `preflight.ts` | Shared mutation: `removeUnsupportedTools` → conditional `removeWebSearchTool` → input normalize |
 | Input normalization | `utils.ts` (`normalizeResponsesInputForReplay`) | 把 replay input 整理成上游可接受形态 |
-| Compact input collapse | `utils.ts` (`compactInputByLatestCompaction`) | 仅保留最近一次 compaction 之后的 input 项 |
+| Compact input collapse | `utils.ts` (`compactInputByLatestCompaction`) | Path A 仅在 `applyResponsesApiContextManagement()` 启用时裁剪；Path B/C 在翻译前保留 replay 裁剪 |
 | Messages backend fallback | `responses-from-messages.ts` | Anthropic Messages ↔ Responses 双向翻译，含 monotonic `sequence_number` 与 assistant 合并 |
 | Chat completions fallback | `responses-from-chat.ts` | Chat Completions ↔ Responses 双向翻译，含 stream event 序列号 |
 
@@ -31,8 +31,8 @@
 - 当模型不支持 `/responses` 时，直接返回 400 `invalid_request_error`；不要把这个失败拖到上游 fetch
 - `stream-id-sync.ts` 会在 `response.output_item.added` 缺少 `item.id` 时补造 `oi_*` ID；后续事件必须复用该映射
 - `responses-from-messages.ts` 的 stream 翻译现在必须输出 monotonic `sequence_number` 和完整的 `response.output_item.added/done` 生命周期；assistant text + tool_use 合并为同一 message（防止 Claude replay 断流）
-- `preflight.ts` 独立管理 payload mutation pipeline；`handler.ts` 调用它但不直接操作 payload
-- `prompt_cache_key` 缺失时由 `stableSessionKey` 注入；`normalizeResponsesInputForReplay()` 与 `compactInputByLatestCompaction()` 必须在 stream id sync 之前完成
+- `preflight.ts` 独立管理共享工具与 input-normalization mutation；Path A 的 compaction 由 context-management gate 决定，Path B/C 在各自 fallback 前裁剪
+- `prompt_cache_key` 缺失时由 `stableSessionKey` 注入；`normalizeResponsesInputForReplay()` 在分流前完成，路径级 `compactInputByLatestCompaction()` 必须在 stream id sync 之前完成
 - `compactInputByLatestCompaction()` 在 messages → responses 路径（`api-flows.ts`）也复用；改语义时两处一并验
 - stream/non-stream 两条路径都要保留上游 quota/rate-limit headers；缺口通常先查 route helper 调用，再查 service 是否附着了 headers
 

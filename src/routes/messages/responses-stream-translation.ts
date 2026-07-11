@@ -578,8 +578,12 @@ const messageStart = (
 ): Array<AnthropicStreamEventData> => {
   state.messageStartSent = true
   const inputCachedTokens = response.usage?.input_tokens_details?.cached_tokens
+  const cacheWriteTokens =
+    response.usage?.input_tokens_details?.cache_write_tokens
   const inputTokens =
-    (response.usage?.input_tokens ?? 0) - (inputCachedTokens ?? 0)
+    (response.usage?.input_tokens ?? 0)
+    - (inputCachedTokens ?? 0)
+    - (cacheWriteTokens ?? 0)
   return [
     {
       type: "message_start",
@@ -595,6 +599,9 @@ const messageStart = (
           input_tokens: inputTokens,
           output_tokens: 0,
           cache_read_input_tokens: inputCachedTokens ?? 0,
+          ...(cacheWriteTokens !== undefined && {
+            cache_creation_input_tokens: cacheWriteTokens,
+          }),
         },
       },
     },

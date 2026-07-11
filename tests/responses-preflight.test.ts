@@ -9,6 +9,11 @@ import {
   removeWebSearchTool,
 } from "~/routes/responses/preflight"
 
+type WebSearchEnabledSpy = {
+  mockRestore: () => void
+  mockReturnValue: (value: boolean) => unknown
+}
+
 const makePayload = (
   tools?: ResponsesPayload["tools"],
   input?: ResponsesPayload["input"],
@@ -64,9 +69,7 @@ describe("removeWebSearchTool", () => {
 })
 
 describe("preflightResponsesPayload", () => {
-  let isWebSearchEnabledSpy: ReturnType<
-    typeof spyOn<typeof configModule, "isResponsesApiWebSearchEnabled">
-  >
+  let isWebSearchEnabledSpy: WebSearchEnabledSpy
 
   beforeEach(() => {
     isWebSearchEnabledSpy = spyOn(
@@ -79,7 +82,7 @@ describe("preflightResponsesPayload", () => {
     isWebSearchEnabledSpy.mockRestore()
   })
 
-  it("runs all 4 steps: unsupported tools removed, custom tools preserved, web_search kept when enabled", () => {
+  it("runs common preflight steps: unsupported tools removed, custom tools preserved, web_search kept when enabled", () => {
     const payload = makePayload([
       { type: "custom", name: "apply_patch" },
       { type: "image_generation" },
@@ -108,7 +111,7 @@ describe("preflightResponsesPayload", () => {
     expect(tools.find((t) => t.name === "foo")).toBeDefined()
   })
 
-  it("normalizes reasoning items and collapses compaction in input", () => {
+  it("normalizes reasoning items without collapsing replay input", () => {
     const compactionItem = { type: "compaction", summary: "old summary" }
     const reasoningItem = {
       type: "reasoning",
@@ -128,9 +131,12 @@ describe("preflightResponsesPayload", () => {
 
     expect(Array.isArray(payload.input)).toBe(true)
     const input = payload.input as Array<Record<string, unknown>>
-    // compactInputByLatestCompaction: input starts from compaction item
-    expect(input[0].type).toBe("compaction")
-    // normalizeResponsesInputForReplay: reasoning item summary normalized to []
+    expect(input[0]).toMatchObject({
+      content: "old",
+      role: "user",
+      type: "message",
+    })
+    expect(input).toContain(compactionItem)
     const normalized = input.find((i) => i.type === "reasoning") as Record<
       string,
       unknown

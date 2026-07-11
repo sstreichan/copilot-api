@@ -11,6 +11,7 @@ import {
 } from "./lib/request-auth"
 import { traceIdMiddleware } from "./lib/trace"
 import { zstdDecompressionMiddleware } from "./lib/zstd-request"
+import { alphaSearchRoutes } from "./routes/alpha-search/route"
 import { completionRoutes } from "./routes/chat-completions/route"
 import { configRoutes } from "./routes/admin/config/route"
 import { embeddingRoutes } from "./routes/embeddings/route"
@@ -69,6 +70,7 @@ server.route("/usage", usageRoute)
 server.route("/token-usage", tokenUsageRoute)
 server.route("/token", tokenRoute)
 server.route("/responses", responsesRoutes)
+server.route("/alpha/search", alphaSearchRoutes)
 
 // Compatibility with tools that expect v1/ prefix
 server.route("/v1/chat/completions", completionRoutes)

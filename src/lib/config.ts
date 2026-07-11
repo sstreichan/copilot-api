@@ -13,7 +13,7 @@ export interface AppConfig {
   modelMappings?: Record<string, string>
   extraPrompts?: Record<string, string>
   smallModel?: string
-  useResponsesApiContextManagement?: boolean
+  contextManagement?: ContextManagementConfig
   modelResponsesApiCompactThresholds?: Record<string, number>
   modelReasoningEfforts?: Record<
     string,
@@ -33,6 +33,11 @@ export interface AppConfig {
   // Mixing web_search with other tools is not supported.
   messageApiWebSearchModel?: string
   claudeTokenMultiplier?: number
+}
+
+export interface ContextManagementConfig {
+  messages?: boolean
+  responses?: boolean
 }
 
 export interface ModelConfig {
@@ -137,6 +142,9 @@ You interact with the user through a terminal. You have 2 ways of communicating 
 const modelResponsesApiCompactThresholds = {
   "gpt-5.4": 272_000 * 0.8,
   "gpt-5.5": 272_000 * 0.8,
+  "gpt-5.6-sol": 272_000 * 0.85,
+  "gpt-5.6-terra": 272_000 * 0.85,
+  "gpt-5.6-luna": 272_000 * 0.85,
 }
 
 const defaultModelReasoningEfforts: NonNullable<
@@ -157,6 +165,11 @@ const modelReasoningEffortFallbacks: NonNullable<
   "gpt-5.5": "xhigh",
 }
 
+const defaultContextManagement = {
+  messages: true,
+  responses: false,
+} satisfies Required<ContextManagementConfig>
+
 const defaultConfig: AppConfig = {
   auth: {
     apiKeys: [],
@@ -167,7 +180,7 @@ const defaultConfig: AppConfig = {
     "gpt-5-mini": gpt5ExplorationPrompt,
   },
   smallModel: "gpt-5-mini",
-  useResponsesApiContextManagement: true,
+  contextManagement: defaultContextManagement,
   modelResponsesApiCompactThresholds,
   modelReasoningEfforts: defaultModelReasoningEfforts,
   compactUseSmallModel: true,
@@ -284,6 +297,10 @@ function mergeDefaultConfig(config: AppConfig): {
     defaultConfig.modelResponsesApiCompactThresholds ?? {}
   const modelReasoningEfforts = config.modelReasoningEfforts ?? {}
   const defaultModelReasoningEfforts = defaultConfig.modelReasoningEfforts ?? {}
+  const contextManagement = normalizeContextManagementConfig(
+    config.contextManagement,
+  )
+  const defaultContextManagementConfig = defaultConfig.contextManagement ?? {}
 
   const missingExtraPromptModels = Object.keys(defaultExtraPrompts).filter(
     (model) => !Object.hasOwn(extraPrompts, model),
@@ -295,16 +312,21 @@ function mergeDefaultConfig(config: AppConfig): {
   const missingResponsesApiCompactThresholdModels = Object.keys(
     defaultResponsesApiCompactThresholds,
   ).filter((model) => !Object.hasOwn(responsesApiCompactThresholds, model))
+  const missingContextManagementKeys = Object.keys(
+    defaultContextManagementConfig,
+  ).filter((key) => !Object.hasOwn(contextManagement, key))
 
   const hasExtraPromptChanges = missingExtraPromptModels.length > 0
   const hasReasoningEffortChanges = missingReasoningEffortModels.length > 0
   const hasResponsesApiCompactThresholdChanges =
     missingResponsesApiCompactThresholdModels.length > 0
+  const hasContextManagementChanges = missingContextManagementKeys.length > 0
 
   if (
     !hasExtraPromptChanges
     && !hasReasoningEffortChanges
     && !hasResponsesApiCompactThresholdChanges
+    && !hasContextManagementChanges
   ) {
     return { mergedConfig: config, changed: false }
   }
@@ -312,6 +334,10 @@ function mergeDefaultConfig(config: AppConfig): {
   return {
     mergedConfig: {
       ...config,
+      contextManagement: {
+        ...defaultContextManagementConfig,
+        ...contextManagement,
+      },
       extraPrompts: {
         ...defaultExtraPrompts,
         ...extraPrompts,
@@ -326,6 +352,23 @@ function mergeDefaultConfig(config: AppConfig): {
       },
     },
     changed: true,
+  }
+}
+
+function normalizeContextManagementConfig(
+  value: ContextManagementConfig | undefined,
+): ContextManagementConfig {
+  if (!value || typeof value !== "object") {
+    return {}
+  }
+
+  return {
+    ...(typeof value.messages === "boolean" ?
+      { messages: value.messages }
+    : {}),
+    ...(typeof value.responses === "boolean" ?
+      { responses: value.responses }
+    : {}),
   }
 }
 
@@ -469,9 +512,16 @@ export function getSmallModel(): string {
   return config.smallModel ?? "gpt-5-mini"
 }
 
-export function isResponsesApiContextManagementEnabled(): boolean {
+export function isContextManagementEnabledForMessages(): boolean {
   const config = getConfig()
-  return config.useResponsesApiContextManagement ?? true
+  return config.contextManagement?.messages ?? defaultContextManagement.messages
+}
+
+export function isContextManagementEnabledForResponses(): boolean {
+  const config = getConfig()
+  return (
+    config.contextManagement?.responses ?? defaultContextManagement.responses
+  )
 }
 
 export function getModelResponsesApiCompactThreshold(

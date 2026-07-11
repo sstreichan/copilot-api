@@ -108,7 +108,9 @@ beforeEach(async () => {
   responsesHandlerDependencies.isResponsesApiWebSearchEnabled = () => true
   responsesUtilsDependencies.getModelResponsesApiCompactThreshold = () =>
     undefined
-  responsesUtilsDependencies.isResponsesApiContextManagementEnabled = () => true
+  responsesUtilsDependencies.isContextManagementEnabledForMessages = () => true
+  responsesUtilsDependencies.isContextManagementEnabledForResponses = () =>
+    false
   responsesUtilsDependencies.isResponsesApiWebSocketEnabled = () =>
     responsesApiWebSocketEnabled
   createResponses.mockReset()
@@ -324,6 +326,28 @@ describe("responses handler token usage", () => {
     expect(createResponses.mock.calls[0][1]?.transport).toBe("http")
   })
 
+  test("does not add context management to native Responses API by default", async () => {
+    createResponses.mockImplementation((payload) =>
+      Promise.resolve(createResponsesResult(payload.model)),
+    )
+
+    const app = createApp()
+    const response = await app.request("/v1/responses", {
+      body: JSON.stringify({
+        input: "hello",
+        model: "gpt-responses-test",
+      }),
+      headers: {
+        "content-type": "application/json",
+      },
+      method: "POST",
+    })
+
+    expect(response.status).toBe(200)
+    expect(createResponses).toHaveBeenCalledTimes(1)
+    expect(createResponses.mock.calls[0][0].context_management).toBeUndefined()
+  })
+
   test("uses model Responses API compact threshold before max token fallback", async () => {
     state.models = {
       object: "list",
@@ -342,6 +366,8 @@ describe("responses handler token usage", () => {
     responsesUtilsDependencies.getModelResponsesApiCompactThreshold = (
       model,
     ) => (model === "gpt-responses-threshold-test" ? 272_000 * 0.8 : undefined)
+    responsesUtilsDependencies.isContextManagementEnabledForResponses = () =>
+      true
     createResponses.mockImplementation((payload) =>
       Promise.resolve(createResponsesResult(payload.model)),
     )
@@ -369,14 +395,32 @@ describe("responses handler token usage", () => {
   })
 
   test("does not add context management when input ends with compaction trigger", async () => {
+    responsesUtilsDependencies.isContextManagementEnabledForResponses = () =>
+      true
     createResponses.mockImplementation((payload) =>
       Promise.resolve(createResponsesResult(payload.model)),
     )
 
     const app = createApp()
+    const latestInput = {
+      content: "Continue after the latest compaction.",
+      role: "user",
+    }
+    const compactionTrigger = {
+      type: "compaction_trigger",
+    }
     const response = await app.request("/v1/responses", {
       body: JSON.stringify({
         input: [
+          {
+            content: "old content before compaction",
+            role: "user",
+          },
+          {
+            encrypted_content: "cipher",
+            id: "compaction-1",
+            type: "compaction",
+          },
           {
             content: [
               {
@@ -388,9 +432,8 @@ describe("responses handler token usage", () => {
             role: "assistant",
             type: "message",
           },
-          {
-            type: "compaction_trigger",
-          },
+          latestInput,
+          compactionTrigger,
         ],
         model: "gpt-responses-test",
       }),
@@ -403,6 +446,68 @@ describe("responses handler token usage", () => {
     expect(response.status).toBe(200)
     expect(createResponses).toHaveBeenCalledTimes(1)
     expect(createResponses.mock.calls[0][0].context_management).toBeUndefined()
+    expect(createResponses.mock.calls[0][0].input).toEqual([
+      {
+        encrypted_content: "cipher",
+        id: "compaction-1",
+        type: "compaction",
+      },
+      {
+        content: [
+          {
+            text: "Completed the review for the latest two commits.",
+            type: "output_text",
+          },
+        ],
+        phase: "final_answer",
+        role: "assistant",
+        type: "message",
+      },
+      latestInput,
+      compactionTrigger,
+    ])
+  })
+
+  test("does not compact input ending with compaction trigger when context management is disabled", async () => {
+    createResponses.mockImplementation((payload) =>
+      Promise.resolve(createResponsesResult(payload.model)),
+    )
+
+    const input = [
+      {
+        content: "old content before compaction",
+        role: "user",
+      },
+      {
+        encrypted_content: "cipher",
+        id: "compaction-1",
+        type: "compaction",
+      },
+      {
+        content: "Continue after the latest compaction.",
+        role: "user",
+      },
+      {
+        type: "compaction_trigger",
+      },
+    ]
+
+    const app = createApp()
+    const response = await app.request("/v1/responses", {
+      body: JSON.stringify({
+        input,
+        model: "gpt-responses-test",
+      }),
+      headers: {
+        "content-type": "application/json",
+      },
+      method: "POST",
+    })
+
+    expect(response.status).toBe(200)
+    expect(createResponses).toHaveBeenCalledTimes(1)
+    expect(createResponses.mock.calls[0][0].context_management).toBeUndefined()
+    expect(createResponses.mock.calls[0][0].input).toEqual(input)
   })
 
   test("preserves custom apply_patch tools for Copilot Responses", async () => {
@@ -938,6 +1043,68 @@ describe("responses handler upstream header forwarding across fallbacks", () => 
     )
   })
 
+  test("compacts replay input before messages fallback translation", async () => {
+    state.models = {
+      object: "list",
+      data: [
+        {
+          capabilities: {
+            limits: {
+              max_prompt_tokens: 128000,
+            },
+          },
+          id: "claude-fallback-test",
+          supported_endpoints: ["/v1/messages"],
+        },
+      ],
+    } as typeof state.models
+
+    let capturedMessages: unknown[] = []
+    const createMessages = mock(
+      (payload: { messages: unknown[]; model: string }) => {
+        capturedMessages = payload.messages
+        return Promise.resolve({
+          id: "msg_123",
+          type: "message",
+          role: "assistant",
+          model: payload.model,
+          content: [],
+          stop_reason: "end_turn",
+          stop_sequence: null,
+          usage: {
+            input_tokens: 1,
+            output_tokens: 2,
+          },
+        })
+      },
+    ) as unknown as typeof responsesHandlerDependencies.createMessages
+    responsesHandlerDependencies.createMessages = createMessages
+
+    const app = createApp()
+    const response = await app.request("/v1/responses", {
+      body: JSON.stringify({
+        input: [
+          { type: "message", role: "user", content: "old" },
+          {
+            type: "compaction",
+            id: "cmp_1",
+            encrypted_content: "encrypted",
+          },
+          { type: "message", role: "user", content: "fresh" },
+        ],
+        model: "claude-fallback-test",
+      }),
+      headers: {
+        "content-type": "application/json",
+      },
+      method: "POST",
+    })
+
+    expect(response.status).toBe(200)
+    expect(createMessages).toHaveBeenCalledTimes(1)
+    expect(capturedMessages).toEqual([{ role: "user", content: "fresh" }])
+  })
+
   test("forwards upstream quota headers for chat fallback stream", async () => {
     state.models = {
       object: "list",
@@ -1024,5 +1191,75 @@ describe("responses handler upstream header forwarding across fallbacks", () => 
       "remaining=4;resetAt=2026-07-05T14:00:00.000Z",
     )
     await response.text()
+  })
+
+  test("compacts replay input before chat fallback translation", async () => {
+    state.models = {
+      object: "list",
+      data: [
+        {
+          capabilities: {
+            limits: {
+              max_prompt_tokens: 128000,
+            },
+          },
+          id: "chat-fallback-test",
+          supported_endpoints: ["/v1/chat/completions"],
+        },
+      ],
+    } as typeof state.models
+
+    let capturedMessages: unknown[] = []
+    const createChatCompletions = mock(
+      (payload: { messages: unknown[]; model: string }) => {
+        capturedMessages = payload.messages
+        return Promise.resolve({
+          id: "chatcmpl_1",
+          object: "chat.completion",
+          created: 0,
+          model: payload.model,
+          choices: [
+            {
+              index: 0,
+              message: {
+                role: "assistant",
+                content: "ok",
+              },
+              finish_reason: "stop",
+            },
+          ],
+          usage: {
+            prompt_tokens: 1,
+            completion_tokens: 1,
+            total_tokens: 2,
+          },
+        })
+      },
+    ) as unknown as typeof responsesHandlerDependencies.createChatCompletions
+    responsesHandlerDependencies.createChatCompletions = createChatCompletions
+
+    const app = createApp()
+    const response = await app.request("/v1/responses", {
+      body: JSON.stringify({
+        input: [
+          { type: "message", role: "user", content: "old" },
+          {
+            type: "compaction",
+            id: "cmp_1",
+            encrypted_content: "encrypted",
+          },
+          { type: "message", role: "user", content: "fresh" },
+        ],
+        model: "chat-fallback-test",
+      }),
+      headers: {
+        "content-type": "application/json",
+      },
+      method: "POST",
+    })
+
+    expect(response.status).toBe(200)
+    expect(createChatCompletions).toHaveBeenCalledTimes(1)
+    expect(capturedMessages).toEqual([{ role: "user", content: "fresh" }])
   })
 })

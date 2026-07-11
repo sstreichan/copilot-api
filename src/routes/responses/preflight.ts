@@ -3,10 +3,7 @@ import type { ResponsesPayload } from "~/services/copilot/create-responses"
 import { isResponsesApiWebSearchEnabled } from "~/lib/config"
 import { createHandlerLogger } from "~/lib/logger"
 
-import {
-  compactInputByLatestCompaction,
-  normalizeResponsesInputForReplay,
-} from "./utils"
+import { normalizeResponsesInputForReplay } from "./utils"
 
 const logger = createHandlerLogger("responses-handler")
 
@@ -38,11 +35,10 @@ export const removeUnsupportedTools = (payload: ResponsesPayload): void => {
 }
 
 /**
- * Runs all preflight mutations on a Responses payload in the required order:
+ * Runs common Responses preflight mutations in order:
  * 1. removeUnsupportedTools — drop image_generation etc.
- * 2. removeWebSearchTool    — conditional on config flag
+ * 2. removeWebSearchTool — conditional on config flag
  * 3. normalizeResponsesInputForReplay — clean up reasoning items
- * 4. compactInputByLatestCompaction  — keep only post-compaction input
  */
 export const preflightResponsesPayload = (payload: ResponsesPayload): void => {
   removeUnsupportedTools(payload)
@@ -50,5 +46,4 @@ export const preflightResponsesPayload = (payload: ResponsesPayload): void => {
     removeWebSearchTool(payload)
   }
   normalizeResponsesInputForReplay(payload)
-  compactInputByLatestCompaction(payload)
 }
