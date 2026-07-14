@@ -129,12 +129,19 @@ function renderInstancesFromDashboard(
     "binding-count": { textContent: "0" },
     "history-count": { textContent: "0" },
     "history-total-usd": { textContent: "(Total: $0.000000)" },
+    "history-session-filters": {
+      innerHTML: "",
+      addEventListener() {},
+    },
     "instances-body": {
       innerHTML: "",
       addEventListener() {},
     },
     "bindings-body": { innerHTML: "" },
-    "history-body": { innerHTML: "" },
+    "history-body": {
+      innerHTML: "",
+      addEventListener() {},
+    },
   }
 
   const sandbox = {

@@ -132,6 +132,46 @@
     .btn:hover { background: rgba(248,81,73,.18); border-color: rgba(248,81,73,.55); }
     .btn:disabled { opacity: .6; cursor: wait; }
     tr:hover { background: rgba(255,255,255,.02); }
+    .history-session-filters {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-bottom: 10px;
+    }
+    .session-filter,
+    .session-badge {
+      appearance: none;
+      border: 1px solid color-mix(in srgb, var(--session-color) 55%, var(--border));
+      background: color-mix(in srgb, var(--session-color) 12%, transparent);
+      color: var(--session-color);
+      border-radius: 999px;
+      font: inherit;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .session-filter {
+      padding: 3px 8px;
+      font-size: 11px;
+    }
+    .session-filter.is-active {
+      background: color-mix(in srgb, var(--session-color) 24%, transparent);
+      border-color: var(--session-color);
+    }
+    .session-badge {
+      max-width: 190px;
+      padding: 2px 7px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .history-row > td:first-child {
+      border-left: 3px solid var(--session-color);
+    }
+    .history-row.history-session-match {
+      background: color-mix(in srgb, var(--session-color) 8%, transparent);
+    }
+    .history-row.history-session-muted {
+      opacity: .28;
+    }
     .total-badge {
       display: inline-block;
       padding: 2px 8px;
@@ -336,6 +376,7 @@
           <h2>Route History <span class="muted" id="history-total-usd">(Total: $0.000000)</span></h2>
           <button id="clear-history" class="btn" type="button">Clear history</button>
         </div>
+        <div id="history-session-filters" class="history-session-filters"></div>
         <div class="scroll">
           <table>
             <thead>
@@ -349,8 +390,14 @@
   </div>
 
   <script>
-    const state = { history: [], totalNanoAiuSinceStart: 0 }
+    const state = {
+      history: [],
+      activeSession: null,
+      routeHistorySize: 0,
+      totalNanoAiuSinceStart: 0,
+    }
     const HISTORY_DISPLAY_LIMIT = 50
+    const PIP_TOP_REQUEST_LIMIT = 3
     const LAST_ACTIVE_REFRESH_INTERVAL_MS = 5000
     const byId = (id) => document.getElementById(id)
     const cut = (value, size = 24) => {
@@ -724,13 +771,64 @@
         .replaceAll('&', '&amp;')
         .replaceAll('<', '&lt;')
         .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#39;')
+    }
+
+    function sessionColor(value) {
+      const session = String(value || '-')
+      if (session === '-') return '#8b949e'
+      let hash = 0
+      for (let index = 0; index < session.length; index += 1) {
+        hash = ((hash << 5) - hash + session.charCodeAt(index)) | 0
+      }
+      return `hsl(${Math.abs(hash) % 360} 68% 68%)`
+    }
+
+    function sessionStyle(value) {
+      return `--session-color: ${sessionColor(value)}`
+    }
+
+    function setActiveSession(session) {
+      state.activeSession = state.activeSession === session ? null : session
+      renderHistory(state.history)
+    }
+
+    function renderSessionFilters(history) {
+      const counts = new Map()
+      history.forEach((item) => {
+        const session = String(item.sid || '-')
+        counts.set(session, (counts.get(session) || 0) + 1)
+      })
+      const allActive = state.activeSession === null
+      const all = `<button type="button" class="session-filter${allActive ? ' is-active' : ''}" data-session="" aria-pressed="${allActive}" style="--session-color: var(--accent)">All ${history.length}</button>`
+      const sessions = [...counts.entries()].map(([session, count]) => {
+        const active = state.activeSession === session
+        return `<button type="button" class="session-filter${active ? ' is-active' : ''}" data-session="${escapeHtml(session)}" aria-pressed="${active}" title="${escapeHtml(session)}" style="${sessionStyle(session)}">${escapeHtml(cut(session, 18))} ${count}</button>`
+      })
+      byId('history-session-filters').innerHTML = [all, ...sessions].join('')
+    }
+
+    function applyHistoryHover(session) {
+      document.querySelectorAll('#history-body tr[data-session]').forEach((row) => {
+        const matches = row.dataset.session === session
+        row.classList.toggle('history-session-match', matches)
+        row.classList.toggle('history-session-muted', !matches)
+      })
+    }
+
+    function clearHistoryHover() {
+      document.querySelectorAll('#history-body tr[data-session]').forEach((row) => {
+        row.classList.remove('history-session-match', 'history-session-muted')
+      })
     }
 
     function historyRow(item, ranks, index) {
+      const session = String(item.sid || '-')
       return `
-        <tr>
+        <tr class="history-row" data-session="${escapeHtml(session)}" style="${sessionStyle(session)}">
           <td>${fmtTime(item.ts)}</td>
-          <td><code>${cut(item.sid, 18)}</code></td>
+          <td><button type="button" class="session-badge" data-session="${escapeHtml(session)}" title="${escapeHtml(item.sid || '-')}" style="${sessionStyle(session)}">${escapeHtml(cut(session, 18))}</button></td>
           <td>${cut(item.agent, 18)}</td>
           <td>${cut(item.model, 28)}</td>
           <td><strong>${item.port || '-'}</strong></td>
@@ -765,16 +863,34 @@
       }
     }
 
+    function topCostHistory(history) {
+      return (Array.isArray(history) ? [...history] : [])
+        .sort((a, b) => (b.ts || '').localeCompare(a.ts || ''))
+        .slice(0, HISTORY_DISPLAY_LIMIT)
+        .map((item) => ({ item, usd: historyUsd(item) }))
+        .filter((entry) => entry.usd !== null)
+        .sort((a, b) => b.usd - a.usd || (b.item.ts || '').localeCompare(a.item.ts || ''))
+        .slice(0, PIP_TOP_REQUEST_LIMIT)
+        .sort((a, b) => (b.item.ts || '').localeCompare(a.item.ts || ''))
+    }
+
     function renderHistory(history) {
       state.history = Array.isArray(history) ? [...history].sort((a, b) => (b.ts || '').localeCompare(a.ts || '')).slice(0, HISTORY_DISPLAY_LIMIT) : []
-      byId('history-count').textContent = String(state.history.length)
+      renderSessionFilters(state.history)
+      const visibleHistory = state.activeSession === null
+        ? state.history
+        : state.history.filter((item) => String(item.sid || '-') === state.activeSession)
+      const historyCount = state.activeSession === null
+        ? Math.max(state.routeHistorySize, visibleHistory.length)
+        : visibleHistory.length
+      byId('history-count').textContent = String(historyCount)
       const body = byId('history-body')
-      if (!state.history.length) {
+      if (!visibleHistory.length) {
         body.innerHTML = '<tr><td colspan="7" class="empty">No routes yet.</td></tr>'
         return
       }
       const ranks = historyRanks(state.history)
-      body.innerHTML = state.history.map((item, index) => historyRow(item, ranks, index)).join('')
+      body.innerHTML = visibleHistory.map((item, index) => historyRow(item, ranks, index)).join('')
     }
 
     function renderHistoryTotal(totalNanoAiuSinceStart) {
@@ -834,7 +950,11 @@
       state.totalNanoAiuSinceStart = Number(payload.totalNanoAiuSinceStart || 0)
       renderHistoryTotal(state.totalNanoAiuSinceStart)
       if (typeof payload.routeHistorySize === 'number') {
-        byId('history-count').textContent = String(payload.routeHistorySize)
+        state.routeHistorySize = payload.routeHistorySize
+        const historyCount = state.activeSession === null
+          ? state.routeHistorySize
+          : state.history.filter((item) => String(item.sid || '-') === state.activeSession).length
+        byId('history-count').textContent = String(historyCount)
       }
     }
 
@@ -879,6 +999,29 @@
 
     byId('clear-bindings').addEventListener('click', () => clearData('bindings'))
     byId('clear-history').addEventListener('click', () => clearData('history'))
+    byId('history-session-filters').addEventListener('click', (event) => {
+      const button = event.target.closest('.session-filter')
+      if (!button) return
+      const session = button.dataset.session || null
+      if (session === null) {
+        state.activeSession = null
+        renderHistory(state.history)
+        return
+      }
+      setActiveSession(session)
+    })
+    byId('history-body').addEventListener('click', (event) => {
+      const badge = event.target.closest('.session-badge')
+      if (!badge) return
+      setActiveSession(badge.dataset.session || '-')
+    })
+    byId('history-body').addEventListener('mouseover', (event) => {
+      const badge = event.target.closest('.session-badge')
+      if (badge) applyHistoryHover(badge.dataset.session || '-')
+    })
+    byId('history-body').addEventListener('mouseout', (event) => {
+      if (event.target.closest('.session-badge')) clearHistoryHover()
+    })
 
 const pipButton = byId('pip-btn')
 if (pipButton) pipButton.addEventListener('click', async () => {
@@ -886,13 +1029,17 @@ if (pipButton) pipButton.addEventListener('click', async () => {
         alert('Document Picture-in-Picture not supported. Use Chrome 116+ or Edge 116+.')
         return
       }
-      const pipWindow = await documentPictureInPicture.requestWindow({ width: 240, height: 120 })
+      const pipWindow = await documentPictureInPicture.requestWindow({ width: 240, height: 180 })
       const doc = pipWindow.document
       doc.head.innerHTML = `<style>
         body { font-family: ui-monospace, monospace; font-size: 12px; padding: 4px 6px; background: #1a1a1a; color: #ccc; line-height: 1.35; white-space: nowrap; display: flex; justify-content: center; }
         .root { display: inline-grid; grid-template-columns: max-content max-content; gap: 1px 8px; }
         .k { color: #777; }
         .v { color: #eee; font-weight: 600; font-variant-numeric: tabular-nums; }
+        .section { grid-column: 1 / -1; color: #777; margin-top: 3px; border-top: 1px solid #333; padding-top: 2px; }
+        .top-list { grid-column: 1 / -1; display: grid; gap: 1px; }
+        .top-row { display: grid; grid-template-columns: 1fr max-content; gap: 8px; }
+        .top-age { color: #999; }
         .danger { color: #d9534f; }
         .warn { color: #f0ad4e; }
         .ok { color: #5cb85c; }
@@ -904,15 +1051,23 @@ if (pipButton) pipButton.addEventListener('click', async () => {
         <span class="k">Total</span><span class="v" id="pip-total">-</span>
         <span class="k">Pace/day</span><span class="v" id="pip-pace">-</span>
         <span class="k">Forecast</span><span class="v" id="pip-forecast">-</span>
-        <span class="k">History</span><span class="v" id="pip-history">-</span>`
+        <span class="k">History</span><span class="v" id="pip-history">-</span>
+        <span class="section">Top requests</span>
+        <div id="pip-top-requests" class="top-list">-</div>`
       doc.body.appendChild(root)
 
       const fmtUsd = (n) => '$' + Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
       async function pipRefresh() {
         try {
-          const res = await fetch('/api/status')
-          const payload = await res.json()
+          const [statusResponse, historyResponse] = await Promise.all([
+            fetch('/api/status'),
+            fetch('/api/history'),
+          ])
+          const [payload, history] = await Promise.all([
+            statusResponse.json(),
+            historyResponse.json(),
+          ])
           const instances = payload.instances || []
           const reporting = instances.filter(i => {
             const u = i?.headerSnapshot?.premiumUsage
@@ -941,6 +1096,13 @@ if (pipButton) pipButton.addEventListener('click', async () => {
           const fcEl = doc.getElementById('pip-forecast')
           if (fcEl) { fcEl.textContent = forecastUsd > 0 ? fmtUsd(forecastUsd) : '-'; fcEl.className = 'v ' + fcClass }
           set('pip-history', fmtUsd(histUsd))
+          const topRequests = doc.getElementById('pip-top-requests')
+          if (topRequests) {
+            const rows = topCostHistory(history)
+            topRequests.innerHTML = rows.length
+              ? rows.map(({ item, usd }) => `<span class="top-row"><span class="v">$${usd.toFixed(6)}</span><span class="top-age">${formatRelativeTime(item.ts).label}</span></span>`).join('')
+              : '-'
+          }
         } catch (e) {
           console.error('PiP refresh failed', e)
         }
