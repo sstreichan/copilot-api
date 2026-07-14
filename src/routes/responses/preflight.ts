@@ -8,6 +8,7 @@ import { normalizeResponsesInputForReplay } from "./utils"
 const logger = createHandlerLogger("responses-handler")
 
 const COPILOT_UNSUPPORTED_TOOL_TYPES = new Set(["image_generation"])
+const COPILOT_UNSUPPORTED_TOOL_NAMESPACES = new Set(["image_gen"])
 
 export const removeWebSearchTool = (payload: ResponsesPayload): void => {
   if (!Array.isArray(payload.tools) || payload.tools.length === 0) return
@@ -23,8 +24,13 @@ export const removeUnsupportedTools = (payload: ResponsesPayload): void => {
   const dropped: Array<string> = []
   payload.tools = payload.tools.filter((t) => {
     const type = t.type as string
-    if (COPILOT_UNSUPPORTED_TOOL_TYPES.has(type)) {
-      dropped.push(type)
+    const name = "name" in t && typeof t.name === "string" ? t.name : undefined
+    const isUnsupportedNamespace =
+      type === "namespace"
+      && name !== undefined
+      && COPILOT_UNSUPPORTED_TOOL_NAMESPACES.has(name)
+    if (COPILOT_UNSUPPORTED_TOOL_TYPES.has(type) || isUnsupportedNamespace) {
+      dropped.push(isUnsupportedNamespace ? `${type}:${name}` : type)
       return false
     }
     return true

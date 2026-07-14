@@ -15,10 +15,14 @@ import { alphaSearchRoutes } from "./routes/alpha-search/route"
 import { completionRoutes } from "./routes/chat-completions/route"
 import { configRoutes } from "./routes/admin/config/route"
 import { embeddingRoutes } from "./routes/embeddings/route"
+import { imageRoutes } from "./routes/images/route"
 import { messageRoutes } from "./routes/messages/route"
 import { modelRoutes } from "./routes/models/route"
+import { providerAlphaSearchRoutes } from "./routes/provider/alpha-search/route"
+import { providerImageRoutes } from "./routes/provider/images/route"
 import { providerMessageRoutes } from "./routes/provider/messages/route"
 import { providerModelRoutes } from "./routes/provider/models/route"
+import { providerResponsesRoutes } from "./routes/provider/responses/route"
 import { responsesRoutes } from "./routes/responses/route"
 import { tokenUsageRoute } from "./routes/token-usage/route"
 import { tokenRoute } from "./routes/token/route"
@@ -71,16 +75,27 @@ server.route("/token-usage", tokenUsageRoute)
 server.route("/token", tokenRoute)
 server.route("/responses", responsesRoutes)
 server.route("/alpha/search", alphaSearchRoutes)
+server.route("/images", imageRoutes)
 
 // Compatibility with tools that expect v1/ prefix
 server.route("/v1/chat/completions", completionRoutes)
 server.route("/v1/models", modelRoutes)
 server.route("/v1/embeddings", embeddingRoutes)
 server.route("/v1/responses", responsesRoutes)
+server.route("/v1/alpha/search", alphaSearchRoutes)
+server.route("/v1/images", imageRoutes)
 
 // Anthropic compatible endpoints
 server.route("/v1/messages", messageRoutes)
 
-// Provider scoped Anthropic-compatible endpoints
+// Provider scoped endpoints
 server.route("/:provider/v1/messages", providerMessageRoutes)
 server.route("/:provider/v1/models", providerModelRoutes)
+server.route("/:provider/v1/responses", providerResponsesRoutes)
+server.route("/:provider/v1/alpha/search", providerAlphaSearchRoutes)
+server.route("/:provider/v1/images", providerImageRoutes)
+
+server.route("/:provider/models", providerModelRoutes)
+server.route("/:provider/responses", providerResponsesRoutes)
+server.route("/:provider/alpha/search", providerAlphaSearchRoutes)
+server.route("/:provider/images", providerImageRoutes)

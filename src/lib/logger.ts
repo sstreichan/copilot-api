@@ -175,6 +175,8 @@ const appendLine = (filePath: string, line: string) => {
 
 type DebugLogger = Pick<ConsolaInstance, "debug">
 
+type AsyncDebugValueFactory = () => Promise<unknown>
+
 export const debugLazy = (
   logger: DebugLogger,
   factory: () => [unknown, ...Array<unknown>],
@@ -192,6 +194,18 @@ export const debugJson = (
   value: unknown,
 ): void => {
   debugLazy(logger, () => [label, JSON.stringify(value)])
+}
+
+export const debugJsonAsync = async (
+  logger: DebugLogger,
+  label: string,
+  factory: AsyncDebugValueFactory,
+): Promise<void> => {
+  if (!state.verbose) {
+    return
+  }
+
+  logger.debug(label, JSON.stringify(await factory()))
 }
 
 export const debugJsonTail = (

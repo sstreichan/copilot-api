@@ -16,6 +16,7 @@ import {
   getExtraPromptForModel,
   getReasoningEffortForModel,
   mapAnthropicEffortToResponses,
+  isGpt56OrAbove,
 } from "~/lib/config"
 import { requestContext } from "~/lib/request-context"
 import { parseUserIdMetadata } from "~/lib/utils"
@@ -72,6 +73,7 @@ const COMPACTION_SIGNATURE_PREFIX = "cm1#"
 const COMPACTION_SIGNATURE_SEPARATOR = "@"
 
 export const THINKING_TEXT = "Thinking..."
+export const REASONING_SUMMARY_SEPARATOR = "\u2063\n\n"
 
 const MAX_RESPONSES_REASONING_ID_LENGTH = 64
 
@@ -156,8 +158,8 @@ export const translateAnthropicMessagesToResponsesPayload = (
         payload.output_config?.effort ?
           mapAnthropicEffortToResponses(payload.output_config.effort)
         : getReasoningEffortForModel(payload.model),
-      summary: "detailed",
-      context: "all_turns",
+      summary: "auto",
+      context: isSupportAllTurns(payload) ? "all_turns" : "auto",
     },
     include: ["reasoning.encrypted_content"],
   }
@@ -450,9 +452,8 @@ const createReasoningContent = (
     return undefined
   }
 
-  // align with vscode-copilot-chat extractThinkingData, should add id, otherwise it will cause miss cache occasionally —— the usage input cached tokens to be 0
-  // https://github.com/microsoft/vscode-copilot-chat/blob/main/src/platform/endpoint/node/responsesApi.ts#L162
-  // when use in codex cli, reasoning id is empty, so it will cause miss cache occasionally
+  // align with vscode-copilot-chat extractThinkingData, should add id
+  // https://github.com/microsoft/vscode/blob/1.128.0/extensions/copilot/src/platform/endpoint/node/responsesApi.ts#L651
   const { encryptedContent, id } = parseReasoningSignature(block.signature)
 
   // Cross-instance replay of Copilot reasoning is not safely portable.
@@ -463,12 +464,30 @@ const createReasoningContent = (
   }
 
   const thinking = block.thinking === THINKING_TEXT ? "" : block.thinking
+
   return {
     id,
     type: "reasoning",
-    summary: thinking ? [{ type: "summary_text", text: thinking }] : [],
+    summary: createReasoningSummary(thinking),
     encrypted_content: encryptedContent,
   }
+}
+
+const createReasoningSummary = (
+  thinking: string,
+): ResponseInputReasoning["summary"] => {
+  if (thinking.length === 0) {
+    return []
+  }
+
+  if (!thinking.includes(REASONING_SUMMARY_SEPARATOR)) {
+    return [{ type: "summary_text", text: thinking }]
+  }
+
+  return thinking.split(REASONING_SUMMARY_SEPARATOR).map((text) => ({
+    type: "summary_text",
+    text,
+  }))
 }
 
 const createCompactionContent = (
@@ -965,7 +984,7 @@ const extractReasoningText = (item: ResponseOutputReasoning): string => {
 
   collectFromBlocks(item.summary)
 
-  return segments.join("").trim()
+  return segments.join(REASONING_SUMMARY_SEPARATOR).trim()
 }
 
 const createToolUseContentBlock = (
@@ -1188,4 +1207,15 @@ const convertToolResultContent = (
   }
 
   return ""
+}
+
+const isSupportAllTurns = (payload: AnthropicMessagesPayload): boolean => {
+  if (
+    payload.model === "gpt-5.4"
+    || payload.model === "gpt-5.4-mini"
+    || payload.model === "gpt-5.5"
+  ) {
+    return true
+  }
+  return isGpt56OrAbove(payload.model)
 }

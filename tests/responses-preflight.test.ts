@@ -37,6 +37,22 @@ describe("removeUnsupportedTools", () => {
     expect((payload.tools as Array<{ type: string }>)[0].type).toBe("function")
   })
 
+  it("removes image_gen namespace tools", () => {
+    const payload = makePayload([
+      {
+        type: "namespace",
+        name: "image_gen",
+        tools: [{ type: "function", name: "imagegen" }],
+      },
+      { type: "function", name: "foo" },
+    ] as ResponsesPayload["tools"])
+
+    removeUnsupportedTools(payload)
+
+    expect(payload.tools).toHaveLength(1)
+    expect((payload.tools as Array<{ name: string }>)[0].name).toBe("foo")
+  })
+
   it("is a no-op when tools is empty or missing", () => {
     const empty = makePayload([] as ResponsesPayload["tools"])
     removeUnsupportedTools(empty)

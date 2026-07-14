@@ -290,7 +290,6 @@ npx @jeffreycao/copilot-api@latest start
 ```toml
 model_provider = "copilot_api"
 model_reasoning_summary = "auto"
-model_verbosity = "medium"
 model_context_window = 272000
 model_auto_compact_token_limit = 244800
 
@@ -313,7 +312,7 @@ enabled = false
 ```
 
 > [!NOTE]
-> 此配置仅限于 Codex 与 GitHub Copilot provider。`name` 一定要配置为 `"OpenAI"`。它可以缓解 Codex local compact 不命中缓存的问题。如果你开启了 `contextManagement.responses`（Responses API context management 压缩），通常不会走到 `remote_compaction_v2` 或者 local compact，但如果工具返回 tokens 过大，仍有可能触发。在 native Responses API 流量下启用前，请先确认客户端支持 context management compaction。
+> 此配置仅限于 Codex 与 GitHub Copilot provider。`name` 一定要配置为 `"OpenAI"`。它可以缓解 Codex local compact 不命中缓存的问题。
 
 ## GPT Tool Search
 
@@ -619,9 +618,12 @@ Copilot API 现在使用子命令结构，主要命令包括：
   ```
   内置 token 价格覆盖 Codex GPT 模型（USD）、DashScope `qwen3.7-max`、`qwen3.7-plus`、`glm-5.1`、`glm-5.2`（CNY），DeepSeek `deepseek-v4-flash`、`deepseek-v4-pro`、`deepseek-chat`、`deepseek-reasoner`（CNY），以及 OpenCode Go 模型（`glm-5.2`、`deepseek-v4-flash`、`deepseek-v4-pro`、`kimi-k2.7-code`、`mimo-v2.5`、`mimo-v2.5-pro`、`qwen3.7-plus`、`qwen3.7-max`、`minimax-m2.5`、`minimax-m3`，USD）。用户配置的 `pricing` 优先于内置价格。DashScope 若上游 usage 中出现 `cache_creation_input_tokens` 字段，cached tokens 按显式缓存读价计费；否则 `cachedInput` 作为隐式缓存读价。DeepSeek 的 `prompt_cache_hit_tokens` 会归入 cached input，`prompt_cache_miss_tokens` 会归入普通 input。
 - **smallModel：** 无工具预热消息的回退模型（例如 Claude Code 的探测请求）；默认是 `gpt-5-mini`。
-- **contextManagement：** 控制代理是否为 Responses API 附加 `context_management` 压缩指令。`messages` 作用于被翻译成 Responses API 的 Anthropic 风格 `/v1/messages` 请求，包括 `openai-responses` provider 的 Messages 路由，默认值为 `true`。`responses` 作用于 native `/v1/responses` 流量，包括 `provider/model` 别名和内置 `codex` provider，默认值为 `false`。只有在确认客户端支持 context management compaction 后，才建议在 Responses API 下启用 `responses`。启用后，请求体会带上 `context_management`，并在后续轮次中仅保留最新的压缩承载内容。
+- **contextManagement：** 控制代理是否为 Responses API 附加 `context_management` 压缩指令。`messages` 作用于被翻译成 Responses API 的 Anthropic 风格 `/v1/messages` 请求，包括 `openai-responses` provider 的 Messages 路由，默认值为 `true`。`responses` 作用于 native `/v1/responses` 流量，包括 `provider/model` 别名和内置 `codex` provider，默认值为 `false`。只有在确认客户端支持 context management compaction 后，才建议在 Responses API 下启用 `responses`。启用后，请求体会带上 `context_management`，并在后续轮次中仅保留最新的压缩承载内容。**注意：** 对于 GPT-5.6 及以上模型（如 `gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`），context management 功能会被强制禁用，因为开启后会破坏这些模型的 prompt 缓存命中。此强制覆盖优先于 `contextManagement` 和 `modelResponsesApiCompactThresholds` 配置。
 - **modelResponsesApiCompactThresholds：** 按模型覆盖 Responses API 的 `compact_threshold`，仅在代理自动附加 `context_management` 时使用。它的优先级高于 `resolveResponsesCompactThreshold` 基于 `max_prompt_tokens * ratio` 的兜底阈值。默认将 `gpt-5.4` 和 `gpt-5.5` 设为 `217600`（`272000 * 0.8`），将 `gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna` 设为 `231200`（`272000 * 0.85`）。未列出的模型继续使用原有兜底逻辑。
-- **modelReasoningEfforts：** 按模型配置的推理强度，仅作用于 `/v1/messages` 请求。当请求走 Copilot 原生 Messages API 时设置 `output_config.effort`；当请求被翻译为 Responses API 时设置 `reasoning.effort`。可选值包括 `none`、`minimal`、`low`、`medium`、`high`、`xhigh` 和 `max`。若某模型未配置，则默认使用 `high`；GPT-5.3+ 模型未显式配置时回退为 `xhigh`。
+- **modelReasoningEfforts：** `/v1/messages` 请求的模型级默认推理强度。仅当请求没有传入 `output_config.effort` 时，该配置才会生效。
+  - **优先级：** 请求中的 `output_config.effort` > `modelReasoningEfforts[model]` > 内置默认值（GPT-5.3+ 模型为 `xhigh`，其他模型为 `high`）。
+  - **转发字段：** 走 Copilot 原生 Messages API 时，最终值写入 `output_config.effort`；转换为 Responses API 时，最终值写入 `reasoning.effort`。
+  - **配置可选值：** `none`、`minimal`、`low`、`medium`、`high`、`xhigh`、`max`。
 - **useMessagesApi：** 当为 `true` 时，支持 Copilot 原生 `/v1/messages` 的 Claude 系模型会走 Messages API；否则回退到 `/chat/completions`。设为 `false` 可禁用 Messages API 路由，始终使用 `/chat/completions`。默认值为 `true`。
 - **useResponsesApiWebSocket：** 当为 `true` 时，Responses API 请求会优先对声明了 `ws:/responses` 的模型使用 Copilot websocket transport；仅声明 `/responses` 的模型仍走 HTTP。设为 `false` 可禁用 websocket 路由，并在模型支持 `/responses` 时使用 HTTP `/responses`。默认值为 `true`。
 - **useResponsesApiWebSearch：** 当为 `true` 时，服务端会保留 Responses API 中 `type: "web_search"` 的工具并透传到上游。设为 `false` 则会从 `/responses` payload 中移除这些工具。默认值为 `true`。
@@ -672,21 +674,31 @@ curl http://localhost:4141/admin/config/model-mappings \
 
 ### Codex 后端代理端点
 
+这些端点要求已有可用的 Codex 登录态。每个端点同时提供无版本前缀和 `/v1` 两种路径。
+
 | 端点 | 方法 | 说明 |
 | --- | --- | --- |
-| `POST /alpha/search` | `POST` | 将 JSON 请求体和查询参数透明转发到 Codex Alpha Search 上游。网关会使用当前 Codex 登录态覆盖客户端的 authorization 和 account header，透传 `accept`、`content-type`、`originator`、`user-agent`、`cookie` 等兼容 header，并原样返回上游状态码、响应头和响应体。 |
+| `POST /alpha/search`<br>`POST /v1/alpha/search` | `POST` | 将 JSON 请求体和查询参数透明转发到 Codex Alpha Search 上游。 |
+| `POST /images/generations`<br>`POST /v1/images/generations` | `POST` | 将 JSON 图片生成请求转发到 Codex Images 上游。请求未携带 `Content-Type` 时，网关默认补充 `application/json`。 |
+| `POST /images/edits`<br>`POST /v1/images/edits` | `POST` | 将图片编辑请求转发到 Codex Images 上游。请使用 `multipart/form-data`，并让 HTTP 客户端自动生成 `boundary`；网关会保留传入的 content type，并以流式方式转发上传请求体。 |
+
+对于以上所有端点，网关都会使用当前 Codex 登录态覆盖客户端的 authorization 和 account header，保留查询参数及兼容的请求头，并返回上游状态码、响应头和响应体。
 
 ### Anthropic 兼容端点
 
-这些端点设计为兼容 Anthropic Messages API。
+这些端点设计为兼容 Anthropic Messages API。provider 级的 models、Responses、alpha-search 和 images 路由同时支持无版本前缀与 `/v1` 两种路径；Messages 路由仍使用 `/v1`。
 
 | 端点 | 方法 | 说明 |
 | --- | --- | --- |
 | `POST /v1/messages` | `POST` | 为给定对话创建模型响应。支持已配置 provider 的 `provider/model` 别名，包括通过 `openai-compatible` provider 做翻译。 |
 | `POST /v1/messages/count_tokens` | `POST` | 计算一组消息的 token 数。支持已配置 provider 的 `provider/model` 别名。 |
 | `POST /:provider/v1/messages` | `POST` | 将 Anthropic Messages 请求代理到已配置的 Anthropic provider，或翻译到 OpenAI 兼容 / OpenAI Responses provider。 |
-| `GET /:provider/v1/models` | `GET` | 将模型列表请求代理到已配置的 provider。 |
+| `GET /:provider/models`<br>`GET /:provider/v1/models` | `GET` | 将模型列表请求代理到已配置的 provider。对 `codex` 默认返回内置模型目录；Codex 客户端（`User-Agent` 以 `codex` 开头）会转发到 Codex Models 上游。 |
 | `POST /:provider/v1/messages/count_tokens` | `POST` | 为 provider 路由请求在本地计算 token 数。 |
+| `POST /:provider/responses`<br>`POST /:provider/v1/responses` | `POST` | 将 OpenAI Responses 请求代理到已配置的 `openai-responses` provider（含 `codex`）。 |
+| `POST /:provider/alpha/search`<br>`POST /:provider/v1/alpha/search` | `POST` | 代理 alpha-search 请求。对 `codex` 转发到 Codex Alpha Search 上游；其他 provider 转发到 `{baseUrl}/v1/alpha/search`。 |
+| `POST /:provider/images/generations`<br>`POST /:provider/v1/images/generations` | `POST` | 代理图片生成。对 `codex` 使用 Codex Images 上游；其他 provider 转发到 `{baseUrl}/v1/images/generations`（15 分钟超时）。 |
+| `POST /:provider/images/edits`<br>`POST /:provider/v1/images/edits` | `POST` | 代理图片编辑。对 `codex` 使用 Codex Images 上游；其他 provider 以 multipart/流式方式转发到 `{baseUrl}/v1/images/edits`（15 分钟超时）。 |
 
 ### 使用量监控端点
 

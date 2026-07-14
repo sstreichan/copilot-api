@@ -130,6 +130,22 @@ git rev-list --left-right --count origin/czy-all...czy-all
 
 若第零步检测到 `czy-all` 已被污染（`git log caozhiyuan/dev..czy-all` 含非同步提交），不要继续第一步到第七步，直接跳转到本文末“污染恢复流程”。恢复完成、`czy-all` 重新干净后再回到第一步。
 
+#### Dry-run 冲突预测
+
+用户只要求 dry run 时，不 checkout、不 merge、不 push、不创建 PR。刷新 refs 后，用 Git 的合并判定结果预测 `dev <- caozhiyuan/dev`：
+
+```bash
+git merge-tree --write-tree dev caozhiyuan/dev
+```
+
+判定必须同时记录命令退出码与 `CONFLICT` 行：
+
+- 退出码 `0`：Git 未检测到冲突。
+- 非 `0` 且输出含 `CONFLICT`：报告冲突，并列出对应路径。
+- 命令不可用、异常退出或输出无法解析：结论写“未验证”，不得猜测。
+
+不得通过搜索 `<<<<<<<` / `=======` / `>>>>>>>` marker、统计 `changed in both`、或仅看 diff 重叠来判定是否冲突；`merge-tree` 输出格式不保证出现工作树 conflict marker。dry-run 只是预测，创建 PR 后仍以 GitHub `mergeable` / `mergeStateStatus` 为准。
+
 ### 第一步：确认当前状态
 
 先确认：

@@ -3,6 +3,7 @@ import { afterEach, describe, expect, mock, test } from "bun:test"
 import {
   attachPremiumInfo,
   debugJson,
+  debugJsonAsync,
   debugJsonTail,
   formatStreamLog,
   getAttachedPremiumInfo,
@@ -102,6 +103,40 @@ describe("response header attachment", () => {
     )
     expect(headers.get("x-usage-ratelimit-weekly")).toBe(
       "rem=74.9&rst=2026-04-27T00%3A00%3A00Z",
+    )
+  })
+})
+
+describe("debugJsonAsync", () => {
+  test("skips reading when verbose logging is disabled", async () => {
+    state.verbose = false
+
+    const logger = {
+      debug: mock(() => {}),
+    }
+    const readValue = mock(() => Promise.resolve({ body: "request body" }))
+
+    await debugJsonAsync(logger as never, "payload", readValue)
+
+    expect(readValue).not.toHaveBeenCalled()
+    expect(logger.debug).not.toHaveBeenCalled()
+  })
+
+  test("reads and logs when verbose logging is enabled", async () => {
+    state.verbose = true
+
+    const logger = {
+      debug: mock(() => {}),
+    }
+    const payload = { body: "response body" }
+    const readValue = mock(() => Promise.resolve(payload))
+
+    await debugJsonAsync(logger as never, "payload", readValue)
+
+    expect(readValue).toHaveBeenCalledTimes(1)
+    expect(logger.debug).toHaveBeenCalledWith(
+      "payload",
+      JSON.stringify(payload),
     )
   })
 })
