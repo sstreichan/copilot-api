@@ -194,8 +194,10 @@ const fetchMock = mock((url: string | URL | Request) => {
 
   return Promise.reject(new Error(`Unexpected fetch: ${target}`))
 })
+const actualUndici = await import("undici")
 
 await mock.module("undici", () => ({
+  ...actualUndici,
   Agent: MockAgent,
   ProxyAgent: MockProxyAgent,
   request: requestMock,
