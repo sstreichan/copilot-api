@@ -396,7 +396,7 @@
       routeHistorySize: 0,
       totalNanoAiuSinceStart: 0,
     }
-    const HISTORY_DISPLAY_LIMIT = 50
+    const HISTORY_DISPLAY_LIMIT = 200
     const PIP_TOP_REQUEST_LIMIT = 3
     const LAST_ACTIVE_REFRESH_INTERVAL_MS = 5000
     const byId = (id) => document.getElementById(id)
@@ -1052,6 +1052,7 @@ if (pipButton) pipButton.addEventListener('click', async () => {
         <span class="k">Pace/day</span><span class="v" id="pip-pace">-</span>
         <span class="k">Forecast</span><span class="v" id="pip-forecast">-</span>
         <span class="k">History</span><span class="v" id="pip-history">-</span>
+        <span class="k">Median</span><span class="v" id="pip-median">-</span>
         <span class="section">Top requests</span>
         <div id="pip-top-requests" class="top-list">-</div>`
       doc.body.appendChild(root)
@@ -1096,6 +1097,23 @@ if (pipButton) pipButton.addEventListener('click', async () => {
           const fcEl = doc.getElementById('pip-forecast')
           if (fcEl) { fcEl.textContent = forecastUsd > 0 ? fmtUsd(forecastUsd) : '-'; fcEl.className = 'v ' + fcClass }
           set('pip-history', fmtUsd(histUsd))
+          const MEDIAN_WINDOW = 100
+          const recent = (Array.isArray(history) ? history : []).slice(0, MEDIAN_WINDOW)
+          const medianEl = doc.getElementById('pip-median')
+          if (medianEl) {
+            const usds = recent.map(historyUsd).filter(u => Number.isFinite(u) && u > 0)
+            if (usds.length === 0) {
+              medianEl.textContent = '-'
+            } else {
+              const sorted = usds.sort((a, b) => a - b)
+              const mid = Math.floor(sorted.length / 2)
+              const median = sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid]
+              const spanMs = recent.length > 1 ? new Date(recent[0].ts).getTime() - new Date(recent[recent.length - 1].ts).getTime() : 0
+              const mins = Math.floor(spanMs / 60000)
+              const spanLabel = mins >= 60 ? `${Math.floor(mins / 60)}h${mins % 60 > 0 ? (mins % 60) + 'm' : ''}` : mins > 0 ? `${mins}m` : '<1m'
+              medianEl.textContent = `${fmtUsd(median)} (${usds.length}r, ${spanLabel})`
+            }
+          }
           const topRequests = doc.getElementById('pip-top-requests')
           if (topRequests) {
             const rows = topCostHistory(history)
