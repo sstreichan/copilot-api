@@ -1108,7 +1108,7 @@ if (pipButton) pipButton.addEventListener('click', async () => {
               const sorted = usds.sort((a, b) => a - b)
               const mid = Math.floor(sorted.length / 2)
               const median = sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid]
-              const spanMs = recent.length > 1 ? new Date(recent[0].ts).getTime() - new Date(recent[recent.length - 1].ts).getTime() : 0
+              const spanMs = recent.length > 1 ? new Date(recent[recent.length - 1].ts).getTime() - new Date(recent[0].ts).getTime() : 0
               const mins = Math.floor(spanMs / 60000)
               const spanLabel = mins >= 60 ? `${Math.floor(mins / 60)}h${mins % 60 > 0 ? (mins % 60) + 'm' : ''}` : mins > 0 ? `${mins}m` : '<1m'
               medianEl.textContent = `${fmtUsd(median)} (${usds.length}r, ${spanLabel})`
