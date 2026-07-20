@@ -1097,8 +1097,7 @@ if (pipButton) pipButton.addEventListener('click', async () => {
           const fcEl = doc.getElementById('pip-forecast')
           if (fcEl) { fcEl.textContent = forecastUsd > 0 ? fmtUsd(forecastUsd) : '-'; fcEl.className = 'v ' + fcClass }
           set('pip-history', fmtUsd(histUsd))
-          const MEDIAN_WINDOW = 100
-          const recent = (Array.isArray(history) ? history : []).slice(0, MEDIAN_WINDOW)
+          const recent = Array.isArray(history) ? history : []
           const medianEl = doc.getElementById('pip-median')
           if (medianEl) {
             const usds = recent.map(historyUsd).filter(u => Number.isFinite(u) && u > 0)
@@ -1111,7 +1110,7 @@ if (pipButton) pipButton.addEventListener('click', async () => {
               const spanMs = recent.length > 1 ? new Date(recent[recent.length - 1].ts).getTime() - new Date(recent[0].ts).getTime() : 0
               const mins = Math.floor(spanMs / 60000)
               const spanLabel = mins >= 60 ? `${Math.floor(mins / 60)}h${mins % 60 > 0 ? (mins % 60) + 'm' : ''}` : mins > 0 ? `${mins}m` : '<1m'
-              medianEl.textContent = `${fmtUsd(median)} (${usds.length}r, ${spanLabel})`
+              medianEl.textContent = `${fmtUsd(median)} (${recent.length}r, ${spanLabel})`
             }
           }
           const topRequests = doc.getElementById('pip-top-requests')
