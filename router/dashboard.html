@@ -1035,7 +1035,7 @@ if (pipButton) pipButton.addEventListener('click', async () => {
         body { font-family: ui-monospace, monospace; font-size: 12px; padding: 4px 6px; background: #1a1a1a; color: #ccc; line-height: 1.35; white-space: nowrap; display: flex; justify-content: center; }
         .root { display: inline-grid; grid-template-columns: max-content max-content; gap: 1px 8px; }
         .k { color: #777; }
-        .v { color: #eee; font-weight: 600; font-variant-numeric: tabular-nums; }
+        .v { color: #eee; font-weight: 600; font-variant-numeric: tabular-nums; white-space: pre-line; }
         .section { grid-column: 1 / -1; color: #777; margin-top: 3px; border-top: 1px solid #333; padding-top: 2px; }
         .top-list { grid-column: 1 / -1; display: grid; gap: 1px; }
         .top-row { display: grid; grid-template-columns: 1fr max-content; gap: 8px; }
@@ -1052,7 +1052,7 @@ if (pipButton) pipButton.addEventListener('click', async () => {
         <span class="k">Pace/day</span><span class="v" id="pip-pace">-</span>
         <span class="k">Forecast</span><span class="v" id="pip-forecast">-</span>
         <span class="k">History</span><span class="v" id="pip-history">-</span>
-        <span class="k">Median</span><span class="v" id="pip-median">-</span>
+        <span class="k">Med/Avg</span><span class="v" id="pip-median">-</span>
         <span class="section">Top requests</span>
         <div id="pip-top-requests" class="top-list">-</div>`
       doc.body.appendChild(root)
@@ -1107,10 +1107,11 @@ if (pipButton) pipButton.addEventListener('click', async () => {
               const sorted = usds.sort((a, b) => a - b)
               const mid = Math.floor(sorted.length / 2)
               const median = sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid]
+              const avg = usds.reduce((s, u) => s + u, 0) / usds.length
               const spanMs = recent.length > 1 ? new Date(recent[recent.length - 1].ts).getTime() - new Date(recent[0].ts).getTime() : 0
               const mins = Math.floor(spanMs / 60000)
               const spanLabel = mins >= 60 ? `${Math.floor(mins / 60)}h${mins % 60 > 0 ? (mins % 60) + 'm' : ''}` : mins > 0 ? `${mins}m` : '<1m'
-              medianEl.textContent = `${fmtUsd(median)} (${recent.length}r, ${spanLabel})`
+              medianEl.textContent = `$${median.toFixed(6)} / $${avg.toFixed(6)}\n(${recent.length}r, ${spanLabel})`
             }
           }
           const topRequests = doc.getElementById('pip-top-requests')
