@@ -28,6 +28,10 @@ export function translateChunkToAnthropicEvents(
 ): Array<AnthropicStreamEventData> {
   const events: Array<AnthropicStreamEventData> = []
 
+  if (chunk.copilot_usage) {
+    state.latestCopilotUsage = chunk.copilot_usage
+  }
+
   if (chunk.choices.length === 0) {
     // Empty-choices chunks without usage are metadata-only events (e.g.
     // inference cost) that may arrive before the final usage chunk. Only
@@ -74,6 +78,9 @@ function completePendingMessage(
 
   if (chunk?.usage) {
     state.pendingMessageDelta.usage = getAnthropicUsageFromOpenAIChunk(chunk)
+  }
+  if (state.latestCopilotUsage !== undefined) {
+    state.pendingMessageDelta.copilot_usage = state.latestCopilotUsage
   }
 
   events.push(state.pendingMessageDelta, {

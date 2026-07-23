@@ -321,6 +321,7 @@ export interface AnthropicStreamState {
   contentBlockIndex: number
   contentBlockOpen: boolean
   thinkingBlockOpen: boolean
+  latestCopilotUsage?: CopilotUsage | null
   pendingMessageDelta?: AnthropicMessageDeltaEvent
   deferredContent?: string
   toolCalls: {

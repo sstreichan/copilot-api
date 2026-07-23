@@ -131,6 +131,20 @@ describe("translateChatCompletionToResponsesResult", () => {
     })
   })
 
+  it("preserves Copilot usage for downstream cost tracking", () => {
+    const result = translateChatCompletionToResponsesResult(
+      baseChatCompletion({
+        copilot_usage: {
+          total_nano_aiu: 1_500_000,
+        },
+      }),
+    )
+
+    expect(result.copilot_usage).toEqual({
+      total_nano_aiu: 1_500_000,
+    })
+  })
+
   it("conservatively maps length finish_reason to incomplete max_output_tokens", () => {
     const result = translateChatCompletionToResponsesResult(
       baseChatCompletion({

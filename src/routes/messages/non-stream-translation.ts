@@ -573,6 +573,7 @@ export function translateToAnthropic(
     role: "assistant",
     model: response.model,
     content: assistantContentBlocks,
+    copilot_usage: response.copilot_usage ?? null,
     stop_reason: mapOpenAIStopReasonToAnthropic(stopReason),
     stop_sequence: null,
     usage: mapOpenAIChatCompletionUsage(response),

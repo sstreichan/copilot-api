@@ -968,10 +968,10 @@ describe("responses handler token usage", () => {
         streamChunks([
           {
             data: JSON.stringify({
-              copilot_usage: {
-                total_nano_aiu: 1234,
-              },
               response: {
+                copilot_usage: {
+                  total_nano_aiu: 1234,
+                },
                 created_at: 0,
                 error: {
                   message: "request failed",
@@ -1035,6 +1035,12 @@ describe("responses handler token usage", () => {
     const page = (await eventsResponse.json()) as {
       items: Array<{
         cache_read_input_tokens: number
+        cost: {
+          amount: number
+          currency: string
+          source: string
+          total_cost_nanos: number
+        } | null
         input_tokens: number
         output_tokens: number
         session_id: string
@@ -1055,6 +1061,12 @@ describe("responses handler token usage", () => {
     expect(page.items[0]?.output_tokens).toBe(2)
     expect(page.items[0]?.total_nano_aiu).toBe(1234)
     expect(page.items[0]?.total_tokens).toBe(7)
+    expect(page.items[0]?.cost).toEqual({
+      amount: 0.000000012,
+      currency: "USD",
+      source: "copilot_aiu",
+      total_cost_nanos: 12,
+    })
   })
 })
 
@@ -1231,6 +1243,38 @@ describe("responses handler upstream header forwarding across fallbacks", () => 
                     finish_reason: "stop",
                   },
                 ],
+              }),
+            },
+            {
+              data: JSON.stringify({
+                id: "chatcmpl_1",
+                object: "chat.completion.chunk",
+                created: 0,
+                model: "chat-fallback-test",
+                choices: [],
+                copilot_usage: {
+                  token_details: [
+                    {
+                      batch_size: 1,
+                      cost_per_batch: 2,
+                      token_count: 3,
+                      token_type: "input",
+                    },
+                  ],
+                  total_nano_aiu: 1_500_000,
+                },
+              }),
+            },
+            {
+              data: JSON.stringify({
+                id: "chatcmpl_1",
+                object: "chat.completion.chunk",
+                created: 0,
+                model: "chat-fallback-test",
+                choices: [],
+                copilot_usage: {
+                  total_nano_aiu: 1_500_000,
+                },
                 usage: {
                   prompt_tokens: 1,
                   completion_tokens: 1,
@@ -1268,7 +1312,209 @@ describe("responses handler upstream header forwarding across fallbacks", () => 
     expect(response.headers.get("x-usage-ratelimit-session")).toBe(
       "remaining=4;resetAt=2026-07-05T14:00:00.000Z",
     )
-    await response.text()
+    const body = await response.text()
+    const completedEvents = body
+      .split("\n")
+      .filter((line) => line.startsWith("data:"))
+      .map((line) => JSON.parse(line.slice(5)) as Record<string, unknown>)
+      .filter((event) => event.type === "response.completed")
+
+    expect(completedEvents).toHaveLength(1)
+    expect(completedEvents[0]).toMatchObject({
+      response: {
+        copilot_usage: {
+          total_nano_aiu: 1_500_000,
+        },
+        usage: {
+          input_tokens: 1,
+          output_tokens: 1,
+          total_tokens: 2,
+        },
+      },
+    })
+
+    const eventsResponse = await app.request(
+      "/token-usage/events?period=day&page=1&page_size=10",
+    )
+    const page = (await eventsResponse.json()) as {
+      items: Array<{
+        nano_cost_input: number | null
+        total_nano_aiu: number | null
+      }>
+    }
+    expect(page.items[0]).toMatchObject({
+      nano_cost_input: 6,
+      total_nano_aiu: 1_500_000,
+    })
+  })
+
+  test("flushes a completed chat fallback stream without a final usage chunk", async () => {
+    state.models = {
+      object: "list",
+      data: [
+        {
+          capabilities: {
+            limits: {
+              max_prompt_tokens: 128000,
+            },
+          },
+          id: "chat-fallback-test",
+          supported_endpoints: ["/v1/chat/completions"],
+        },
+      ],
+    } as typeof state.models
+
+    responsesHandlerDependencies.createChatCompletions = mock(() =>
+      Promise.resolve(
+        streamChunks([
+          {
+            data: JSON.stringify({
+              id: "chatcmpl_1",
+              object: "chat.completion.chunk",
+              created: 0,
+              model: "chat-fallback-test",
+              choices: [
+                {
+                  index: 0,
+                  delta: { content: "hi" },
+                  finish_reason: null,
+                },
+              ],
+            }),
+          },
+          {
+            data: JSON.stringify({
+              id: "chatcmpl_1",
+              object: "chat.completion.chunk",
+              created: 0,
+              model: "chat-fallback-test",
+              choices: [
+                {
+                  index: 0,
+                  delta: {},
+                  finish_reason: "stop",
+                },
+              ],
+            }),
+          },
+        ]),
+      ),
+    ) as typeof responsesHandlerDependencies.createChatCompletions
+
+    const response = await createApp().request("/v1/responses", {
+      body: JSON.stringify({
+        input: "hello",
+        model: "chat-fallback-test",
+        stream: true,
+      }),
+      headers: {
+        "content-type": "application/json",
+      },
+      method: "POST",
+    })
+    const body = await response.text()
+    const completedEvents = body
+      .split("\n")
+      .filter((line) => line.startsWith("data:"))
+      .map((line) => JSON.parse(line.slice(5)) as Record<string, unknown>)
+      .filter((event) => event.type === "response.completed")
+
+    expect(completedEvents).toHaveLength(1)
+    expect(completedEvents[0]).toMatchObject({
+      response: {
+        output_text: "hi",
+        status: "completed",
+        usage: null,
+      },
+    })
+  })
+
+  test("does not emit a failed event after a completed chat fallback stream", async () => {
+    state.models = {
+      object: "list",
+      data: [
+        {
+          capabilities: {
+            limits: {
+              max_prompt_tokens: 128000,
+            },
+          },
+          id: "chat-fallback-test",
+          supported_endpoints: ["/v1/chat/completions"],
+        },
+      ],
+    } as typeof state.models
+
+    async function* completedThenFailed() {
+      await Promise.resolve()
+      yield {
+        data: JSON.stringify({
+          id: "chatcmpl_1",
+          object: "chat.completion.chunk",
+          created: 0,
+          model: "chat-fallback-test",
+          choices: [
+            {
+              index: 0,
+              delta: { content: "hi" },
+              finish_reason: null,
+            },
+          ],
+        }),
+      }
+      yield {
+        data: JSON.stringify({
+          id: "chatcmpl_1",
+          object: "chat.completion.chunk",
+          created: 0,
+          model: "chat-fallback-test",
+          choices: [
+            {
+              index: 0,
+              delta: {},
+              finish_reason: "stop",
+            },
+          ],
+          usage: {
+            prompt_tokens: 1,
+            completion_tokens: 1,
+            total_tokens: 2,
+          },
+        }),
+      }
+      throw new Error("upstream failed after completion")
+    }
+
+    responsesHandlerDependencies.createChatCompletions = mock(() =>
+      Promise.resolve(completedThenFailed()),
+    ) as typeof responsesHandlerDependencies.createChatCompletions
+
+    const response = await createApp().request("/v1/responses", {
+      body: JSON.stringify({
+        input: "hello",
+        model: "chat-fallback-test",
+        stream: true,
+      }),
+      headers: {
+        "content-type": "application/json",
+      },
+      method: "POST",
+    })
+    const body = await response.text()
+    const terminalTypes = body
+      .split("\n")
+      .filter((line) => line.startsWith("data:"))
+      .map((line) => JSON.parse(line.slice(5)) as Record<string, unknown>)
+      .map((event) => event.type)
+      .filter((type) =>
+        [
+          "response.completed",
+          "response.incomplete",
+          "response.failed",
+        ].includes(String(type)),
+      )
+
+    expect(terminalTypes).toEqual(["response.completed"])
   })
 
   test("compacts replay input before chat fallback translation", async () => {

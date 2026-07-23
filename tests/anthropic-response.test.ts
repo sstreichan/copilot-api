@@ -196,6 +196,35 @@ describe("OpenAI to Anthropic Non-Streaming Response Translation", () => {
     expect(anthropicResponse.stop_reason).toBe("max_tokens")
   })
 
+  test("should preserve Copilot usage for downstream cost tracking", () => {
+    const openAIResponse: ChatCompletionResponse = {
+      id: "chatcmpl-cost",
+      object: "chat.completion",
+      created: 1677652288,
+      model: "gemini-3.6-flash",
+      choices: [
+        {
+          index: 0,
+          message: {
+            role: "assistant",
+            content: "cost metadata",
+          },
+          finish_reason: "stop",
+          logprobs: null,
+        },
+      ],
+      copilot_usage: {
+        total_nano_aiu: 1_500_000,
+      },
+    }
+
+    const anthropicResponse = translateToAnthropic(openAIResponse)
+
+    expect(anthropicResponse.copilot_usage).toEqual({
+      total_nano_aiu: 1_500_000,
+    })
+  })
+
   test("should translate OpenAI cache creation usage details", () => {
     const openAIResponse: ChatCompletionResponse = {
       id: "chatcmpl-cache",
@@ -639,6 +668,75 @@ describe("OpenAI usage-only stream translation", () => {
       },
     })
     expect(translatedStream.at(-1)).toEqual({ type: "message_stop" })
+  })
+
+  test("should preserve Copilot usage from a metadata-only chunk", () => {
+    const openAIStream: Array<ChatCompletionChunk> = [
+      {
+        id: "cmpl-cost",
+        object: "chat.completion.chunk",
+        created: 1677652288,
+        model: "gemini-3.6-flash",
+        choices: [
+          {
+            index: 0,
+            delta: { role: "assistant" },
+            finish_reason: null,
+            logprobs: null,
+          },
+        ],
+      },
+      {
+        id: "cmpl-cost",
+        object: "chat.completion.chunk",
+        created: 1677652288,
+        model: "gemini-3.6-flash",
+        choices: [
+          { index: 0, delta: {}, finish_reason: "stop", logprobs: null },
+        ],
+      },
+      {
+        id: "cmpl-cost",
+        object: "chat.completion.chunk",
+        created: 1677652288,
+        model: "gemini-3.6-flash",
+        choices: [],
+        copilot_usage: {
+          total_nano_aiu: 1_500_000,
+        },
+      },
+      {
+        id: "cmpl-cost",
+        object: "chat.completion.chunk",
+        created: 1677652288,
+        model: "gemini-3.6-flash",
+        choices: [],
+        usage: {
+          prompt_tokens: 5,
+          completion_tokens: 1,
+          total_tokens: 6,
+        },
+      },
+    ]
+
+    const streamState: AnthropicStreamState = {
+      messageStartSent: false,
+      contentBlockIndex: 0,
+      contentBlockOpen: false,
+      toolCalls: {},
+      thinkingBlockOpen: false,
+    }
+    const translatedStream = openAIStream.flatMap((chunk) =>
+      translateChunkToAnthropicEvents(chunk, streamState),
+    )
+
+    expect(
+      translatedStream.find((event) => event.type === "message_delta"),
+    ).toMatchObject({
+      copilot_usage: {
+        total_nano_aiu: 1_500_000,
+      },
+    })
   })
 
   test("should not complete message on empty-choices metadata chunk without usage", () => {

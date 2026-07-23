@@ -322,6 +322,82 @@ describe("router discovery and proxy helpers", () => {
     ])
   })
 
+  test("proxyTo extracts nested usage from SSE response.incomplete", async () => {
+    const observedUsage: Array<unknown> = []
+    const sseBody =
+      'event: response.incomplete\ndata: {"type":"response.incomplete","response":{"usage":{"input_tokens":7},"copilot_usage":{"total_nano_aiu":654321}}}\n\n'
+    const fetchImpl = createFetchStub(() =>
+      Promise.resolve(
+        new Response(sseBody, {
+          headers: { "content-type": "text/event-stream; charset=utf-8" },
+        }),
+      ),
+    )
+    const req = new Request("http://router.local/v1/responses", {
+      method: "POST",
+      body: '{"model":"gemini-3.6-flash","stream":true}',
+    })
+
+    const res = await proxyTo({
+      port: 4141,
+      context: {
+        body: '{"model":"gemini-3.6-flash","stream":true}',
+        req,
+        url: new URL(req.url),
+      },
+      logger: () => {},
+      fetchImpl,
+      onUsageResolved: (payload) => observedUsage.push(payload),
+    })
+
+    expect(await res.text()).toBe(sseBody)
+    expect(observedUsage).toEqual([
+      {
+        usage: { input_tokens: 7 },
+        copilotUsage: { total_nano_aiu: 654321 },
+      },
+    ])
+  })
+
+  test("proxyTo extracts top-level usage from Chat Completions SSE", async () => {
+    const observedUsage: Array<unknown> = []
+    const sseBody = [
+      'data: {"id":"chatcmpl_1","choices":[],"copilot_usage":{"total_nano_aiu":456789}}\n\n',
+      'data: {"id":"chatcmpl_1","choices":[],"usage":{"prompt_tokens":7},"copilot_usage":{"total_nano_aiu":null}}\n\n',
+    ].join("")
+    const fetchImpl = createFetchStub(() =>
+      Promise.resolve(
+        new Response(sseBody, {
+          headers: { "content-type": "text/event-stream; charset=utf-8" },
+        }),
+      ),
+    )
+    const req = new Request("http://router.local/v1/chat/completions", {
+      method: "POST",
+      body: '{"model":"gemini-3.6-flash","stream":true}',
+    })
+
+    const res = await proxyTo({
+      port: 4141,
+      context: {
+        body: '{"model":"gemini-3.6-flash","stream":true}',
+        req,
+        url: new URL(req.url),
+      },
+      logger: () => {},
+      fetchImpl,
+      onUsageResolved: (payload) => observedUsage.push(payload),
+    })
+
+    expect(await res.text()).toBe(sseBody)
+    expect(observedUsage).toEqual([
+      {
+        usage: { prompt_tokens: 7 },
+        copilotUsage: { total_nano_aiu: 456789 },
+      },
+    ])
+  })
+
   test("proxyTo extracts usage from non-streaming JSON responses", async () => {
     const observedUsage: Array<unknown> = []
     const fetchImpl = createFetchStub(() =>

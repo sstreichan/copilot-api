@@ -261,6 +261,7 @@ export const reconstructWebSearchResponse = (
     model: payload.model,
     stop_reason: "end_turn",
     stop_sequence: null,
+    copilot_usage: result.copilot_usage ?? null,
     usage: {
       input_tokens: result.usage?.input_tokens ?? 0,
       output_tokens: result.usage?.output_tokens ?? 0,
@@ -538,6 +539,7 @@ export const buildSyntheticStreamEvents = (
         stop_sequence: response.stop_sequence,
       },
       usage: { output_tokens: response.usage?.output_tokens ?? 0 },
+      copilot_usage: response.copilot_usage ?? null,
     },
     { type: "message_stop" },
   )

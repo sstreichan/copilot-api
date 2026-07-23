@@ -14,6 +14,7 @@ import {
   buildSyntheticStreamEvents,
   handleWebSearchViaResponses,
   hasWebSearchServerTool,
+  reconstructWebSearchResponse,
   isWebSearchOnlyRequest,
   resolveWebSearchRoute,
   stripWebSearchServerTool,
@@ -471,6 +472,22 @@ describe("handleWebSearchViaResponses", () => {
   })
 })
 
+describe("reconstructWebSearchResponse", () => {
+  it("preserves Copilot usage from the Responses result", () => {
+    const { response } = reconstructWebSearchResponse(
+      makePayload(),
+      makeResponsesResult({
+        copilot_usage: { total_nano_aiu: 1_500_000 },
+      }),
+      { requestId: "request-1" },
+    )
+
+    expect(response.copilot_usage).toEqual({
+      total_nano_aiu: 1_500_000,
+    })
+  })
+})
+
 describe("buildSyntheticStreamEvents", () => {
   it("emits a well-formed Anthropic event sequence", () => {
     const response = {
@@ -481,6 +498,7 @@ describe("buildSyntheticStreamEvents", () => {
       stop_reason: "end_turn" as const,
       stop_sequence: null,
       usage: { input_tokens: 10, output_tokens: 20 },
+      copilot_usage: { total_nano_aiu: 1_500_000 },
       content: [
         {
           type: "server_tool_use" as const,
@@ -509,6 +527,10 @@ describe("buildSyntheticStreamEvents", () => {
     expect(types[0]).toBe("message_start")
     expect(types.at(-1)).toBe("message_stop")
     expect(types.at(-2)).toBe("message_delta")
+    expect(events.at(-2)).toMatchObject({
+      type: "message_delta",
+      copilot_usage: { total_nano_aiu: 1_500_000 },
+    })
     expect(types.slice(1, 4)).toEqual([
       "content_block_start",
       "content_block_delta",

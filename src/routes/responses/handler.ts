@@ -33,6 +33,7 @@ import {
   copilotUsageFromResponsesEvent,
   createCopilotTokenUsageRecorder,
   mergeAnthropicUsage,
+  mergeCopilotUsage,
   normalizeAnthropicUsage,
   normalizeOpenAIUsage,
   normalizeOptionalToken,
@@ -68,6 +69,7 @@ import type { AnthropicStreamEventData } from "../messages/anthropic-types"
 import { preflightResponsesPayload } from "./preflight"
 import {
   createChatCompletionToResponsesStreamState,
+  flushChatCompletionToResponsesStreamEvents,
   translateChatCompletionChunkToResponsesStreamEvents,
   translateChatCompletionStreamErrorToResponsesEvent,
   translateChatCompletionToResponsesResult,
@@ -397,7 +399,10 @@ const handleWithChatFallback = async (
             usage = normalizeOpenAIUsage(parsed.usage)
           }
           if (parsed.copilot_usage) {
-            copilotUsage = copilotUsageToTokens(parsed.copilot_usage)
+            copilotUsage = mergeCopilotUsage(
+              copilotUsage,
+              copilotUsageToTokens(parsed.copilot_usage),
+            )
           }
           const sseEvents = translateChatCompletionChunkToResponsesStreamEvents(
             parsed,
@@ -408,18 +413,26 @@ const handleWithChatFallback = async (
             await stream.writeSSE({ event: ev.type, data: JSON.stringify(ev) })
           }
         }
-      } catch (err) {
-        const errorEvent = translateChatCompletionStreamErrorToResponsesEvent(
-          err,
+        for (const ev of flushChatCompletionToResponsesStreamEvents(
           streamState,
-        )
-        try {
-          await stream.writeSSE({
-            event: errorEvent.type,
-            data: JSON.stringify(errorEvent),
-          })
-        } catch {
-          // stream already closed
+        )) {
+          debugJson(logger, "Path C stream event:", ev)
+          await stream.writeSSE({ event: ev.type, data: JSON.stringify(ev) })
+        }
+      } catch (err) {
+        if (!streamState.terminalEmitted) {
+          const errorEvent = translateChatCompletionStreamErrorToResponsesEvent(
+            err,
+            streamState,
+          )
+          try {
+            await stream.writeSSE({
+              event: errorEvent.type,
+              data: JSON.stringify(errorEvent),
+            })
+          } catch {
+            // stream already closed
+          }
         }
       } finally {
         const premium = await resolvePremiumInfo(

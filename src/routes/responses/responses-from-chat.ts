@@ -1,3 +1,5 @@
+import { mergeCopilotUsage } from "~/lib/token-usage"
+
 import type {
   ChatCompletionChunk,
   ChatCompletionsPayload,
@@ -40,6 +42,7 @@ type ChatToolCallStreamState = {
 export interface ChatCompletionToResponsesStreamState {
   responseCreated: boolean
   sequenceNumber: number
+  terminalEmitted: boolean
   responseId?: string
   chatCompletionId?: string
   createdAt?: number
@@ -51,7 +54,9 @@ export interface ChatCompletionToResponsesStreamState {
   emittedOutputItemIds: Set<string>
   doneOutputItemIds: Set<string>
   nextOutputIndex: number
+  pendingStatus?: ResponseStatus
   toolCalls: Map<number, ChatToolCallStreamState>
+  latestCopilotUsage?: ChatCompletionChunk["copilot_usage"]
   latestUsage?: ChatCompletionChunk["usage"]
 }
 
@@ -89,6 +94,7 @@ export const createChatCompletionToResponsesStreamState =
   (): ChatCompletionToResponsesStreamState => ({
     responseCreated: false,
     sequenceNumber: 0,
+    terminalEmitted: false,
     outputText: "",
     textDoneEmitted: false,
     emittedOutputItemIds: new Set(),
@@ -114,6 +120,9 @@ export const translateChatCompletionChunkToResponsesStreamEvents = (
   }
 
   if (chunk.choices.length === 0) {
+    if (chunk.usage) {
+      events.push(...emitPendingTerminalEvent(state))
+    }
     return events
   }
 
@@ -169,6 +178,10 @@ export const translateChatCompletionChunkToResponsesStreamEvents = (
 
   return events
 }
+
+export const flushChatCompletionToResponsesStreamEvents = (
+  state: ChatCompletionToResponsesStreamState,
+): Array<ResponseStreamEvent> => emitPendingTerminalEvent(state)
 
 export const translateChatCompletionStreamErrorToResponsesEvent = (
   error: unknown,
@@ -422,6 +435,7 @@ export const translateChatCompletionToResponsesResult = (
     output,
     output_text: outputText,
     status,
+    copilot_usage: response.copilot_usage ?? null,
     usage: mapUsage(response.usage),
     error: null,
     incomplete_details: mapIncompleteDetails(finishReason),
@@ -546,6 +560,12 @@ const rememberChunkMetadata = (
   state.responseId = `resp_${chunk.id}`
   state.createdAt = chunk.created
   state.model = chunk.model
+  if (chunk.copilot_usage) {
+    state.latestCopilotUsage = mergeCopilotUsage(
+      state.latestCopilotUsage ?? {},
+      chunk.copilot_usage,
+    )
+  }
   if (chunk.usage) {
     state.latestUsage = chunk.usage
   }
@@ -661,19 +681,35 @@ const buildFinishEvents = (
     toolCallState.doneEmitted = true
   }
 
+  state.pendingStatus = mapFinishReasonToStatus(finishReason ?? undefined)
+  if (state.latestUsage) {
+    events.push(...emitPendingTerminalEvent(state))
+  }
+  return events
+}
+
+const emitPendingTerminalEvent = (
+  state: ChatCompletionToResponsesStreamState,
+): Array<ResponseStreamEvent> => {
+  if (!state.pendingStatus || state.terminalEmitted) {
+    return []
+  }
+
   const response = buildResponsesResultFromStreamState(
     state,
-    mapFinishReasonToStatus(finishReason ?? undefined),
+    state.pendingStatus,
   )
-  events.push({
-    type:
-      response.status === "incomplete" ?
-        "response.incomplete"
-      : "response.completed",
-    sequence_number: nextSequenceNumber(state),
-    response,
-  })
-  return events
+  state.terminalEmitted = true
+  return [
+    {
+      type:
+        response.status === "incomplete" ?
+          "response.incomplete"
+        : "response.completed",
+      sequence_number: nextSequenceNumber(state),
+      response,
+    },
+  ]
 }
 
 const buildResponsesResultFromStreamState = (
@@ -688,6 +724,7 @@ const buildResponsesResultFromStreamState = (
   output: buildOutputItemsFromStreamState(state, status),
   output_text: state.outputText,
   status,
+  copilot_usage: state.latestCopilotUsage ?? null,
   usage: mapUsage(state.latestUsage),
   error,
   incomplete_details:

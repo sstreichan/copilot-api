@@ -652,6 +652,7 @@ function observeResponsesSseMetadata(
 
   const decoder = new TextDecoder()
   let buffered = ""
+  let latestChatCopilotUsage: Record<string, unknown> | null = null
 
   const inspectEvent = (eventText: string) => {
     const data = eventText
@@ -672,24 +673,45 @@ function observeResponsesSseMetadata(
         copilot_quota_snapshots?: unknown
         usage?: unknown
         copilot_usage?: unknown
+        choices?: unknown
         response?: unknown
       }
       if (parsed.copilot_quota_snapshots && onQuotaSnapshots) {
         onQuotaSnapshots(parsed.copilot_quota_snapshots)
       }
+      const isResponsesTerminal =
+        parsed.type === "response.completed"
+        || parsed.type === "response.incomplete"
+        || parsed.type === "response.failed"
+      const isMessageTerminal = parsed.type === "message_delta"
+      const isChatChunk = Array.isArray(parsed.choices)
+
+      if (isChatChunk && isRecord(parsed.copilot_usage)) {
+        latestChatCopilotUsage = {
+          ...latestChatCopilotUsage,
+          ...Object.fromEntries(
+            Object.entries(parsed.copilot_usage).filter(
+              ([, value]) => value !== null && value !== undefined,
+            ),
+          ),
+        }
+      }
+
       if (
-        (parsed.type === "response.completed"
-          || parsed.type === "message_delta")
+        (isResponsesTerminal
+          || isMessageTerminal
+          || (isChatChunk && isRecord(parsed.usage)))
         && onUsageResolved
       ) {
         const usage =
-          parsed.type === "message_delta" && isRecord(parsed.usage) ?
+          (isMessageTerminal || isChatChunk) && isRecord(parsed.usage) ?
             parsed.usage
           : isRecord(parsed.response) && isRecord(parsed.response.usage) ?
             parsed.response.usage
           : null
         const copilotUsage =
-          isRecord(parsed.copilot_usage) ? parsed.copilot_usage
+          isChatChunk ? latestChatCopilotUsage
+          : isRecord(parsed.copilot_usage) ? parsed.copilot_usage
           : (
             isRecord(parsed.response) && isRecord(parsed.response.copilot_usage)
           ) ?

@@ -179,12 +179,12 @@ export const handleWithChatCompletions = async (
 
       const chunk = JSON.parse(rawEvent.data) as ChatCompletionChunk
       if (chunk.usage || chunk.copilot_usage) {
-        usage = {
+        usage = mergeAnthropicUsage(usage, {
           ...normalizeOpenAIUsage(chunk.usage),
           total_nano_aiu: normalizeOptionalToken(
             chunk.copilot_usage?.total_nano_aiu,
           ),
-        }
+        })
       }
       const events = translateChunkToAnthropicEvents(chunk, streamState)
 

@@ -347,11 +347,103 @@ describe("token usage storage", () => {
     expect(summary.totals.nano_cost_output).toBe(15_000_000)
     expect(summary.byModel[0]?.total_nano_aiu).toBe(15_477_500)
     expect(summary.byModel[0]?.nano_cost_cache_write).toBe(20_000)
+    expect(summary.totals.costs).toEqual([
+      {
+        amount: 0.000154775,
+        currency: "USD",
+        total_cost_nanos: 154_775,
+      },
+    ])
 
     const eventsPage = await fetchEventsPage()
     expect(eventsPage.items[0]?.total_nano_aiu).toBe(15_477_500)
     expect(eventsPage.items[0]?.nano_cost_cache_write).toBe(20_000)
     expect(eventsPage.items[0]?.nano_cost_output).toBe(15_000_000)
+    expect(eventsPage.items[0]?.cost).toEqual({
+      amount: 0.000154775,
+      currency: "USD",
+      source: "copilot_aiu",
+      total_cost_nanos: 154_775,
+    })
+  })
+
+  test("records nested Copilot AIU without standard token counts", async () => {
+    const recordUsage = createCopilotTokenUsageRecorder({
+      endpoint: "responses",
+      model: "nested-aiu-only",
+    })
+
+    recordUsage({}, { total_nano_aiu: 100_000_000_000 })
+
+    const eventsPage = await fetchEventsPage()
+    expect(eventsPage.items).toHaveLength(1)
+    expect(eventsPage.items[0]?.total_nano_aiu).toBe(100_000_000_000)
+    expect(eventsPage.items[0]?.cost).toEqual({
+      amount: 1,
+      currency: "USD",
+      source: "copilot_aiu",
+      total_cost_nanos: 1_000_000_000,
+    })
+  })
+
+  test("uses one canonical Copilot AIU value for storage and pricing", async () => {
+    const cases = [
+      {
+        expectedCostNanos: 2_000_000_000,
+        expectedTotalNanoAiu: 200_000_000_000,
+        model: "nested-aiu",
+        nestedTotalNanoAiu: 200_000_000_000,
+        topLevelTotalNanoAiu: 100_000_000_000,
+      },
+      {
+        expectedCostNanos: null,
+        expectedTotalNanoAiu: 0,
+        model: "nested-zero-aiu",
+        nestedTotalNanoAiu: 0,
+        topLevelTotalNanoAiu: 100_000_000_000,
+      },
+      {
+        expectedCostNanos: 1_000_000_000,
+        expectedTotalNanoAiu: 100_000_000_000,
+        model: "nested-null-aiu",
+        nestedTotalNanoAiu: null,
+        topLevelTotalNanoAiu: 100_000_000_000,
+      },
+      {
+        expectedCostNanos: 1_000_000_000,
+        expectedTotalNanoAiu: 100_000_000_000,
+        model: "nested-undefined-aiu",
+        nestedTotalNanoAiu: undefined,
+        topLevelTotalNanoAiu: 100_000_000_000,
+      },
+    ]
+
+    for (const testCase of cases) {
+      const recordUsage = createCopilotTokenUsageRecorder({
+        endpoint: "responses",
+        model: testCase.model,
+      })
+      recordUsage(
+        {
+          input_tokens: 1,
+          total_nano_aiu: testCase.topLevelTotalNanoAiu,
+        },
+        { total_nano_aiu: testCase.nestedTotalNanoAiu },
+      )
+    }
+
+    const eventsPage = await fetchEventsPage()
+    const eventsByModel = new Map(
+      eventsPage.items.map((event) => [event.model, event]),
+    )
+
+    for (const testCase of cases) {
+      const event = eventsByModel.get(testCase.model)
+      expect(event?.total_nano_aiu).toBe(testCase.expectedTotalNanoAiu)
+      expect(event?.cost?.total_cost_nanos ?? null).toBe(
+        testCase.expectedCostNanos,
+      )
+    }
   })
 
   test("only falls back to interaction id when no real session id exists", async () => {

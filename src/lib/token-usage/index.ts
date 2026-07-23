@@ -174,13 +174,19 @@ function resolveTokenDetails(
 function toPersistedEvent(
   input: TokenUsageEventInput,
 ): PersistedTokenUsageEvent | null {
-  if (!hasAnyToken(input)) {
+  const totalNanoAiu =
+    normalizeOptionalToken(input.copilotUsage?.total_nano_aiu)
+    ?? normalizeOptionalToken(input.total_nano_aiu)
+  if (!hasAnyToken({ ...input, total_nano_aiu: totalNanoAiu })) {
     return null
   }
 
   const now = new Date()
   const cost = resolveTokenDetails(input.copilotUsage?.token_details)
-  const pricingCost = resolveTokenUsageCost(input)
+  const pricingCost = resolveTokenUsageCost({
+    ...input,
+    total_nano_aiu: totalNanoAiu,
+  })
   return {
     cache_creation_input_tokens: normalizeToken(
       input.cache_creation_input_tokens,
@@ -201,15 +207,7 @@ function toPersistedEvent(
       input.fallbackSessionId,
     ),
     source: input.source,
-    total_nano_aiu:
-      (
-        input.copilotUsage?.total_nano_aiu === undefined
-        || input.copilotUsage.total_nano_aiu === null
-      ) ?
-        input.total_nano_aiu === undefined || input.total_nano_aiu === null ?
-          null
-        : normalizeToken(input.total_nano_aiu)
-      : normalizeToken(input.copilotUsage.total_nano_aiu),
+    total_nano_aiu: totalNanoAiu ?? null,
     total_cost_nanos: pricingCost?.total_cost_nanos ?? null,
     total_tokens: resolveTotalTokens(input),
     trace_id: resolveTraceId(input.traceId),
@@ -399,6 +397,16 @@ export function mergeAnthropicUsage(
  * Convert API response CopilotUsage field to CopilotUsageTokens for recorder.
  * Returns empty object when input is absent.
  */
+export function mergeCopilotUsage(
+  current: CopilotUsageTokens,
+  next: CopilotUsageTokens,
+): CopilotUsageTokens {
+  return {
+    token_details: next.token_details ?? current.token_details,
+    total_nano_aiu: next.total_nano_aiu ?? current.total_nano_aiu,
+  }
+}
+
 export function copilotUsageToTokens(
   copilotUsage: CopilotUsage | null | undefined,
 ): CopilotUsageTokens {

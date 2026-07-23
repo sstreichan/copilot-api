@@ -346,6 +346,119 @@ test("Copilot Chat Completions payload preparation marks two system and latest n
   ])
 })
 
+test("messages Chat Completions stream preserves Copilot AIU across metadata and usage chunks", async () => {
+  createChatCompletions.mockImplementationOnce(
+    (payload: ChatCompletionsPayload): Promise<ChatCompletionResponse> => {
+      capturedPayload = payload
+      return Promise.resolve(
+        createMessagesStream([
+          {
+            event: "data",
+            data: JSON.stringify({
+              id: "chatcmpl-cost",
+              object: "chat.completion.chunk",
+              created: 0,
+              model: payload.model,
+              choices: [
+                {
+                  index: 0,
+                  delta: { role: "assistant" },
+                  finish_reason: null,
+                  logprobs: null,
+                },
+              ],
+            }),
+          },
+          {
+            event: "data",
+            data: JSON.stringify({
+              id: "chatcmpl-cost",
+              object: "chat.completion.chunk",
+              created: 0,
+              model: payload.model,
+              choices: [
+                {
+                  index: 0,
+                  delta: {},
+                  finish_reason: "stop",
+                  logprobs: null,
+                },
+              ],
+            }),
+          },
+          {
+            event: "data",
+            data: JSON.stringify({
+              id: "chatcmpl-cost",
+              object: "chat.completion.chunk",
+              created: 0,
+              model: payload.model,
+              choices: [],
+              copilot_usage: {
+                total_nano_aiu: 1_500_000,
+              },
+            }),
+          },
+          {
+            event: "data",
+            data: JSON.stringify({
+              id: "chatcmpl-cost",
+              object: "chat.completion.chunk",
+              created: 0,
+              model: payload.model,
+              choices: [],
+              copilot_usage: null,
+              usage: {
+                prompt_tokens: 5,
+                completion_tokens: 1,
+                total_tokens: 6,
+              },
+            }),
+          },
+        ]) as unknown as ChatCompletionResponse,
+      )
+    },
+  )
+
+  const payload: AnthropicMessagesPayload = {
+    max_tokens: 128,
+    messages: [{ role: "user", content: "hello" }],
+    model: "gemini-3.6-flash",
+    stream: true,
+  }
+  const app = new Hono()
+  app.post("/", (c) =>
+    handleWithChatCompletions(c, payload, {
+      logger,
+      requestId: "request-1",
+    }),
+  )
+
+  const response = await app.request("/", { method: "POST" })
+  expect(response.status).toBe(200)
+  const body = await response.text()
+  expect(body).toContain('"copilot_usage":{"total_nano_aiu":1500000}')
+
+  const usageEvents = await getTokenUsageEventsPage({
+    page: 1,
+    pageSize: 10,
+    period: "day",
+  })
+  expect(usageEvents.items).toHaveLength(1)
+  expect(usageEvents.items[0]).toMatchObject({
+    cost: {
+      amount: 0.000015,
+      currency: "USD",
+      source: "copilot_aiu",
+      total_cost_nanos: 15_000,
+    },
+    input_tokens: 5,
+    model: "gemini-3.6-flash",
+    output_tokens: 1,
+    total_nano_aiu: 1_500_000,
+  })
+})
+
 test("messages Messages flow records Copilot AIU from streaming message delta", async () => {
   createMessages.mockImplementationOnce(
     (payload: AnthropicMessagesPayload): Promise<CreateMessagesReturn> => {
