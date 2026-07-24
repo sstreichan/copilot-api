@@ -340,7 +340,10 @@
 
 
       <section class="panel">
-        <h2>Instances</h2>
+        <div class="panel-head">
+          <h2>Instances</h2>
+          <button id="refresh-usage" class="btn" type="button">Refresh usage</button>
+        </div>
         <div class="stats">
           <div class="pill">Instances: <span id="instance-count">0</span></div>
           <div class="pill">Bindings: <span id="binding-count">0</span></div>
@@ -918,6 +921,22 @@
       await Promise.all([loadStatus(), loadHistory()])
     }
 
+    async function refreshUsage() {
+      const button = byId('refresh-usage')
+      button.disabled = true
+      button.textContent = 'Refreshing...'
+      try {
+        const response = await fetch('/api/usage/refresh', { method: 'POST' })
+        if (!response.ok) throw new Error(`HTTP ${response.status}`)
+        await loadStatus()
+      } catch (error) {
+        window.alert(`Failed to refresh usage: ${error instanceof Error ? error.message : String(error)}`)
+      } finally {
+        button.disabled = false
+        button.textContent = 'Refresh usage'
+      }
+    }
+
     async function clearData(target) {
       const config = target === 'bindings'
         ? { button: byId('clear-bindings'), path: '/api/bindings/clear', label: 'Clear bindings' }
@@ -999,6 +1018,7 @@
 
     byId('clear-bindings').addEventListener('click', () => clearData('bindings'))
     byId('clear-history').addEventListener('click', () => clearData('history'))
+    byId('refresh-usage').addEventListener('click', refreshUsage)
     byId('history-session-filters').addEventListener('click', (event) => {
       const button = event.target.closest('.session-filter')
       if (!button) return

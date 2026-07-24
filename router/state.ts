@@ -111,6 +111,7 @@ export interface DashboardHandlerOptions {
   state: StickyRouterState
   logger: (line: string) => void
   dashboardFile: Bun.BunFile
+  fetchImpl?: typeof fetch
   encoder?: TextEncoder
   sseRetryMs?: number
   nowMs?: () => number
@@ -1346,6 +1347,15 @@ export function createDashboardHandler(options: DashboardHandlerOptions) {
 
     if (url.pathname === "/api/status" && req.method === "GET") {
       return Response.json(getStatusPayload(options.state, nowMs()))
+    }
+
+    if (url.pathname === "/api/usage/refresh" && req.method === "POST") {
+      await prefetchPremiumUsage(
+        options.state,
+        options.logger,
+        options.fetchImpl,
+      )
+      return Response.json({ ok: true })
     }
 
     if (url.pathname === "/api/history" && req.method === "GET") {

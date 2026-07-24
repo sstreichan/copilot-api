@@ -125,6 +125,11 @@ function renderInstancesFromDashboard(
       disabled: false,
       textContent: "",
     },
+    "refresh-usage": {
+      addEventListener() {},
+      disabled: false,
+      textContent: "",
+    },
     "instance-count": { textContent: "0" },
     "binding-count": { textContent: "0" },
     "history-count": { textContent: "0" },

@@ -140,13 +140,14 @@ Router 只取 `name` 与 `port`；`token` 与可选 `flags`/`accountType` 由 `s
 | 路径 | 方法 | 用途 |
 |:-----|:-----|:-----|
 | `/api/status` | GET | 实例状态、binding 表、模型映射 |
+| `/api/usage/refresh` | POST | 手动刷新全部实例的 `/usage`；页面随后重拉 status |
 | `/api/history` | GET | 路由历史记录 |
 | `/api/history/clear` | POST | 清空历史 |
 | `/api/bindings/clear` | POST | 清空所有 sticky binding |
 | `/api/events` | GET | SSE 实时路由事件流 |
 
 页面本身会展示每实例的 per-model requestCounts、SSE 连通状态，
-又以两枚按钮直击清 history / clear bindings 两道 POST 端点。
+并提供手动刷新 usage、清 history、clear bindings 三枚 POST 按钮。
 近一版还额外展示 premium/session/weekly snapshot；若此处数值不对，先查 `router/lib.ts` 之解析与 `state.ts` 之更新点，不要先改前端文案。
 
 ### `start.sh`

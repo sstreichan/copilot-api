@@ -16,11 +16,15 @@ const dashboardFile = Bun.file(
   new URL("../../router/dashboard.html", import.meta.url),
 )
 
-function handler(state: ReturnType<typeof createStickyRouterState>) {
+function handler(
+  state: ReturnType<typeof createStickyRouterState>,
+  fetchImpl?: typeof fetch,
+) {
   return createDashboardHandler({
     state,
     logger: () => {},
     dashboardFile,
+    fetchImpl,
   })
 }
 
@@ -126,5 +130,55 @@ describe("setInstanceDisabled broadcasts SSE reset", () => {
     expect(receivedChunks[0]).toContain('"target":"instances"')
 
     state.sseClients.delete(fakeController)
+  })
+})
+
+describe("POST /api/usage/refresh", () => {
+  test("refreshes premium usage for every instance without proxy requests", async () => {
+    const state = createState()
+    const requestedUrls: Array<string> = []
+    const fetchImpl = ((input: Parameters<typeof fetch>[0]) => {
+      const url =
+        typeof input === "string" ? input
+        : input instanceof Request ? input.url
+        : input.href
+      requestedUrls.push(url)
+      const port = new URL(url).port
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            quota_snapshots: {
+              premium_interactions: {
+                entitlement: port === "4141" ? 300 : 500,
+                credits_used: port === "4141" ? 120 : 250,
+                overage_count: 0,
+                percent_remaining: 0,
+              },
+            },
+          }),
+          { headers: { "content-type": "application/json" } },
+        ),
+      )
+    }) as typeof fetch
+    const handle = handler(state, fetchImpl)
+
+    const response = await handle(
+      new Request("http://localhost/api/usage/refresh", { method: "POST" }),
+    )
+
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({ ok: true })
+    expect(requestedUrls).toEqual([
+      "http://localhost:4141/usage",
+      "http://localhost:4142/usage",
+    ])
+    expect(state.portHeaderSnapshots.get(4141)?.premiumUsage).toEqual({
+      used: 120,
+      total: 300,
+    })
+    expect(state.portHeaderSnapshots.get(4142)?.premiumUsage).toEqual({
+      used: 250,
+      total: 500,
+    })
   })
 })
