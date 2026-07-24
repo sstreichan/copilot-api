@@ -113,6 +113,64 @@ export interface UpstreamHeaderSnapshot {
   weeklyRateLimit: UpstreamRateLimitSnapshot | null
 }
 
+// /usage has no reset_date; parse only premium usage fields.
+export function parsePremiumUsageFromUsageJson(
+  value: unknown,
+): UpstreamPremiumUsageSnapshot | null {
+  if (!isRecord(value)) {
+    return null
+  }
+
+  const entitlement =
+    (
+      typeof value.entitlement === "string"
+      || typeof value.entitlement === "number"
+    ) ?
+      Number(value.entitlement)
+    : Number.NaN
+  const creditsUsed =
+    typeof value.credits_used === "number" ? value.credits_used : null
+  const remainingPercent =
+    typeof value.percent_remaining === "number" ?
+      value.percent_remaining
+    : Number.NaN
+  const overage =
+    typeof value.overage_count === "number" ? value.overage_count : Number.NaN
+
+  if (
+    !Number.isFinite(entitlement)
+    || !Number.isFinite(overage)
+    || entitlement < 0
+    || overage < 0
+    || (creditsUsed !== null
+      && (!Number.isFinite(creditsUsed) || creditsUsed < 0))
+  ) {
+    return null
+  }
+
+  if (creditsUsed !== null) {
+    return { used: creditsUsed, total: entitlement }
+  }
+
+  if (
+    !Number.isFinite(remainingPercent)
+    || remainingPercent < 0
+    || remainingPercent > 100
+  ) {
+    return null
+  }
+
+  const used =
+    overage > 0 ?
+      entitlement + overage
+    : entitlement - (entitlement * remainingPercent) / 100
+  if (!Number.isFinite(used) || used < 0) {
+    return null
+  }
+
+  return { used, total: entitlement }
+}
+
 const PREMIUM_QUOTA_SNAPSHOT_HEADER = "x-quota-snapshot-premium_interactions"
 const SESSION_RATELIMIT_HEADER = "x-usage-ratelimit-session"
 const WEEKLY_RATELIMIT_HEADER = "x-usage-ratelimit-weekly"
@@ -222,7 +280,10 @@ const parseCopilotQuotaSnapshot = (
   }
 
   const entitlement =
-    typeof value.entitlement === "string" ?
+    (
+      typeof value.entitlement === "string"
+      || typeof value.entitlement === "number"
+    ) ?
       Number(value.entitlement)
     : Number.NaN
   const remainingPercent =

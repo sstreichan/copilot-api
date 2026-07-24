@@ -35,6 +35,8 @@ pre-commit hook 只跑 `lint-staged`（仅暂存文件的 lint），不保证项
 
 如果有任何一步失败，修好再提交，**不要用 `--no-verify` 跳过**。
 
+代码改动可先跑目标测试定位问题；但在报告“完成”、请求提交或实际提交前，必须重新按此顺序跑完**全量**四项。目标测试不能替代 `bun test`。
+
 ## Commit 规范
 
 - Conventional Commit 前缀：`feat:`、`fix:`、`chore:`、`refactor:` 等。

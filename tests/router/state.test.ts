@@ -10,6 +10,7 @@ import {
   getStatusPayload,
   incrementCount,
   pickPort,
+  prefetchPremiumUsage,
   recordRoute,
   updateRouteRecord,
 } from "../../router/state"
@@ -21,26 +22,50 @@ function createState() {
   ])
 }
 
-function createDiscoverModelsFetchStub(
-  payload: unknown,
-): Parameters<typeof discoverModels>[2] {
+function createFetchStub(responseForUrl: (url: URL) => Response): typeof fetch {
   const preconnect: typeof fetch.preconnect = (...args) => {
     if (typeof fetch.preconnect === "function") {
       fetch.preconnect(...args)
-      return
     }
   }
 
   return Object.assign(
-    () =>
-      Promise.resolve(
-        new Response(JSON.stringify(payload), {
-          headers: { "Content-Type": "application/json" },
-        }),
-      ),
-    {
-      preconnect,
+    (input: string | URL | Request) => {
+      const url = new URL(
+        typeof input === "string" ? input
+        : input instanceof URL ? input.href
+        : input.url,
+      )
+      return Promise.resolve(responseForUrl(url))
     },
+    { preconnect },
+  ) as typeof fetch
+}
+
+function createDiscoverModelsFetchStub(
+  payload: unknown,
+): Parameters<typeof discoverModels>[2] {
+  return createFetchStub(
+    () =>
+      new Response(JSON.stringify(payload), {
+        headers: { "Content-Type": "application/json" },
+      }),
+  )
+}
+
+function createUsageFetchStub(
+  premiumForPort: (port: number) => unknown,
+): Parameters<typeof prefetchPremiumUsage>[2] {
+  return createFetchStub(
+    (url) =>
+      new Response(
+        JSON.stringify({
+          quota_snapshots: {
+            premium_interactions: premiumForPort(Number(url.port)),
+          },
+        }),
+        { headers: { "Content-Type": "application/json" } },
+      ),
   )
 }
 
@@ -481,6 +506,105 @@ describe("updateUpstreamHeaderSnapshot last-known-good", () => {
     expect(state.portHeaderSnapshots.get(4141)?.premiumUsage).toEqual({
       used: 270,
       total: 300,
+    })
+  })
+})
+
+describe("prefetchPremiumUsage", () => {
+  test("parses numeric entitlement from /usage into premiumUsage per instance", async () => {
+    const state = createState()
+    const fetchStub = createUsageFetchStub((port) => ({
+      entitlement: port === 4141 ? 300 : 600,
+      overage_count: 0,
+      percent_remaining: port === 4141 ? 70 : 16.2,
+    }))
+
+    await prefetchPremiumUsage(state, () => {}, fetchStub)
+
+    // numeric entitlement must parse (root-cause fix for number inputs)
+    expect(state.portHeaderSnapshots.get(4141)?.premiumUsage).toEqual({
+      used: 90,
+      total: 300,
+    })
+    // each instance filled independently from its own /usage
+    expect(state.portHeaderSnapshots.get(4142)?.premiumUsage).toEqual({
+      used: 502.8,
+      total: 600,
+    })
+  })
+
+  test("counts overage beyond entitlement when overage_count > 0", async () => {
+    const state = createStickyRouterState([{ name: "alpha", port: 4141 }])
+    const fetchStub = createUsageFetchStub(() => ({
+      entitlement: 300,
+      overage_count: 25,
+      percent_remaining: 0,
+    }))
+
+    await prefetchPremiumUsage(state, () => {}, fetchStub)
+
+    expect(state.portHeaderSnapshots.get(4141)?.premiumUsage).toEqual({
+      used: 325,
+      total: 300,
+    })
+  })
+
+  test("leaves premiumUsage null for unlimited accounts", async () => {
+    const state = createStickyRouterState([{ name: "alpha", port: 4141 }])
+    const fetchStub = createUsageFetchStub(() => ({ unlimited: true }))
+
+    await prefetchPremiumUsage(state, () => {}, fetchStub)
+
+    // unlimited → no finite quota, dashboard shows u:-/t:-
+    expect(state.portHeaderSnapshots.get(4141)).toBeUndefined()
+  })
+
+  test("does not throw and leaves snapshot empty when /usage fetch fails", async () => {
+    const state = createState()
+    const fetchStub = createFetchStub(
+      () => new Response("upstream down", { status: 502 }),
+    )
+    const logs: Array<string> = []
+    const logger = (line: string) => {
+      logs.push(line)
+    }
+
+    await prefetchPremiumUsage(state, logger, fetchStub)
+
+    // both instances fail, startup must not abort
+    expect(state.portHeaderSnapshots.get(4141)).toBeUndefined()
+    expect(state.portHeaderSnapshots.get(4142)).toBeUndefined()
+    expect(logs.some((line) => line.includes("alpha:4141 failed"))).toBe(true)
+    expect(logs.some((line) => line.includes("beta:4142 failed"))).toBe(true)
+  })
+
+  test("parses real /usage shape without reset_date (regression: header parser would null it)", async () => {
+    const state = createStickyRouterState([{ name: "alpha", port: 4141 }])
+    // real /usage JSON: no reset_date, has quota_reset_at:0 + timestamp_utc,
+    // percent_remaining can be fractional (63.5)
+    const fetchStub = createUsageFetchStub(() => ({
+      overage_count: 0,
+      overage_permitted: true,
+      percent_remaining: 63.5,
+      quota_id: "premium_interactions",
+      quota_remaining: 63513.2,
+      unlimited: false,
+      timestamp_utc: "2026-07-24T16:10:44.917Z",
+      has_quota: true,
+      quota_reset_at: 0,
+      token_based_billing: true,
+      credits_used: 36486,
+      overage_entitlement: 0,
+      remaining: 63513,
+      entitlement: 100000,
+    }))
+
+    await prefetchPremiumUsage(state, () => {}, fetchStub)
+
+    // credits_used is more precise than percent_remaining (which is rounded)
+    expect(state.portHeaderSnapshots.get(4141)?.premiumUsage).toEqual({
+      used: 36486,
+      total: 100000,
     })
   })
 })

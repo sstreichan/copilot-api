@@ -5,12 +5,13 @@ import {
   getBindingKey,
   getHeaderValue,
   isRecord,
-  parseUpstreamHeaderSnapshot,
-  parseUpstreamQuotaSnapshots,
   parseInstances,
   parseModelFromBody,
   parseModelIds,
   parseModelObjects,
+  parsePremiumUsageFromUsageJson,
+  parseUpstreamHeaderSnapshot,
+  parseUpstreamQuotaSnapshots,
   readPort,
 } from "../../router/lib"
 
@@ -278,5 +279,75 @@ describe("router/lib pure helpers", () => {
       sessionRateLimit: null,
       weeklyRateLimit: null,
     })
+  })
+})
+
+describe("parsePremiumUsageFromUsageJson", () => {
+  test("parses real /usage shape without reset_date", () => {
+    // real /usage premium_interactions: no reset_date, fractional percent
+    expect(
+      parsePremiumUsageFromUsageJson({
+        overage_count: 0,
+        overage_permitted: true,
+        percent_remaining: 63.5,
+        quota_id: "premium_interactions",
+        quota_remaining: 63513.2,
+        unlimited: false,
+        timestamp_utc: "2026-07-24T16:10:44.917Z",
+        has_quota: true,
+        quota_reset_at: 0,
+        token_based_billing: true,
+        credits_used: 36486,
+        overage_entitlement: 0,
+        remaining: 63513,
+        entitlement: 100000,
+      }),
+    ).toEqual({ used: 36486, total: 100000 })
+  })
+
+  test("counts overage beyond entitlement", () => {
+    expect(
+      parsePremiumUsageFromUsageJson({
+        entitlement: 300,
+        overage_count: 25,
+        percent_remaining: 0,
+      }),
+    ).toEqual({ used: 325, total: 300 })
+  })
+
+  test("accepts string entitlement (header-style)", () => {
+    expect(
+      parsePremiumUsageFromUsageJson({
+        entitlement: "300",
+        overage_count: 0,
+        percent_remaining: 70,
+      }),
+    ).toEqual({ used: 90, total: 300 })
+  })
+
+  test("returns null when entitlement missing", () => {
+    expect(
+      parsePremiumUsageFromUsageJson({
+        overage_count: 0,
+        percent_remaining: 70,
+      }),
+    ).toBeNull()
+  })
+
+  test("returns null when percent_remaining out of range", () => {
+    expect(
+      parsePremiumUsageFromUsageJson({
+        entitlement: 300,
+        overage_count: 0,
+        percent_remaining: 120,
+        unlimited: false,
+      }),
+    ).toBeNull()
+  })
+
+  test("returns null for non-object input", () => {
+    expect(parsePremiumUsageFromUsageJson(null)).toBeNull()
+    expect(parsePremiumUsageFromUsageJson("nope")).toBeNull()
+    expect(parsePremiumUsageFromUsageJson(undefined)).toBeNull()
   })
 })

@@ -5,11 +5,12 @@ import {
   getBindingKey,
   getHeaderValue,
   isRecord,
-  parseUpstreamHeaderSnapshot,
-  parseUpstreamQuotaSnapshots,
   parseModelFromBody,
   parseModelIds,
   parseModelObjects,
+  parsePremiumUsageFromUsageJson,
+  parseUpstreamHeaderSnapshot,
+  parseUpstreamQuotaSnapshots,
 } from "./lib"
 
 const DEFAULT_ENCODER = new TextEncoder()
@@ -557,6 +558,65 @@ export async function discoverModels(
   logger(
     `total: ${state.modelToPorts.size} unique models across ${state.portToModels.size} instances`,
   )
+}
+
+// ponytail: one-shot startup prefetch only, no runtime refresh
+export async function prefetchPremiumUsage(
+  state: StickyRouterState,
+  logger: (line: string) => void,
+  fetchImpl: typeof fetch = fetch,
+) {
+  for (const inst of state.instances) {
+    try {
+      const res = await fetchImpl(`http://localhost:${inst.port}/usage`)
+      if (!res.ok) {
+        logger(
+          `prefetch usage ${inst.name}:${inst.port} failed: HTTP ${res.status}`,
+        )
+        continue
+      }
+      const payload: unknown = await res.json()
+      if (!isRecord(payload)) {
+        logger(
+          `prefetch usage ${inst.name}:${inst.port} skipped: non-object body`,
+        )
+        continue
+      }
+      const snapshots = payload.quota_snapshots
+      if (!isRecord(snapshots)) {
+        logger(
+          `prefetch usage ${inst.name}:${inst.port} skipped: no quota_snapshots`,
+        )
+        continue
+      }
+      const premium = snapshots.premium_interactions
+      // unlimited accounts carry no finite quota; leave null so dashboard shows u:-/t:-
+      if (isRecord(premium) && premium.unlimited === true) {
+        logger(`prefetch usage ${inst.name}:${inst.port} skipped: unlimited`)
+        continue
+      }
+      // /usage JSON has no reset_date; parse only the 3 fields u/t math needs
+      const premiumUsage = parsePremiumUsageFromUsageJson(premium)
+      if (!premiumUsage) {
+        logger(
+          `prefetch usage ${inst.name}:${inst.port} skipped: unparseable premium_interactions`,
+        )
+        continue
+      }
+      updateUpstreamSnapshot(state, inst.port, {
+        premiumUsage,
+        sessionRateLimit: null,
+        weeklyRateLimit: null,
+      })
+      logger(
+        `prefetched usage ${inst.name}:${inst.port} → u:${premiumUsage.used}/t:${premiumUsage.total}`,
+      )
+    } catch (error) {
+      logger(
+        `prefetch usage ${inst.name}:${inst.port} failed: ${formatError(error)}`,
+      )
+    }
+  }
 }
 
 export function getTotalRequestCount(

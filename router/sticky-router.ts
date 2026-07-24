@@ -9,6 +9,7 @@ import {
   createRouterHandler,
   createStickyRouterState,
   discoverModels,
+  prefetchPremiumUsage,
 } from "./state"
 
 const ROUTER_PORT = readPort("ROUTER_PORT", 4140)
@@ -66,6 +67,10 @@ export async function main() {
       dashboardFile: DASHBOARD_FILE,
     }),
   })
+
+  // ponytail: prefetch runs in background so dashboard/router come up immediately;
+  // slow or failing /usage on any instance must not block 4139 from serving
+  void prefetchPremiumUsage(state, log)
 
   log(
     `router started on :${ROUTER_PORT}, ${state.instances.length} instances: ${state.instances.map((instance) => `${instance.name}:${instance.port}`).join(", ")}`,
