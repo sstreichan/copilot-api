@@ -96,6 +96,18 @@ bun run typecheck                         # 类型检查
 - `GET /status` 现已包含每个实例的 `headerSnapshot`；dashboard 只负责展示，不负责推断或修复坏值
 - 非法、缺失、越界 header 一律降为 `null`，不要在 `state.ts` 或 `dashboard.html` 里自行脑补默认值
 
+### 启动预取 premium usage
+
+`portHeaderSnapshots` 启动时为空，`discoverModels()` 还会 `.clear()`，故 dashboard 初启必显 `u:-/t:-`，须待首次真实请求方有值。为消此空窗，`sticky-router.ts` 在 `discoverModels()` 之后调一次 `prefetchPremiumUsage(state, log)`：
+
+- 对每个 instance 独立 `GET http://localhost:${port}/usage`（同 `discoverModels` 之 fetch 模式，无鉴权 header——后端 `allowWhenNoApiKeys: true` 时放行，与 `/v1/models` 一致）
+- 解析 `quota_snapshots.premium_interactions` 用 `parsePremiumUsageFromUsageJson()`——**不**复用 `parseUpstreamQuotaSnapshots()`。原因：`/usage` JSON 无 `reset_date`（只有 `quota_reset_at: 0` + `timestamp_utc`），而 header parser `parseCopilotQuotaSnapshot` 强制 `resetAt` 有效（服务 session/weekly rateLimit），复用会连坐把 premium 也 null 掉。`parsePremiumUsageFromUsageJson` 只取 `entitlement`/`percent_remaining`/`overage_count` 三字段算 u/t，不碰 resetAt
+- `entitlement` 兼容 number 与 string；`unlimited === true` 之账户不写 `premiumUsage`（留 null，dashboard 显 `u:-/t:-`）
+- **不阻塞启动**：`sticky-router.ts` 中 `void prefetchPremiumUsage(...)` fire-and-forget，dashboard(4139)/router(4140) 先起，慢或失败的 `/usage` 不拖死启动
+- 各 instance 独立请求独立填充，禁止一个请求填多 port；预取失败只记日志不抛
+- 仅启动时执行一次，运行期不再主动预取；后续真实请求仍按 `updateUpstreamSnapshot` 之 merge 语义覆盖
+- 改解析算法须同步 `lib.test.ts`（`parsePremiumUsageFromUsageJson` 容错）与 `state.test.ts`（prefetch 分支：number entitlement、overage、unlimited、fetch 失败、无 reset_date 真实结构回归）
+
 ### Proxy 转发
 
 `proxyTo` 转发时保留原 method 与多数 header，但会删去 `host`；

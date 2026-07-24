@@ -14,9 +14,11 @@ GitHub Copilot API 反向代理，基于 **Hono**，对外暴露 OpenAI / Anthro
 ## 快速参考
 
 ```bash
-bun run dev            # 开发服务器（watch）
-bun run build          # 构建
+bun run dev            # 开发服务器（watch，启用 system CA）
+bun run build          # 构建（tsdown）
+bun run build:desktop  # 构建 desktop server bundle
 bun test               # 全量测试
+bun test tests/foo.test.ts  # 跑单个测试文件
 bun run lint:all --fix # Lint 并修复
 bun run typecheck      # 类型检查
 ```
@@ -32,6 +34,17 @@ pre-commit hook 只跑 `lint-staged`（仅暂存文件的 lint），不保证项
 4. `bun run typecheck`
 
 如果有任何一步失败，修好再提交，**不要用 `--no-verify` 跳过**。
+
+## Commit 规范
+
+- Conventional Commit 前缀：`feat:`、`fix:`、`chore:`、`refactor:` 等。
+- subject 简短祈使句，如 `feat: support custom provider auth flow`。
+- PR 须含清晰摘要、关联 issue、测试证据（`bun test`、targeted tests、lint/typecheck）；desktop 或 UI 变更附截图。
+
+## 安全
+
+- 禁止提交 token、本地凭据、生成的 secret。
+- 审查 auth、proxy、TLS、token refresh 变更时格外谨慎，尤其 `src/lib/`、`src/auth.ts`、`src/services/github/` 下的文件。
 
 ## 测试覆盖要求
 
@@ -53,6 +66,23 @@ pre-commit hook 只跑 `lint-staged`（仅暂存文件的 lint），不保证项
 - 共享运行时状态的唯一真相源是 `src/lib/state.ts`；不要复制平行状态缓存。
 - 后端兼容补丁放 `src/services/copilot/*`；`handler.ts` 负责路由分发与翻译编排，不承载上游 workaround。
 
+## 仓库布局
+
+| 目录 | 职责 |
+|:-----|:-----|
+| `src/` | 核心 server 与 route 代码 |
+| `src/lib/` | 共享工具（api-config、auth、token、smart-agent、state） |
+| `src/services/` | provider 集成（copilot、github、providers、telemetry） |
+| `src/routes/` | HTTP 路由（messages、chat-completions、responses、models、provider 等） |
+| `tests/` | 测试，文件名与对应源模块同名 |
+| `router/` | 多实例 sticky-router（调度、dashboard） |
+| `pages/` | 静态 web 资源（如 usage-viewer 页面） |
+| `desktop/` | Electron 桌面 app，自带 source/assets/package，与主项目隔离 |
+| `plugin/` | 插件脚本，**被根 ESLint 配置排除**（lint 不覆盖） |
+| `docs/` | 文档与截图 |
+| `openspec/` | proposal / delta spec 工作流 |
+| `.vendor/` | 第三方 vendor（非主运行时逻辑） |
+
 ## 必须记住的跨目录约束
 
 - 所有流式翻译都必须保证 `stream.close()` 能在清理路径中执行，通常通过 `try/finally` 保证。
@@ -60,6 +90,15 @@ pre-commit hook 只跑 `lint-staged`（仅暂存文件的 lint），不保证项
 - 使用 `~` 别名导入 `src/` 下模块。
 - 默认使用 `consola` 或项目 logger helper；不要新增 `console.log` 风格日志。
 - 调试 Copilot 后端时，使用 `copilot-backend-tester` skill，并带 `X-Initiator: agent`。
+
+## 代码风格
+
+- ES modules + strict TypeScript。
+- `camelCase` 函数/变量，`PascalCase` 类型/类，`UPPER_SNAKE` 常量。
+- 文件名语义化（如 `responses-stream-translation.ts`）。
+- 避免 `any`；request/response/entity/DTO 字段须按真实源类型建模。
+- 格式由 ESLint + Prettier 强制：**无分号**、双引号、尾逗号、`Array<T>` 而非 `T[]`。
+- 函数参数多于两个时用 options 对象 + 解构。
 
 ## 目录导航
 
@@ -78,7 +117,7 @@ pre-commit hook 只跑 `lint-staged`（仅暂存文件的 lint），不保证项
 - `tests/AGENTS.md` - Bun 测试布局、mock 约定、fixtures、断言风格
 - `tests/router/AGENTS.md` - 多实例调遣之器测试规约：fetch/time 注入与 sticky 之验证
 - `router/AGENTS.md` - 多实例调遣之器之内里：session-sticky、least-loaded、dashboard、start.sh
-- `claude-plugin/AGENTS.md` - Claude Code plugin / marketplace 与 `__SUBAGENT_MARKER__`
+- `plugin/claude/AGENTS.md` - Claude Code plugin / marketplace 与 `__SUBAGENT_MARKER__`
 - `openspec/AGENTS.md` - proposal、delta spec、validate / archive 工作流
 
 ## 任务入口建议
