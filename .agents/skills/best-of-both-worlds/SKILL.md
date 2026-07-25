@@ -132,7 +132,21 @@ git rev-list --left-right --count origin/czy-all...czy-all
 
 #### Dry-run 冲突预测
 
-用户只要求 dry run 时，不 checkout、不 merge、不 push、不创建 PR。刷新 refs 后，用 Git 的合并判定结果预测 `dev <- caozhiyuan/dev`：
+用户只要求 dry run 时，不 checkout、不 merge、不 push、不创建 PR。刷新 refs 后，必须先报告上游变更，再用 Git 的合并判定结果预测 `dev <- caozhiyuan/dev`：
+
+1. 列出 `dev..caozhiyuan/dev` 的全部 commit hash 与原始 message。
+2. 对每个 commit 读取实际 patch（`git show --patch`）；不能只依据 message、`--stat` 或 commit 数推断。
+3. 面向用户按功能/行为说明每个 commit 带来的变化、受影响 use case，以及纯版本或测试配套项；不需要讲代码实现细节，除非用户要求。
+4. 明确区分“已从 patch 验证”和“未能从 patch 确认”。若 commits 很多，可合并说明同一功能的连续提交，但不得遗漏任一 commit。
+
+推荐命令：
+
+```bash
+git log --reverse --format='COMMIT %H%nSUBJECT %s%nBODY%n%b%n---' dev..caozhiyuan/dev
+git show --format=fuller --find-renames --find-copies --patch --no-ext-diff <commit>
+```
+
+完成上游变更报告后，再运行：
 
 ```bash
 git merge-tree --write-tree dev caozhiyuan/dev
@@ -322,9 +336,9 @@ merge 完成后，还要再次确认：
 
 ### 第七步 B：PR 有冲突时本地 `dev <- czy-all` 合并
 
-仅当 PR 状态明确为 conflict / dirty，且用户明确授权“开始本地 `dev <- czy-all` 冲突分析 merge”时，才进入本步骤。本步骤不是在 `czy-all` 上修 PR，而是在 `dev` 上创建本地 merge/conflict 工作区来统计和分析冲突。
+仅当 PR 状态明确为 conflict / dirty，且用户明确授权“开始本地 `dev <- czy-all` 冲突分析 merge”时，才进入本步骤。本步骤不是在 `czy-all` 上修 PR，而是在 `dev` 上创建本地 merge/conflict 工作区，统计并分析冲突。
 
-进入本地 merge 前，必须先说出这句话（verbatim preflight）：
+进入本地 merge 前，必须先说出：
 
 ```text
 确认：你已明确授权我在本地 dev 上执行 `git merge --no-ff --no-commit czy-all` 以生成冲突分析工作区（原话：“...”）。这不包含任何冲突块编辑、删除 marker、git add、验证、commit 或 push 授权。
@@ -332,66 +346,48 @@ merge 完成后，还要再次确认：
 
 若无法填入用户授权原话，则禁止执行本地 merge。
 
-按本仓库约定在本地合并 PR：
-
 ```bash
 git checkout dev
 git merge --no-ff --no-commit czy-all
 ```
 
-若该命令没有产生冲突且 Git 提示可直接提交，仍然不要提交；先按第六步重新检查 PR 状态并向用户报告“本地 merge 未产生冲突”。报告后默认应执行 `git merge --abort` 退出本地 merge 工作区；是否回到第七步 A 走 GitHub merge，或改走其他收尾路径，必须由用户明示决定。未取得用户对后续路径的明确指示前，不得保留 staged 状态走 Y=0 汇总 + commit/push 路径。
+若没有产生冲突且 Git 提示可提交，仍然不要提交；先重新检查 PR 状态，报告“本地 merge 未产生冲突”，然后默认 `git merge --abort` 退出工作区。后续走 GitHub merge 或其他路径，必须由用户明示决定。
 
-冲突仍按后文“逐块走 best of both worlds”处理；每个冲突块都必须先等用户明确拍板再落地。冲突解决应落在 `dev` 的 merge commit 中，不得在 `czy-all` 上提交“解决冲突”提交。
+若产生冲突，必须先**完整分析所有冲突块**，再一次性向用户报告；不得逐块提问、不得边分析边编辑、不得先处理“显然正确”的块。每个块至少包含：
 
-在运行项目级验证前，必须先完成冲突块授权汇总门禁。汇总 preflight 未通过前，不得运行 `bun run lint:all --fix`、`bun run build`、`bun test`、`bun run typecheck` 中任何一条；它们是项目级验证，不是准备工作。执行前必须说出这句话（verbatim preflight）：
+1. 文件与 hunk 范围。
+2. `dev` 侧意图和 `czy-all` 侧意图，以功能/行为说明，不只复述代码。
+3. 交集、冲突点及对用户/兼容性的影响。
+4. 推荐方案与理由；若有可行替代方案，也要列出。
+5. 该推荐是否依赖未验证假设或外部行为。
+
+报告末尾必须给出完整“冲突方案清单”，让用户对所有块**一次性**拍板：可逐项接受/改写，也可明确接受某些项、拒绝另一些项。没有覆盖全部冲突块的授权，不得编辑、删除 marker、`git add`、运行项目级验证、commit 或 push。
+
+一次性授权的 preflight 必须逐项可追溯：
 
 ```text
-确认：本次 merge 共 Y 个冲突块，每块的用户拍板原话如下：
-- 第 1 块（<file>:<hunk>）：原话“...”
-- 第 2 块（<file>:<hunk>）：原话“...”
+确认：本次 merge 共 Y 个冲突块。我已完整展示每块的双方意图、推荐方案和理由；你的最终决定如下：
+- 第 1 块（<file>:<hunk>）：<接受/改用方案/...>；原话“...”
+- 第 2 块（<file>:<hunk>）：<接受/改用方案/...>；原话“...”
 - ...
-现在才进入项目级验证。
+现在才开始编辑冲突文件。此授权不包含 lint 自动改动、项目级验证、commit 或 push。
 ```
 
-若任一块无法填入用户拍板原话，说明还没有全部授权，禁止进入项目级验证。
+确认全部冲突块的一次性决定后，才按清单落地；仍不得在 `czy-all` 上解。运行项目级验证前，必须确认当前分支是 `dev`、冲突 marker 全部消除，且用户决定已覆盖 Y 个块。
 
-在提交 merge commit 或推送 `dev` 前，必须完成本仓库项目级验证门禁：当前分支必须是 `dev`。验证门禁只授权运行验证命令，不授权修复验证失败；若任一验证失败，必须停止，贴出失败摘要和相关 `git diff` / `git status --short`，不得切回 `czy-all` 修。
+在项目级验证前不得运行 `bun run lint:all --fix`、`bun run build`、`bun test` 或 `bun run typecheck`。验证本身不授权修复；任一验证失败，必须报告失败摘要、`git diff` 与 `git status --short`，并等待用户对拟议修复授权。
 
-任何为修复 `bun run lint:all --fix` / `bun run build` / `bun test` / `bun run typecheck` 失败而产生的代码、测试、lockfile、文档或配置改动，都必须先说明失败证据、拟改文件、拟改内容与风险，并取得用户明确授权后才能编辑。该授权不同于冲突块拍板，也不同于最终 commit/push 授权。
+注意：`bun run lint:all --fix` 是写盘命令。只有用户明确授权运行它后才能执行；运行后必须展示自动改写 diff，并另行取得用户授权，才可将自动改动纳入后续验证、commit 或 push。
 
-执行修复编辑前，必须先说出这句话（verbatim preflight）：
+所有冲突按一次性方案清单落地、验证全部通过、lint 自动改动已另行确认后，必须停止并汇报结果。只有用户另行明确授权“创建 merge commit 并 push origin/dev”后，才可创建 merge commit 并推送。
+
+在 commit 或 push 前，必须先说出：
 
 ```text
-确认：验证 `<命令>` 失败，相关失败摘要：<paste>。拟修改文件：<list>，拟改内容摘要：<summary>，已知风险：<risk>。你已明确授权我按上述方案进行修复编辑（原话：“...”），现在才执行。本授权不包含再次运行验证、commit、push。
+确认：本次本地 `dev <- czy-all` merge 共 Y 个冲突块，用户的一次性决定已逐项列出；项目级验证已全绿（lint/build/test/typecheck）；你已明确授权创建 merge commit 并 push `origin/dev`（原话：“...”），现在才执行 commit/push。
 ```
 
-若无法填入失败摘要、拟改文件、拟改内容、风险或用户授权原话，禁止编辑。修复编辑完成后必须重新进入第七步 B 项目级验证门禁，重跑全部验证；不得跳验证直接走 commit/push 授权。
-
-```bash
-git rev-parse --abbrev-ref HEAD
-bun run lint:all --fix
-bun run build
-bun test
-bun run typecheck
-```
-
-注意：`bun run lint:all --fix` 是写盘命令。它运行后必须执行 `git diff`，向用户明确展示自动改写了哪些内容，并说明“这些是 lint 自动产生的改动，不是你逐块拍板过的内容”。随后必须说出这句话（verbatim preflight）：
-
-```text
-确认：lint --fix 自动改写了以下文件：<list>，diff 已展示给你；其中触碰用户拍板范围外内容的文件：<list 或“无”>；你已明确授权将这些 lint 自动改动纳入本次 merge commit（原话：“...”），现在才进入下一步验证。
-```
-
-若 lint 自动改动触碰冲突文件、lockfile、文档或任何用户未确认的内容，必须暂停并让用户确认这些自动改动；不得把它们悄悄卷入 commit。若无法填入用户授权原话，禁止继续 build/test/typecheck、commit 或 push。
-
-所有冲突块都按用户逐块拍板落地、lint 自动改动已获确认、且验证全部通过后，必须停止并汇报结果。只有用户另行明确授权“创建 merge commit 并 push origin/dev”后，才可创建 merge commit 并推送。
-
-在 commit 或 push 前，必须先说出这句话（verbatim preflight）：
-
-```text
-确认：本次本地 merge `dev <- czy-all` 共解决 Y 块冲突，全部用户拍板原话已列出；项目级验证已全绿（lint/build/test/typecheck 均通过）；你已明确授权将 merge commit <sha 或待创建 merge commit> push 到 origin/dev（原话：“...”），现在才执行 commit/push。
-```
-
-若无法填入全部冲突块授权摘要、验证结果、merge commit SHA（或说明当前仍待创建）、用户最终 commit/push 授权原话，则禁止 commit / push。
+若无法填入全部冲突块授权摘要、验证结果和用户最终 commit/push 授权原话，则禁止 commit / push。
 
 ```bash
 git commit
