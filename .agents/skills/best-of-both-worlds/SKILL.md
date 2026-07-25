@@ -373,15 +373,26 @@ git merge --no-ff --no-commit czy-all
 现在才开始编辑冲突文件。此授权不包含 lint 自动改动、项目级验证、commit 或 push。
 ```
 
-确认全部冲突块的一次性决定后，才按清单落地；仍不得在 `czy-all` 上解。运行项目级验证前，必须确认当前分支是 `dev`、冲突 marker 全部消除，且用户决定已覆盖 Y 个块。
+确认全部冲突块的一次性决定后，才按清单落地；仍不得在 `czy-all` 上解。运行项目级验证前，必须确认当前分支是 `dev`、冲突 marker 全部消除，且用户决定已覆盖全部冲突块。
 
-在项目级验证前不得运行 `bun run lint:all --fix`、`bun run build`、`bun test` 或 `bun run typecheck`。验证本身不授权修复；任一验证失败，必须报告失败摘要、`git diff` 与 `git status --short`，并等待用户对拟议修复授权。
+### 项目级验证：默认自动执行
 
-注意：`bun run lint:all --fix` 是写盘命令。只有用户明确授权运行它后才能执行；运行后必须展示自动改写 diff，并另行取得用户授权，才可将自动改动纳入后续验证、commit 或 push。
+所有冲突块落地后，agent **必须自动**执行项目 `AGENTS.md` 规定的完整验证；不需要因 `--fix` 会写盘而额外向用户要授权。验证是本地、可逆的质量检查，不是 commit / push 授权。
 
-所有冲突按一次性方案清单落地、验证全部通过、lint 自动改动已另行确认后，必须停止并汇报结果。只有用户另行明确授权“创建 merge commit 并 push origin/dev”后，才可创建 merge commit 并推送。
+按项目规定顺序运行：
 
-在 commit 或 push 前，必须先说出：
+```bash
+bun run lint:all --fix
+bun run build
+bun test
+bun run typecheck
+```
+
+- `lint:all --fix` 若改动文件：检查 diff；仅格式/lint 修复可继续。若出现超出本次合并范围的语义改动，停止并报告，等待用户决定。
+- 任一步失败：停止，报告失败命令、关键输出与当前 diff；不得提交或推送。是否继续修复，按用户后续指示执行。
+- 四步均通过后：报告验证证据，并等待用户**单独明确授权**创建 merge commit 与 push `origin/dev`。
+
+commit / push 前置确认：
 
 ```text
 确认：本次本地 `dev <- czy-all` merge 共 Y 个冲突块，用户的一次性决定已逐项列出；项目级验证已全绿（lint/build/test/typecheck）；你已明确授权创建 merge commit 并 push `origin/dev`（原话：“...”），现在才执行 commit/push。

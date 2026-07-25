@@ -124,6 +124,9 @@ export const getCopilotUsage = async (
   )
 
   if (!response.ok) {
+    const errorText = await response.clone().text()
+    consola.error("Failed to get Copilot user response body", errorText)
+
     throw new HTTPError("Failed to get Copilot usage", response)
   }
 

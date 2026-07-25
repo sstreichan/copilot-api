@@ -485,12 +485,21 @@ describe("GET /models - conditional fields", () => {
 })
 
 describe("GET /models - all models parsed correctly", () => {
-  test("returns only model_picker_enabled models from fixture", async () => {
+  test("returns picker-enabled and embedding models unless policy-disabled", async () => {
     const response = await getModelsResponse()
 
     const expectedCount = (
-      rawModelsResponse.data as Array<{ model_picker_enabled?: boolean }>
-    ).filter((m) => m.model_picker_enabled).length
+      rawModelsResponse.data as Array<{
+        capabilities?: { type?: string }
+        model_picker_enabled?: boolean
+        policy?: { state?: string }
+      }>
+    ).filter(
+      (model) =>
+        model.policy?.state !== "disabled"
+        && (model.model_picker_enabled
+          || model.capabilities?.type === "embeddings"),
+    ).length
     expect(response.data.length).toBe(expectedCount)
   })
 

@@ -16,19 +16,38 @@ describe("cacheModels", () => {
     state.models = undefined
   })
 
-  test("stores only model_picker_enabled models in state", async () => {
+  test("stores picker-enabled and embedding models unless policy-disabled", async () => {
     await cacheModels()
 
     expect(state.models).not.toBeNull()
     expect(state.models?.data.length).toBeGreaterThan(0)
     expect(
-      state.models?.data.every((model) => model.model_picker_enabled),
+      state.models?.data.every(
+        (model) =>
+          model.policy?.state !== "disabled"
+          && (model.model_picker_enabled
+            || model.capabilities.type === "embeddings"),
+      ),
     ).toBe(true)
 
     const expectedCount = (
-      rawModelsResponse.data as Array<{ model_picker_enabled?: boolean }>
-    ).filter((model) => model.model_picker_enabled).length
+      rawModelsResponse.data as Array<{
+        capabilities?: { type?: string }
+        model_picker_enabled?: boolean
+        policy?: { state?: string }
+      }>
+    ).filter(
+      (model) =>
+        model.policy?.state !== "disabled"
+        && (model.model_picker_enabled
+          || model.capabilities?.type === "embeddings"),
+    ).length
 
     expect(state.models?.data.length).toBe(expectedCount)
+    expect(
+      state.models?.data.some(
+        (model) => model.capabilities.type === "embeddings",
+      ),
+    ).toBe(true)
   })
 })
