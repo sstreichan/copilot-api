@@ -10,7 +10,6 @@ Reverse-engineered proxy for GitHub Copilot API that exposes it as OpenAI and An
 - **Build**: tsdown
 - **Testing**: Bun's built-in test runner
 - **Linting**: ESLint with @echristian/eslint-config
-- **Issue Tracking**: beads (bd) - local-first issue tracking
 
 ## Project Conventions
 
@@ -38,8 +37,6 @@ Reverse-engineered proxy for GitHub Copilot API that exposes it as OpenAI and An
 ### Git Workflow
 - Branch from `dev` for features
 - Semantic commits: `feat:`, `fix:`, `refactor:`, `test:`, `docs:`
-- Use beads (bd) for issue tracking, not GitHub Issues
-- Run `bd sync` before committing to sync beads changes
 
 ## Domain Context
 - **GitHub Copilot API**: Proprietary API used by VS Code Copilot extension

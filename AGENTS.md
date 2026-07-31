@@ -131,17 +131,6 @@ pre-commit hook 只跑 `lint-staged`（仅暂存文件的 lint），不保证项
 - 改测试或补回归：先看 `tests/AGENTS.md`
 - 做 proposal / spec / architecture 级变更：先看 `openspec/AGENTS.md`
 
-## 任务追踪
-
-本项目使用 **bd (beads)** 跟踪工作；不要在仓库根目录维护 markdown TODO 作为主追踪方式。
-
-```bash
-bd ready --json
-bd create "标题" -t bug|feature|task -p 0-4 --json
-bd update bd-42 --status in_progress --json
-bd close bd-42 --reason "完成" --json
-```
-
 ## 近期高价值变更提示
 
 - Claude `-M` 原生 messages 分支别有上游约束；相关兼容逻辑集中在 `src/services/copilot/create-messages.ts`。

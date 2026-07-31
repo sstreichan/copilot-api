@@ -36,12 +36,7 @@ history/
 
 # plan documents (local only)
 docs/plans/
-.beads/.jsonl.lock
-.beads/.local_version
 .sisyphus/
-.beads/daemon-error
-.beads/issues.jsonl
-.beads/last-touched
 .sis/
 
 # opencode
