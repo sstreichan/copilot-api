@@ -519,7 +519,6 @@ describe("createResponses websocket helpers", () => {
       "Editor-Device-Id": "device-1",
       "Editor-Plugin-Version": "copilot-chat/0.58.0",
       "Editor-Version": "vscode/1.120.0",
-      host: "api.githubcopilot.com",
       "OpenAI-Intent": "conversation-agent",
       "VScode-SessionId": "session-1",
       "VScode-MachineId": "machine-1",

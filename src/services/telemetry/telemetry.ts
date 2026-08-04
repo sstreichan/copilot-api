@@ -62,82 +62,11 @@ import {
 // Module-level cached state (internal, not exported)
 let _tid: string | null = null
 let _endpoint: string = DEFAULT_TELEMETRY_ENDPOINT
-let _hostHeader: string | null = null
 let _sku: string = ""
 
-const TELEMETRY_BUSINESS_BASE =
-  "https://telemetry.business.githubcopilot.com/telemetry"
-
-const parseTelemetryUrl = (
-  endpoint: string,
-): { url: string; host: string | null } | null => {
-  try {
-    const parsed = new URL(endpoint)
-    return { url: parsed.toString(), host: parsed.host }
-  } catch {
-    return null
-  }
-}
-
-const isTelemetryHostRoutableViaBusiness = (host: string): boolean => {
-  return (
-    /^telemetry\.(?:individual|business|enterprise)\.githubcopilot\.com$/u.test(
-      host,
-    )
-    || host === "copilot-telemetry.githubusercontent.com"
-    || host === "copilot-telemetry-service.githubusercontent.com"
-  )
-}
-
-const buildTelemetryHeaders = (
-  hostHeader: string | null,
-): Record<string, string> => {
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-  }
-
-  if (hostHeader) {
-    headers.host = hostHeader
-  }
-
-  return headers
-}
-
-const resolveTelemetryRouting = (
-  endpoint: string,
-): { endpoint: string; hostHeader: string | null } => {
-  const parsedOriginal = parseTelemetryUrl(endpoint)
-  if (
-    !parsedOriginal
-    || !parsedOriginal.host
-    || !isTelemetryHostRoutableViaBusiness(parsedOriginal.host)
-  ) {
-    return {
-      endpoint,
-      hostHeader: null,
-    }
-  }
-
-  const parsedBusiness = parseTelemetryUrl(TELEMETRY_BUSINESS_BASE)
-  if (!parsedBusiness || !parsedBusiness.host) {
-    return {
-      endpoint,
-      hostHeader: null,
-    }
-  }
-
-  if (parsedOriginal.host === parsedBusiness.host) {
-    return {
-      endpoint: TELEMETRY_BUSINESS_BASE,
-      hostHeader: null,
-    }
-  }
-
-  return {
-    endpoint: TELEMETRY_BUSINESS_BASE,
-    hostHeader: parsedOriginal.host,
-  }
-}
+const buildTelemetryHeaders = (): Record<string, string> => ({
+  "Content-Type": "application/json",
+})
 
 function createMsftEnvelope(
   eventName: string,
@@ -362,10 +291,7 @@ export function initTelemetry(copilotToken: string, endpoint?: string): void {
   const base = endpoint ?? DEFAULT_TELEMETRY_ENDPOINT
   const normalizedEndpoint =
     base.endsWith("/telemetry") ? base : `${base}/telemetry`
-  const { endpoint: routedEndpoint, hostHeader } =
-    resolveTelemetryRouting(normalizedEndpoint)
-  _endpoint = routedEndpoint
-  _hostHeader = hostHeader
+  _endpoint = normalizedEndpoint
 }
 
 /**
@@ -393,7 +319,7 @@ export function trackEvent(
   sendTelemetryEnvelope(
     {
       endpoint: _endpoint,
-      headers: buildTelemetryHeaders(_hostHeader),
+      headers: buildTelemetryHeaders(),
     },
     eventName,
     createEnvelope(eventName, properties, measurements),

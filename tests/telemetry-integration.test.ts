@@ -77,12 +77,12 @@ import {
   trackPanelRequest,
 } from "~/services/telemetry/telemetry"
 import {
+  DEFAULT_TELEMETRY_ENDPOINT,
   MSFT_TELEMETRY_API_KEY,
   MSFT_TELEMETRY_ENDPOINT,
 } from "~/services/telemetry/types"
 
-const ROUTED_TELEMETRY_ENDPOINT =
-  "https://telemetry.business.githubcopilot.com/telemetry"
+const DIRECT_TELEMETRY_ENDPOINT = DEFAULT_TELEMETRY_ENDPOINT
 
 type FetchCall = {
   url: string
@@ -130,7 +130,7 @@ function installFetchMock(
 }
 
 function telemetryCalls(): Array<FetchCall> {
-  return fetchCalls.filter((x) => x.url === ROUTED_TELEMETRY_ENDPOINT)
+  return fetchCalls.filter((x) => x.url === DIRECT_TELEMETRY_ENDPOINT)
 }
 
 function msftTrackCalls(): Array<FetchCall> {
@@ -216,7 +216,7 @@ describe("telemetry integration config gating", () => {
   it("triggers telemetry fetch when config telemetry=true", async () => {
     mockTelemetryEnabled = true
     installFetchMock((url) => {
-      if (url === ROUTED_TELEMETRY_ENDPOINT) {
+      if (url === DIRECT_TELEMETRY_ENDPOINT) {
         return Promise.resolve(
           jsonResponse({ itemsReceived: 1, itemsAccepted: 1 }),
         )
@@ -237,13 +237,34 @@ describe("telemetry integration config gating", () => {
     expect(telemetryCalls().length).toBeGreaterThan(0)
   })
 
+  it("sends configured telemetry endpoint without Host override", async () => {
+    mockTelemetryEnabled = true
+    const endpoint = "https://telemetry.individual.githubcopilot.com"
+    initTelemetry("tid=test-user;exp=9999999999;sku=test_sku", endpoint)
+    installFetchMock((url) => {
+      if (url === `${endpoint}/telemetry`) {
+        return Promise.resolve(
+          jsonResponse({ itemsReceived: 1, itemsAccepted: 1 }),
+        )
+      }
+      return Promise.resolve(new Response(null, { status: 404 }))
+    })
+
+    trackEvent("copilot-chat/request.sent", {})
+    await flushMicrotasks()
+
+    const call = fetchCalls.at(0)
+    expect(call?.url).toBe(`${endpoint}/telemetry`)
+    expect(call?.options?.headers).not.toHaveProperty("host")
+  })
+
   it("does not trigger telemetry fetch when config telemetry=false", async () => {
     mockTelemetryEnabled = false
     installFetchMock((url) => {
       if (url.includes("/chat/completions")) {
         return Promise.resolve(jsonResponse(chatResponse))
       }
-      if (url === ROUTED_TELEMETRY_ENDPOINT) {
+      if (url === DIRECT_TELEMETRY_ENDPOINT) {
         return Promise.resolve(
           jsonResponse({ itemsReceived: 1, itemsAccepted: 1 }),
         )
@@ -264,7 +285,7 @@ describe("telemetry integration config gating", () => {
       if (url.includes("/chat/completions")) {
         return Promise.resolve(jsonResponse(chatResponse))
       }
-      if (url === ROUTED_TELEMETRY_ENDPOINT) {
+      if (url === DIRECT_TELEMETRY_ENDPOINT) {
         return Promise.resolve(
           jsonResponse({ itemsReceived: 1, itemsAccepted: 1 }),
         )
@@ -284,7 +305,7 @@ describe("telemetry integration failure tolerance", () => {
   it("does not block main request when telemetry fetch throws (fire-and-forget)", async () => {
     mockTelemetryEnabled = true
     installFetchMock((url) => {
-      if (url === ROUTED_TELEMETRY_ENDPOINT) {
+      if (url === DIRECT_TELEMETRY_ENDPOINT) {
         return Promise.reject(new Error("network error"))
       }
       if (url.includes("/chat/completions")) {
@@ -305,7 +326,7 @@ describe("telemetry integration failure tolerance", () => {
   it("does not block main request when telemetry fetch times out", async () => {
     mockTelemetryEnabled = true
     installFetchMock((url) => {
-      if (url === ROUTED_TELEMETRY_ENDPOINT) {
+      if (url === DIRECT_TELEMETRY_ENDPOINT) {
         const timeoutError = new Error(
           "The operation was aborted due to timeout",
         )
@@ -373,7 +394,7 @@ describe("telemetry integration event-specific routing", () => {
       if (url.includes("/chat/completions")) {
         return Promise.resolve(jsonResponse(chatResponse))
       }
-      if (url === ROUTED_TELEMETRY_ENDPOINT) {
+      if (url === DIRECT_TELEMETRY_ENDPOINT) {
         return Promise.resolve(
           jsonResponse({ itemsReceived: 1, itemsAccepted: 1 }),
         )
@@ -417,7 +438,7 @@ describe("telemetry integration event-specific routing", () => {
     state.organizationList = ["org-a", "org-b"]
     state.enterpriseList = [999001]
     installFetchMock((url) => {
-      if (url === ROUTED_TELEMETRY_ENDPOINT) {
+      if (url === DIRECT_TELEMETRY_ENDPOINT) {
         return Promise.resolve(
           jsonResponse({ itemsReceived: 1, itemsAccepted: 1 }),
         )

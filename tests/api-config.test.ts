@@ -4,7 +4,8 @@ import type { State } from "../src/lib/state"
 
 import {
   copilotBaseUrl,
-  copilotHostHeader,
+  copilotHeaders,
+  copilotWebSocketHeaders,
   prepareForCompact,
   prepareMessageProxyHeaders,
 } from "../src/lib/api-config"
@@ -32,38 +33,32 @@ describe("copilotBaseUrl", () => {
     }
   })
 
-  test("uses token-provided api endpoint before account type routing", () => {
+  test("uses token-provided endpoint without rerouting or Host override", () => {
     const state = {
       ...baseState(),
       accountType: "enterprise",
       copilotApiUrl: "https://api.individual.githubcopilot.com",
     }
 
-    expect(copilotBaseUrl(state)).toBe("https://api.business.githubcopilot.com")
-    expect(copilotHostHeader(state)).toBe("api.githubcopilot.com")
+    expect(copilotBaseUrl(state)).toBe(
+      "https://api.individual.githubcopilot.com",
+    )
+    expect(copilotHeaders(state)).not.toHaveProperty("host")
   })
 
-  test("falls back to account type routing when token endpoint is unavailable", () => {
-    const state = {
-      ...baseState(),
-      accountType: "business",
-    }
-
-    expect(copilotBaseUrl(state)).toBe("https://api.business.githubcopilot.com")
-    expect(copilotHostHeader(state)).toBeUndefined()
-  })
-
-  test("routes enterprise account through business domain with host masquerade", () => {
+  test("uses account type endpoint without rerouting or Host override", () => {
     const state = {
       ...baseState(),
       accountType: "enterprise",
     }
 
-    expect(copilotBaseUrl(state)).toBe("https://api.business.githubcopilot.com")
-    expect(copilotHostHeader(state)).toBe("api.githubcopilot.com")
+    expect(copilotBaseUrl(state)).toBe(
+      "https://api.enterprise.githubcopilot.com",
+    )
+    expect(copilotHeaders(state)).not.toHaveProperty("host")
   })
 
-  test("falls back to enterprise domain override when token endpoint is unavailable", () => {
+  test("uses enterprise domain override when token endpoint is unavailable", () => {
     process.env.COPILOT_API_ENTERPRISE_URL = "company.ghe.com"
     const state = {
       ...baseState(),
@@ -71,7 +66,16 @@ describe("copilotBaseUrl", () => {
     }
 
     expect(copilotBaseUrl(state)).toBe("https://copilot-api.company.ghe.com")
-    expect(copilotHostHeader(state)).toBeUndefined()
+    expect(copilotHeaders(state)).not.toHaveProperty("host")
+  })
+
+  test("does not forward an explicit Host header to WebSocket requests", () => {
+    const headers = copilotWebSocketHeaders({
+      authorization: "Bearer test-token",
+      host: "api.githubcopilot.com",
+    })
+
+    expect(headers).not.toHaveProperty("host")
   })
 })
 

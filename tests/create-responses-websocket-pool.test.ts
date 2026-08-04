@@ -644,7 +644,7 @@ test("Responses websocket passes HTTPS proxy env to Bun websocket init", async (
 test("Responses websocket honors NO_PROXY when resolving Bun websocket proxy", async () => {
   const proxyEnv = clearProxyEnv()
   process.env.HTTPS_PROXY = "http://127.0.0.1:8080"
-  process.env.NO_PROXY = "api.business.githubcopilot.com"
+  process.env.NO_PROXY = "api.githubcopilot.com"
 
   try {
     await collectResponsesStream("no-proxy-request")

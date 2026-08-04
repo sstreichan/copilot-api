@@ -161,25 +161,6 @@ const EDITOR_WEBSOCKET_PLUGIN_VERSION = `copilot-chat/${COPILOT_WEBSOCKET_VERSIO
 const API_VERSION = "2026-06-01"
 const WEBSOCKET_API_VERSION = API_VERSION
 
-const COPILOT_BUSINESS_BASE_URL = "https://api.business.githubcopilot.com"
-
-const isCopilotHostRoutableViaBusiness = (host: string): boolean => {
-  return (
-    host === "api.githubcopilot.com"
-    || /^api\.(?:individual|business|enterprise)\.githubcopilot\.com$/u.test(
-      host,
-    )
-  )
-}
-
-const getHostFromBaseUrl = (baseUrl: string): string | null => {
-  try {
-    return new URL(baseUrl).host
-  } catch {
-    return null
-  }
-}
-
 const resolveCopilotOriginBaseUrl = (state: State): string => {
   if (state.copilotApiUrl) {
     return state.copilotApiUrl
@@ -203,32 +184,8 @@ const resolveCopilotOriginBaseUrl = (state: State): string => {
     : `https://api.${state.accountType}.githubcopilot.com`
 }
 
-export const copilotHostHeader = (state: State): string | undefined => {
-  const originalBaseUrl = resolveCopilotOriginBaseUrl(state)
-  const originalHost = getHostFromBaseUrl(originalBaseUrl)
-
-  if (!originalHost || !isCopilotHostRoutableViaBusiness(originalHost)) {
-    return undefined
-  }
-
-  const routedHost = getHostFromBaseUrl(COPILOT_BUSINESS_BASE_URL)
-  if (!routedHost || originalHost === routedHost) {
-    return undefined
-  }
-
-  return "api.githubcopilot.com"
-}
-
-export const copilotBaseUrl = (state: State) => {
-  const originalBaseUrl = resolveCopilotOriginBaseUrl(state)
-  const originalHost = getHostFromBaseUrl(originalBaseUrl)
-
-  if (originalHost && isCopilotHostRoutableViaBusiness(originalHost)) {
-    return COPILOT_BUSINESS_BASE_URL
-  }
-
-  return originalBaseUrl
-}
+export const copilotBaseUrl = (state: State): string =>
+  resolveCopilotOriginBaseUrl(state)
 
 export const prepareMessageProxyHeaders = (headers: Record<string, string>) => {
   if (isOpencodeOauthApp()) {
@@ -292,11 +249,6 @@ export const copilotHeaders = (
       Authorization: `Bearer ${state.copilotToken}`,
       ...getOpencodeLLMHeaders(),
       "Openai-Intent": "conversation-edits",
-    }
-
-    const hostHeader = copilotHostHeader(state)
-    if (hostHeader) {
-      headers.host = hostHeader
     }
 
     const store = requestContext.getStore()
@@ -369,8 +321,6 @@ export const copilotWebSocketHeaders = (
     "Editor-Version": source("editor-version"),
     "Copilot-Integration-Id": source("copilot-integration-id", "vscode-chat"),
   })
-
-  setPreparedHeader(headers, "host", preparedHeaders, "host")
 
   setPreparedHeader(
     headers,
@@ -456,11 +406,6 @@ const githubCopilotHeaders = (
 
   if (state.vsCodeSessionId) {
     headers["vscode-sessionid"] = state.vsCodeSessionId
-  }
-
-  const hostHeader = copilotHostHeader(state)
-  if (hostHeader) {
-    headers.host = hostHeader
   }
 
   return headers

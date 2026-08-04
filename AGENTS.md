@@ -23,19 +23,18 @@ bun run lint:all --fix # Lint 并修复
 bun run typecheck      # 类型检查
 ```
 
-## 提交前检查（MUST）
+## 代码改动最终检查（MUST）
 
 pre-commit hook 只跑 `lint-staged`（仅暂存文件的 lint），不保证项目级完整性。
-**任何 commit 之前，必须按顺序跑完以下四步，全部通过才能提交：**
+**每次代码改动完成后，报告“完成”、请求提交或实际提交前，必须运行并通过以下全量检查：**
 
-1. `bun run lint:all --fix` — 先跑，因为它可能改动文件
+1. `bun run lint:all --fix` — 先修复格式或 lint；若改动文件，继续后续所有检查
 2. `bun run build`
 3. `bun test`（全量测试，不是 `bun test -- --testPathPattern=...`）
 4. `bun run typecheck`
+5. `bun run lint:all` — 确认修复后零 lint 错误
 
-如果有任何一步失败，修好再提交，**不要用 `--no-verify` 跳过**。
-
-代码改动可先跑目标测试定位问题；但在报告“完成”、请求提交或实际提交前，必须重新按此顺序跑完**全量**四项。目标测试不能替代 `bun test`。
+任何一步失败，必须修复后从受影响检查重新运行；**不要用 `--no-verify` 跳过**。目标测试可用于定位，但不能替代全量 `bun test`。
 
 ## Commit 规范
 
