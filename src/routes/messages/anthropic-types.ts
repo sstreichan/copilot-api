@@ -192,6 +192,7 @@ export type AnthropicWebSearchContentBlock =
   | AnthropicWebSearchToolResultBlock
 
 export interface AnthropicUsage {
+  cost?: number
   input_tokens: number
   output_tokens: number
   cache_creation_input_tokens?: number
@@ -282,6 +283,7 @@ export interface AnthropicMessageDeltaEvent {
   }
   copilot_quota_snapshots?: unknown
   usage?: {
+    cost?: number
     input_tokens?: number
     output_tokens: number
     cache_creation_input_tokens?: number

@@ -10,6 +10,7 @@ import {
   prepareMessageProxyHeaders,
 } from "../src/lib/api-config"
 import { COMPACT_AUTO_CONTINUE, COMPACT_REQUEST } from "../src/lib/compact"
+import { isAlphaSearchCodexPriorityEnabled } from "../src/lib/config"
 import { state } from "../src/lib/state"
 
 const baseState = (): State => ({
@@ -124,6 +125,10 @@ describe("prepareMessageProxyHeaders", () => {
       "User-Agent": "opencode/1.0.0",
     })
   })
+})
+
+test("reads the alpha search Codex priority setting", () => {
+  expect(typeof isAlphaSearchCodexPriorityEnabled()).toBe("boolean")
 })
 
 test("prepareForCompact marks compact traffic as agent initiated", () => {

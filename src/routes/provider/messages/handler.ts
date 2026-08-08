@@ -23,6 +23,7 @@ import type {
 import {
   type ModelConfig,
   type ResolvedProviderConfig,
+  getClaudeAutoModel,
   resolveEffectiveProviderType,
   resolveProviderAuthType,
 } from "~/lib/config"
@@ -75,7 +76,10 @@ import {
   reconstructWebSearchResponse,
   stripWebSearchServerTool,
 } from "~/routes/messages/web-search/fulfill"
-import { normalizeSystemMessages } from "~/routes/messages/preprocess"
+import {
+  isClaudeAutoModelRequest,
+  normalizeSystemMessages,
+} from "~/routes/messages/preprocess"
 import {
   applyResponsesApiContextManagement,
   compactInputByLatestCompaction,
@@ -87,6 +91,7 @@ import {
   forwardProviderMessages,
   forwardProviderResponses,
 } from "~/services/providers/provider-proxy"
+import consola from "consola"
 
 const logger = createHandlerLogger("provider-messages-handler")
 
@@ -95,7 +100,19 @@ export async function handleProviderMessages(
 ): Promise<Response> {
   const provider = c.req.param("provider")
   const payload = await c.req.json<AnthropicMessagesPayload>()
-  return await handleProviderMessagesForProvider(c, { payload, provider })
+
+  const claudeAutoModel = getClaudeAutoModel()
+  if (claudeAutoModel && isClaudeAutoModelRequest(payload)) {
+    consola.debug(
+      `Claude auto model override (${provider}): ${payload.model} -> ${claudeAutoModel}`,
+    )
+    payload.model = claudeAutoModel
+  }
+
+  return await handleProviderMessagesForProvider(c, {
+    payload,
+    provider,
+  })
 }
 
 export async function handleProviderMessagesForProvider(
@@ -681,6 +698,10 @@ const streamProviderMessages = ({
   )
   return streamSSE(c, async (stream) => {
     let usage: UsageTokens = {}
+    const openRouterThinkingState: OpenRouterThinkingStreamState = {
+      signedThinkingBlockIndexes: new Set<number>(),
+      thinkingBlockIndexes: new Set<number>(),
+    }
 
     for await (const chunk of events(upstreamResponse)) {
       logger.debug("provider.messages.raw_stream_event:", chunk.data)
@@ -705,10 +726,20 @@ const streamProviderMessages = ({
         data = parsed.data
       }
 
-      await stream.writeSSE({
-        event: eventName,
-        data,
-      })
+      const streamEvents =
+        provider === "openrouter" ?
+          normalizeOpenRouterStreamEvents(
+            eventName,
+            data,
+            openRouterThinkingState,
+          )
+        : [{ data, event: eventName }]
+      for (const streamEvent of streamEvents) {
+        await stream.writeSSE({
+          event: streamEvent.event,
+          data: streamEvent.data,
+        })
+      }
     }
 
     recordUsage(usage)
@@ -972,6 +1003,83 @@ const parseProviderStreamEvent = (
   }
 }
 
+const normalizeOpenRouterThinkingSignatures = (
+  body: AnthropicResponse,
+): void => {
+  for (const block of body.content) {
+    if (block.type === "thinking") {
+      block.signature ??= ""
+    }
+  }
+}
+
+type OpenRouterThinkingStreamState = {
+  signedThinkingBlockIndexes: Set<number>
+  thinkingBlockIndexes: Set<number>
+}
+
+type ProviderStreamEvent = {
+  data: string
+  event: string | undefined
+}
+
+const normalizeOpenRouterStreamEvents = (
+  eventName: string | undefined,
+  data: string,
+  state: OpenRouterThinkingStreamState,
+): Array<ProviderStreamEvent> => {
+  let event: AnthropicStreamEventData
+  try {
+    event = JSON.parse(data) as typeof event
+  } catch {
+    return [{ data, event: eventName }]
+  }
+
+  if (
+    event.type === "content_block_start"
+    && event.content_block.type === "thinking"
+  ) {
+    const { index } = event
+    state.thinkingBlockIndexes.add(index)
+    state.signedThinkingBlockIndexes.delete(index)
+  }
+
+  if (
+    event.type === "content_block_delta"
+    && event.delta.type === "signature_delta"
+  ) {
+    const { index } = event
+    state.signedThinkingBlockIndexes.add(index)
+  }
+
+  if (event.type === "content_block_stop") {
+    const { index } = event
+    if (!state.thinkingBlockIndexes.has(index)) {
+      return [{ data, event: eventName }]
+    }
+
+    const hasSignature = state.signedThinkingBlockIndexes.has(index)
+    state.thinkingBlockIndexes.delete(index)
+    state.signedThinkingBlockIndexes.delete(index)
+
+    if (!hasSignature) {
+      return [
+        {
+          data: JSON.stringify({
+            delta: { signature: "", type: "signature_delta" },
+            index,
+            type: "content_block_delta",
+          }),
+          event: "content_block_delta",
+        },
+        { data, event: eventName },
+      ]
+    }
+  }
+
+  return [{ data, event: eventName }]
+}
+
 const respondProviderMessagesJson = (
   _c: Context,
   options: {
@@ -998,6 +1106,10 @@ const respondProviderMessagesJson = (
     pricingCurrency,
   )
   recordUsage(normalizeAnthropicUsage(body.usage))
+
+  if (provider === "openrouter") {
+    normalizeOpenRouterThinkingSignatures(body)
+  }
 
   debugJson(logger, "provider.messages.no_stream result:", body)
   return jsonWithForwardedHeaders(body, sourceHeaders)

@@ -6,6 +6,7 @@ import type { Model } from "~/services/copilot/get-models"
 
 import { COMPACT_REQUEST } from "~/lib/compact"
 import {
+  getClaudeAutoModel,
   getSmallModel,
   isMessagesApiEnabled,
   resolveAnthropicEffortForLog,
@@ -39,6 +40,7 @@ import {
   applyLastMessageCacheControl,
   getCompactType,
   getLastMessageContentCacheControl,
+  isClaudeAutoModelRequest,
   mergeToolResultForClaude,
   normalizeClaudeCodeBillingHeaderInSystem,
   normalizeSystemMessages,
@@ -75,6 +77,17 @@ export async function handleCompletion(c: Context) {
   })
   if (webSearchResult) return webSearchResult
 
+  const claudeAutoModel = getClaudeAutoModel()
+  const shouldUseClaudeAutoModel = Boolean(
+    claudeAutoModel && isClaudeAutoModelRequest(anthropicPayload),
+  )
+  if (claudeAutoModel && shouldUseClaudeAutoModel) {
+    consola.debug(
+      `Claude auto model override: ${anthropicPayload.model} -> ${claudeAutoModel}`,
+    )
+    anthropicPayload.model = claudeAutoModel
+  }
+
   const providerModelAlias = parseProviderModelAlias(anthropicPayload.model)
   if (providerModelAlias) {
     anthropicPayload.model = providerModelAlias.model
@@ -109,7 +122,7 @@ export async function handleCompletion(c: Context) {
 
   const anthropicBeta = c.req.header("anthropic-beta")
   logger.debug("Anthropic Beta header:", anthropicBeta)
-  if (!state.tokenBasedBilling) {
+  if (!state.tokenBasedBilling && !shouldUseClaudeAutoModel) {
     const tools = anthropicPayload.tools
     const noTools = !tools || tools.length === 0
     if (anthropicBeta && noTools && compactType === 0) {

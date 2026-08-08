@@ -1,13 +1,18 @@
 import { afterEach, describe, expect, mock, test } from "bun:test"
+import fs from "node:fs"
+import os from "node:os"
+import path from "node:path"
 
 import {
   attachPremiumInfo,
+  createHandlerLogger,
   debugJson,
   debugJsonAsync,
   debugJsonTail,
   formatStreamLog,
   getAttachedPremiumInfo,
   getPremiumInfoFromHeaders,
+  shutdownLoggerRuntime,
 } from "../src/lib/logger"
 import {
   attachResponseHeaders,
@@ -16,8 +21,16 @@ import {
 } from "../src/lib/response-headers"
 import { state } from "../src/lib/state"
 
+const LOG_DIR_ENV = "COPILOT_API_LOG_DIR"
+const originalLogDir = process.env[LOG_DIR_ENV]
+
 afterEach(() => {
   state.verbose = false
+  if (originalLogDir === undefined) {
+    Reflect.deleteProperty(process.env, LOG_DIR_ENV)
+  } else {
+    process.env[LOG_DIR_ENV] = originalLogDir
+  }
 })
 
 describe("getPremiumInfoFromHeaders", () => {
@@ -215,4 +228,48 @@ describe("debugJsonTail", () => {
 
     expect(logger.debug).toHaveBeenCalledWith("payload", expected)
   })
+})
+
+test("createHandlerLogger writes to COPILOT_API_LOG_DIR when set", async () => {
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), "copilot-api-logs-"))
+  process.env[LOG_DIR_ENV] = logDir
+
+  try {
+    const logger = createHandlerLogger("env-override-handler")
+    for (let index = 0; index < 100; index += 1) {
+      logger.error(`line-${index}`)
+    }
+
+    const dateKey = new Date().toLocaleDateString("sv-SE")
+    const filePath = path.join(logDir, `env-override-handler-${dateKey}.log`)
+
+    // Poll until the last line is flushed to disk: the log file is created
+    // asynchronously by fs.createWriteStream, so it can exist while still
+    // empty. Checking only for existence would race with the async write.
+    let content = ""
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      if (fs.existsSync(filePath)) {
+        content = fs.readFileSync(filePath, "utf8")
+        if (content.includes("line-99")) {
+          break
+        }
+      }
+      await new Promise((resolve) => setTimeout(resolve, 20))
+    }
+
+    expect(fs.existsSync(filePath)).toBe(true)
+    expect(content).toContain("line-0")
+    expect(content).toContain("line-99")
+  } finally {
+    // Close the write stream before deleting: Windows cannot remove a
+    // directory while a file handle is still open. Retries cover the brief
+    // window until the stream's fd is released after end().
+    shutdownLoggerRuntime()
+    fs.rmSync(logDir, {
+      recursive: true,
+      force: true,
+      maxRetries: 10,
+      retryDelay: 100,
+    })
+  }
 })
