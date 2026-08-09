@@ -462,7 +462,7 @@ const normalizeResponseInputItem = (
   return item
 }
 
-const isReasoningItem = (
+export const isReasoningItem = (
   item: ResponseInputItem,
 ): item is ResponseInputReasoning => {
   return "type" in item && item.type === "reasoning"

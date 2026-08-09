@@ -1,3 +1,5 @@
+import consola from "consola"
+
 import { mergeCopilotUsage } from "~/lib/token-usage"
 
 import type {
@@ -227,11 +229,21 @@ const translateResponsesInputToChatMessages = (
     return messages
   }
 
+  let droppedReasoningItems = 0
   for (const item of payload.input) {
+    if ("type" in item && item.type === "reasoning") {
+      droppedReasoningItems++
+      continue
+    }
     const message = translateResponsesInputItem(item)
     if (message) {
       messages.push(message)
     }
+  }
+  if (droppedReasoningItems > 0) {
+    consola.info(
+      `drop thinking block, reason: chat-completions fallback has no reasoning equivalent; skipped ${droppedReasoningItems} reasoning item(s)`,
+    )
   }
 
   return messages

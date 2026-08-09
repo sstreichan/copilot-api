@@ -39,6 +39,10 @@ import {
 } from "~/services/telemetry/telemetry"
 
 import { retryAfterInvalidAutoModeSelector } from "./auto-session-retry"
+import {
+  isReasoningItem,
+  normalizeResponsesInputForReplay,
+} from "~/routes/responses/utils"
 import type { CopilotUsage } from "~/lib/token-usage"
 
 export type { CopilotUsage }
@@ -690,6 +694,30 @@ interface ResponsesHttpContext {
   start: number
 }
 
+const hasStrippableReasoningItem = (payload: ResponsesPayload): boolean => {
+  return (
+    Array.isArray(payload.input)
+    && payload.input.some(
+      (item) => isReasoningItem(item) && item.encrypted_content !== undefined,
+    )
+  )
+}
+
+const getResponseErrorMessage = async (
+  response: Response,
+): Promise<string | undefined> => {
+  try {
+    const parsed = JSON.parse(await response.clone().text()) as {
+      error?: { message?: unknown }
+    }
+    return typeof parsed.error?.message === "string" ?
+        parsed.error.message
+      : undefined
+  } catch {
+    return undefined
+  }
+}
+
 const createHttpResponses = async (
   payload: ResponsesPayload,
   headers: Record<string, string>,
@@ -703,7 +731,7 @@ const createHttpResponses = async (
       body: JSON.stringify(payload),
     })
 
-  const response = await retryAfterInvalidAutoModeSelector(
+  let response = await retryAfterInvalidAutoModeSelector(
     await sendRequest(),
     headers,
     payload.model,
@@ -711,6 +739,24 @@ const createHttpResponses = async (
   )
 
   logCopilotRateLimits(response.headers)
+
+  if (!response.ok) {
+    const errorMessage = await getResponseErrorMessage(response)
+    const shouldStripReasoningAndRetry =
+      response.status >= 400
+      && response.status < 500
+      && errorMessage?.includes("belong") === true
+      && hasStrippableReasoningItem(payload)
+
+    if (shouldStripReasoningAndRetry) {
+      consola.warn(
+        `drop thinking block, reason: upstream ${response.status} response mentions "belong" (instance-bound item ID); stripping reasoning.encrypted_content and retrying once`,
+      )
+      normalizeResponsesInputForReplay(payload)
+      response = await sendRequest()
+      logCopilotRateLimits(response.headers)
+    }
+  }
 
   if (!response.ok) {
     consola.error("Failed to create responses", response)

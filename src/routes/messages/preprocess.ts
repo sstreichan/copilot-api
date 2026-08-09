@@ -1,3 +1,5 @@
+import consola from "consola"
+
 import type { Model } from "~/services/copilot/get-models"
 
 import {
@@ -888,18 +890,37 @@ const stripToolEagerInputStreaming = (
 const filterAssistantThinkingBlocks = (
   payload: AnthropicMessagesPayload,
 ): void => {
+  let dropped = 0
+  const reasons = {
+    empty: 0,
+    placeholder: 0,
+    noSignature: 0,
+    crossModelSignature: 0,
+  }
   for (const msg of payload.messages) {
     if (msg.role === "assistant" && Array.isArray(msg.content)) {
       msg.content = msg.content.filter((block) => {
         if (block.type !== "thinking") return true
-        return (
-          block.thinking
-          && block.thinking !== "Thinking..."
-          && block.signature
-          && !block.signature.includes("@")
-        )
+        if (!block.thinking) {
+          reasons.empty++
+        } else if (block.thinking === "Thinking...") {
+          reasons.placeholder++
+        } else if (!block.signature) {
+          reasons.noSignature++
+        } else if (block.signature.includes("@")) {
+          reasons.crossModelSignature++
+        } else {
+          return true
+        }
+        dropped++
+        return false
       })
     }
+  }
+  if (dropped > 0) {
+    consola.info(
+      `drop thinking block, reason: preprocess filter for ${payload.model}; dropped ${dropped} block(s) (empty: ${reasons.empty}, placeholder: ${reasons.placeholder}, no-signature: ${reasons.noSignature}, cross-model-signature: ${reasons.crossModelSignature})`,
+    )
   }
 }
 
@@ -955,6 +976,9 @@ export const prepareMessagesApiPayload = (
     if (!reasoningEfforts || reasoningEfforts.length === 0) {
       if (payload.output_config?.effort) {
         delete payload.output_config.effort
+        consola.info(
+          `drop thinking config, reason: model ${payload.model} does not support reasoning effort; removed output_config.effort`,
+        )
         if (Object.keys(payload.output_config).length === 0) {
           delete payload.output_config
         }
@@ -963,6 +987,11 @@ export const prepareMessagesApiPayload = (
 
     if (disableThink) {
       delete payload.thinking
+      if (hasThinking) {
+        consola.info(
+          `drop thinking config, reason: tool_choice forces tool use, incompatible with extended thinking; removed thinking for ${payload.model}`,
+        )
+      }
     } else {
       const budgetTokens = modelSupports?.max_thinking_budget ?? 4096
       if (payload.thinking?.type === "adaptive") {

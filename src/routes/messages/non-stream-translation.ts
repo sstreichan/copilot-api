@@ -1,3 +1,5 @@
+import consola from "consola"
+
 import type { ToolContentSupportType } from "~/lib/config"
 import type { Model } from "~/services/copilot/get-models"
 
@@ -154,12 +156,18 @@ function translateAnthropicMessagesToOpenAI(
   capabilities: TranslationCapabilities,
 ): Array<Message> {
   const systemMessages = handleSystemPrompt(payload.system)
+  const droppedBlocks = { count: 0 }
   const otherMessages = (payload.messages as Array<AnthropicMessage>).flatMap(
     (message) =>
       message.role === "user" ?
         handleUserMessage(message, capabilities)
-      : handleAssistantMessage(message, modelId, capabilities),
+      : handleAssistantMessage(message, modelId, capabilities, droppedBlocks),
   )
+  if (droppedBlocks.count > 0) {
+    consola.info(
+      `drop thinking block, reason: claude translation filter for ${modelId}; dropped ${droppedBlocks.count} block(s)`,
+    )
+  }
   return [...systemMessages, ...otherMessages]
 }
 
@@ -343,6 +351,7 @@ function handleAssistantMessage(
   message: AnthropicAssistantMessage,
   modelId: string,
   capabilities: TranslationCapabilities,
+  droppedBlocks: { count: number },
 ): Array<Message> {
   if (!Array.isArray(message.content)) {
     return [
@@ -367,6 +376,7 @@ function handleAssistantMessage(
   )
 
   if (modelId.startsWith("claude")) {
+    const beforeFilter = thinkingBlocks.length
     thinkingBlocks = thinkingBlocks.filter(
       (b) =>
         b.thinking
@@ -375,6 +385,7 @@ function handleAssistantMessage(
         // gpt signature has @ in it, so filter those out for claude models
         && !b.signature.includes("@"),
     )
+    droppedBlocks.count += beforeFilter - thinkingBlocks.length
   }
 
   const thinkingContents = thinkingBlocks

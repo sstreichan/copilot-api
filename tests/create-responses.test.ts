@@ -7,6 +7,7 @@ import {
   beforeEach,
   afterEach,
   describe,
+  type Mock,
 } from "bun:test"
 
 import * as autoSession from "../src/lib/auto-session"
@@ -438,6 +439,219 @@ describe("Error path", () => {
     } catch (error) {
       expect((error as Error).message).toBe("Failed to create responses")
     }
+  })
+})
+
+// ── Reasoning encrypted_content strip-retry ───────────────────────────────
+
+const BELONG_ERROR_BODY =
+  '{"error":{"message":"input item ID does not belong to this connection","code":""}}'
+
+type TestFetchImpl = (
+  url: string,
+  opts: { headers: Record<string, string>; body?: string },
+) => Promise<unknown>
+
+const createErrorFetchMockWithBody = (
+  status: number,
+  body: string,
+): Mock<TestFetchImpl> =>
+  mock((_url: string, _opts: { headers: Record<string, string> }) =>
+    Promise.resolve({
+      ok: false,
+      status,
+      json: () => Promise.resolve({ error: "upstream error" }),
+      text: () => Promise.resolve(body),
+      headers: new Headers(),
+      clone: function () {
+        return this
+      },
+    }),
+  )
+
+const createBelongThenSuccessFetchMock = (): Mock<TestFetchImpl> => {
+  let call = 0
+  return mock((_url: string, _opts: { headers: Record<string, string> }) => {
+    call += 1
+    if (call === 1) {
+      return Promise.resolve({
+        ok: false,
+        status: 401,
+        json: () => Promise.resolve({ error: "upstream error" }),
+        text: () => Promise.resolve(BELONG_ERROR_BODY),
+        headers: new Headers(),
+        clone: function () {
+          return this
+        },
+      })
+    }
+    return Promise.resolve({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          id: "resp-retry",
+          output: [
+            {
+              type: "message",
+              role: "assistant",
+              content: [{ type: "output_text", text: "ok" }],
+            },
+          ],
+          usage: { input_tokens: 10, output_tokens: 5 },
+          incomplete_details: null,
+          error: null,
+        }),
+      text: () => Promise.resolve('{"itemsReceived":1,"itemsAccepted":1}'),
+      headers: new Headers(),
+    })
+  })
+}
+
+describe("Reasoning strip-retry on belong 4xx", () => {
+  const reasoningPayload = (): ResponsesPayload =>
+    ({
+      model: "gpt-test",
+      input: [
+        { role: "user", content: "hi" },
+        {
+          type: "reasoning",
+          id: "r-1",
+          summary: [],
+          encrypted_content: "enc-abc",
+        },
+        { role: "user", content: "next" },
+      ],
+    }) as unknown as ResponsesPayload
+
+  const setFetch = (fetchImpl: Mock<TestFetchImpl>) => {
+    // @ts-expect-error - Mock fetch doesn't implement all fetch properties
+    ;(globalThis as unknown as { fetch: typeof fetch }).fetch = fetchImpl
+  }
+
+  const getRequestReasoningItem = (
+    fetchImpl: Mock<TestFetchImpl>,
+    callIndex: number,
+  ) => {
+    const rawBody = fetchImpl.mock.calls[callIndex][1]?.body
+    if (rawBody === undefined) {
+      throw new Error(`request body missing on fetch call ${callIndex}`)
+    }
+    const body = JSON.parse(rawBody) as {
+      input: Array<Record<string, unknown>>
+    }
+    return body.input.find((item) => item.type === "reasoning")
+  }
+
+  test("sends encrypted_content first, retries once with it stripped when 4xx mentions belong", async () => {
+    const belongMock = createBelongThenSuccessFetchMock()
+    setFetch(belongMock)
+
+    const result = await createResponses(reasoningPayload(), {
+      vision: false,
+      initiator: "user",
+    })
+
+    expect(belongMock).toHaveBeenCalledTimes(2)
+    expect(getRequestReasoningItem(belongMock, 0)).toMatchObject({
+      encrypted_content: "enc-abc",
+    })
+    const retryReasoning = getRequestReasoningItem(belongMock, 1)
+    expect(retryReasoning).toMatchObject({
+      id: "r-1",
+      summary: [],
+      type: "reasoning",
+    })
+    expect(retryReasoning?.encrypted_content).toBeUndefined()
+    expect(result).toMatchObject({ id: "resp-retry" })
+  })
+
+  test("does not retry when the error body has no belong marker", async () => {
+    const noBelongMock = createErrorFetchMockWithBody(
+      401,
+      "unauthorized: AuthenticateToken authentication failed",
+    )
+    setFetch(noBelongMock)
+
+    try {
+      await createResponses(reasoningPayload(), {
+        vision: false,
+        initiator: "user",
+      })
+      expect.unreachable("Should have thrown")
+    } catch (error) {
+      expect((error as Error).message).toBe("Failed to create responses")
+    }
+    expect(noBelongMock).toHaveBeenCalledTimes(1)
+  })
+  test("does not retry when belong appears outside error.message", async () => {
+    const unrelatedBelongMock = createErrorFetchMockWithBody(
+      401,
+      '{"error":{"message":"input item validation failed","detail":"item does not belong to this connection"}}',
+    )
+    setFetch(unrelatedBelongMock)
+
+    try {
+      await createResponses(reasoningPayload(), {
+        vision: false,
+        initiator: "user",
+      })
+      expect.unreachable("Should have thrown")
+    } catch (error) {
+      expect((error as Error).message).toBe("Failed to create responses")
+    }
+    expect(unrelatedBelongMock).toHaveBeenCalledTimes(1)
+  })
+
+  test("does not retry when payload has no strippable reasoning item", async () => {
+    const belongMock = createErrorFetchMockWithBody(401, BELONG_ERROR_BODY)
+    setFetch(belongMock)
+
+    const payload = {
+      model: "gpt-test",
+      input: [{ role: "user" as const, content: "hi" }],
+    }
+    try {
+      await createResponses(payload, { vision: false, initiator: "user" })
+      expect.unreachable("Should have thrown")
+    } catch (error) {
+      expect((error as Error).message).toBe("Failed to create responses")
+    }
+    expect(belongMock).toHaveBeenCalledTimes(1)
+  })
+
+  test("does not retry on non-4xx even when the body mentions belong", async () => {
+    const serverErrorMock = createErrorFetchMockWithBody(500, BELONG_ERROR_BODY)
+    setFetch(serverErrorMock)
+
+    try {
+      await createResponses(reasoningPayload(), {
+        vision: false,
+        initiator: "user",
+      })
+      expect.unreachable("Should have thrown")
+    } catch (error) {
+      expect((error as Error).message).toBe("Failed to create responses")
+    }
+    expect(serverErrorMock).toHaveBeenCalledTimes(1)
+  })
+
+  test("does not loop when the retry also fails", async () => {
+    const alwaysBelongMock = createErrorFetchMockWithBody(
+      401,
+      BELONG_ERROR_BODY,
+    )
+    setFetch(alwaysBelongMock)
+
+    try {
+      await createResponses(reasoningPayload(), {
+        vision: false,
+        initiator: "user",
+      })
+      expect.unreachable("Should have thrown")
+    } catch (error) {
+      expect((error as Error).message).toBe("Failed to create responses")
+    }
+    expect(alwaysBelongMock).toHaveBeenCalledTimes(2)
   })
 })
 

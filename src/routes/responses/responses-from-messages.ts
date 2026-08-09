@@ -1,5 +1,7 @@
 /* eslint-disable max-lines -- Anthropic ↔ Responses translation keeps stream-state, message-state, and event-state machines colocated for atomic review */
 
+import consola from "consola"
+
 import type {
   AnthropicAssistantContentBlock,
   AnthropicContentBlockDeltaEvent,
@@ -392,10 +394,15 @@ const translateResponsesInput = (
     pendingAssistantBlocks = []
   }
 
+  let droppedEmptySummary = 0
   for (const item of input) {
     if (isReasoningItem(item)) {
       const thinking = translateReasoningItem(item)
-      if (thinking) pendingAssistantBlocks.push(thinking)
+      if (thinking) {
+        pendingAssistantBlocks.push(thinking)
+      } else {
+        droppedEmptySummary++
+      }
       continue
     }
 
@@ -429,6 +436,12 @@ const translateResponsesInput = (
   }
 
   flushAssistantBlocks()
+
+  if (droppedEmptySummary > 0) {
+    consola.info(
+      `drop thinking block, reason: empty summary; omitted ${droppedEmptySummary} reasoning item(s)`,
+    )
+  }
 
   return messages
 }

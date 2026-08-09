@@ -593,7 +593,12 @@ const createOpenAICompatiblePayload = (
   if (isDashScopeProvider) {
     applyOpenAICompatibleThinkingBudget(openAIPayload, payload)
   } else {
-    delete openAIPayload.thinking_budget
+    if (openAIPayload.thinking_budget !== undefined) {
+      delete openAIPayload.thinking_budget
+      consola.info(
+        "drop thinking config, reason: provider does not support thinking_budget; removed before forwarding",
+      )
+    }
   }
 
   if (payload.top_k !== undefined) {
@@ -641,6 +646,7 @@ const createOpenAICompatiblePayload = (
 const normalizeOpenAICompatibleReasoningContent = (
   payload: ChatCompletionsPayload,
 ): void => {
+  let dropped = 0
   for (const message of payload.messages) {
     if (message.role !== "assistant") {
       continue
@@ -653,8 +659,20 @@ const normalizeOpenAICompatibleReasoningContent = (
       message.reasoning_content = message.reasoning_text
     }
 
+    if (
+      message.reasoning_text !== undefined
+      || message.reasoning_opaque !== undefined
+    ) {
+      dropped++
+    }
+
     delete message.reasoning_text
     delete message.reasoning_opaque
+  }
+  if (dropped > 0) {
+    consola.info(
+      `drop thinking block, reason: openai-compatible provider does not recognize reasoning_text/reasoning_opaque; deleted after mapping to reasoning_content in ${dropped} message(s)`,
+    )
   }
 }
 

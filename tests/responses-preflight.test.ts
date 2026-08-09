@@ -127,12 +127,13 @@ describe("preflightResponsesPayload", () => {
     expect(tools.find((t) => t.name === "foo")).toBeDefined()
   })
 
-  it("normalizes reasoning items without collapsing replay input", () => {
+  it("preserves reasoning items verbatim, including encrypted_content", () => {
     const compactionItem = { type: "compaction", summary: "old summary" }
     const reasoningItem = {
       type: "reasoning",
       id: "r1",
       summary: undefined,
+      encrypted_content: "enc-123",
     }
     const userItem = { type: "message", role: "user", content: "hello" }
 
@@ -153,13 +154,15 @@ describe("preflightResponsesPayload", () => {
       type: "message",
     })
     expect(input).toContain(compactionItem)
-    const normalized = input.find((i) => i.type === "reasoning") as Record<
+    const preserved = input.find((i) => i.type === "reasoning") as Record<
       string,
       unknown
     >
-    expect(normalized).toBeDefined()
-    expect(normalized.summary).toEqual([])
-    expect(normalized.id).toBe("r1")
+    expect(preserved).toBeDefined()
+    expect(preserved).toBe(reasoningItem)
+    expect(preserved.encrypted_content).toBe("enc-123")
+    expect(preserved.id).toBe("r1")
+    expect(preserved.summary).toBeUndefined()
   })
 
   it("is safe with empty tools and empty input", () => {

@@ -3,8 +3,6 @@ import type { ResponsesPayload } from "~/services/copilot/create-responses"
 import { isResponsesApiWebSearchEnabled } from "~/lib/config"
 import { createHandlerLogger } from "~/lib/logger"
 
-import { normalizeResponsesInputForReplay } from "./utils"
-
 const logger = createHandlerLogger("responses-handler")
 
 const COPILOT_UNSUPPORTED_TOOL_TYPES = new Set(["image_generation"])
@@ -44,12 +42,14 @@ export const removeUnsupportedTools = (payload: ResponsesPayload): void => {
  * Runs common Responses preflight mutations in order:
  * 1. removeUnsupportedTools — drop image_generation etc.
  * 2. removeWebSearchTool — conditional on config flag
- * 3. normalizeResponsesInputForReplay — clean up reasoning items
+ *
+ * Reasoning items are sent verbatim (including encrypted_content); stripping
+ * only happens as a bounded retry in createHttpResponses when upstream
+ * rejects instance-bound item IDs.
  */
 export const preflightResponsesPayload = (payload: ResponsesPayload): void => {
   removeUnsupportedTools(payload)
   if (!isResponsesApiWebSearchEnabled()) {
     removeWebSearchTool(payload)
   }
-  normalizeResponsesInputForReplay(payload)
 }

@@ -316,6 +316,18 @@ const translateAssistantMessage = (
         if (reasoning) items.push(reasoning)
         continue
       }
+
+      consola.info(
+        "drop thinking block, reason: signature missing @ (cannot decode reasoning id); not replaying",
+      )
+      continue
+    }
+
+    if (block.type === "thinking") {
+      consola.info(
+        "drop thinking block, reason: signature missing; not replaying as reasoning",
+      )
+      continue
     }
 
     const converted = translateAssistantContentBlock(block)
@@ -461,6 +473,9 @@ const createReasoningContent = (
   // Oversized IDs cause "Invalid 'input[n].id': string too long" errors.
   // Returning undefined stops this thinking block from being replayed.
   if (id.length > MAX_RESPONSES_REASONING_ID_LENGTH) {
+    consola.warn(
+      `drop thinking block, reason: reasoning id length ${id.length} exceeds ${MAX_RESPONSES_REASONING_ID_LENGTH} (copilot responses limit); not replaying`,
+    )
     return undefined
   }
 
