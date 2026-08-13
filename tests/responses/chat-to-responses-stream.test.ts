@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test"
 
-import type { ChatCompletionChunk } from "~/services/copilot/create-chat-completions"
+import type { ChatCompletionChunk } from "~/lib/types/chat-completions"
 
 import {
   createChatCompletionToResponsesStreamState,

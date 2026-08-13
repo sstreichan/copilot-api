@@ -5,7 +5,7 @@ import { streamSSE } from "hono/streaming"
 
 import type { CompactType } from "~/lib/compact"
 import type { SubagentMarker } from "~/lib/subagent"
-import type { Model } from "~/services/copilot/get-models"
+import type { Model } from "~/lib/types/models"
 
 import {
   getMessageApiWebSearchModel,
@@ -34,12 +34,12 @@ import {
   getUUID,
   parseUserIdMetadata,
 } from "~/lib/utils"
-import {
-  createResponses as createCopilotResponses,
-  type ResponsesPayload,
-  type ResponsesResult,
-  type ResponsesStream,
-} from "~/services/copilot/create-responses"
+import type {
+  ResponsesPayload,
+  ResponsesResult,
+  ResponsesStream,
+} from "~/lib/types/responses"
+import { createResponses as createCopilotResponses } from "~/services/copilot/create-responses"
 
 import type {
   AnthropicContentBlockStartEvent,
@@ -50,7 +50,7 @@ import type {
   AnthropicTool,
   AnthropicWebSearchContentBlock,
   AnthropicWebSearchResultItem,
-} from "../anthropic-types"
+} from "~/lib/types/anthropic"
 import { normalizeSystemMessages } from "../preprocess"
 import { collectResponsesStreamResult } from "../responses-stream-collection"
 import { translateAnthropicMessagesToResponsesPayload } from "../responses-translation"
@@ -394,6 +394,7 @@ export const handleWebSearchViaResponses = async (
       subagentMarker: options.subagentMarker,
       requestId: options.requestId,
       sessionId: options.sessionId,
+      signal: c.req?.raw?.signal,
       compactType: options.compactType,
     },
   )

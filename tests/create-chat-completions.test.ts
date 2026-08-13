@@ -8,7 +8,7 @@ import {
   spyOn,
 } from "bun:test"
 
-import type { ChatCompletionsPayload } from "../src/services/copilot/create-chat-completions"
+import type { ChatCompletionsPayload } from "~/lib/types/chat-completions"
 
 import * as autoSession from "../src/lib/auto-session"
 import { getAttachedResponseHeaders } from "../src/lib/response-headers"

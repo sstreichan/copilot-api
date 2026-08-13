@@ -10,7 +10,8 @@ import {
 
 import * as autoSession from "../src/lib/auto-session"
 import * as config from "../src/lib/config"
-import * as utils from "../src/lib/utils"
+import * as modelCache from "../src/services/copilot/models-cache"
+import * as vscodeEnv from "../src/services/vscode-env"
 
 const callOrder: Array<string> = []
 
@@ -18,14 +19,14 @@ describe("runServer auto-session prewarm order", () => {
   beforeEach(async () => {
     callOrder.length = 0
 
-    spyOn(utils, "cacheModels").mockImplementation(() => {
+    spyOn(modelCache, "cacheModels").mockImplementation(() => {
       callOrder.push("cacheModels")
       return Promise.resolve()
     })
-    spyOn(utils, "cacheVSCodeVersion").mockResolvedValue(undefined)
-    spyOn(utils, "cacheMacMachineId").mockImplementation(() => undefined)
-    spyOn(utils, "cacheVsCodeSessionId").mockImplementation(() => undefined)
-    spyOn(utils, "cacheVsCodeDeviceId").mockResolvedValue(undefined)
+    spyOn(vscodeEnv, "cacheVSCodeVersion").mockResolvedValue(undefined)
+    spyOn(vscodeEnv, "cacheMacMachineId").mockImplementation(() => undefined)
+    spyOn(vscodeEnv, "cacheVsCodeSessionId").mockImplementation(() => undefined)
+    spyOn(vscodeEnv, "cacheVsCodeDeviceId").mockResolvedValue(undefined)
     spyOn(autoSession, "prewarmAutoSession").mockImplementation(() => {
       callOrder.push("prewarmAutoSession")
       return Promise.resolve()

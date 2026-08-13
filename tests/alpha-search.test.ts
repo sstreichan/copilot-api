@@ -1,61 +1,39 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test"
 import { Hono } from "hono"
 
-import type { ResolvedProviderConfig } from "../src/lib/config"
-import type {
-  ResponsesPayload,
-  ResponsesResult,
-} from "../src/services/copilot/create-responses"
-
-const actualConfigModule = await import("../src/lib/config")
-const actualTokenModule = await import("../src/lib/token")
+import type { ResolvedProviderConfig } from "~/lib/config"
+import type { ResponsesPayload, ResponsesResult } from "~/lib/types/responses"
 
 let codexProviderConfig: ResolvedProviderConfig | null = null
 let openrouterProviderConfig: ResolvedProviderConfig | null = null
 let alphaSearchCodexPriorityEnabled = true
 let modelMappings: Record<string, string> = {}
 
-await mock.module("~/lib/config", () => ({
-  ...actualConfigModule,
-  getProviderConfig: (provider: string) => {
-    if (provider === "codex") return codexProviderConfig
-    if (provider === "openrouter") return openrouterProviderConfig
-    return null
-  },
-  getRawProviderConfig: (provider: string) => {
-    if (provider === "codex") return codexProviderConfig
-    if (provider === "openrouter") return openrouterProviderConfig
-    return null
-  },
-  isAlphaSearchCodexPriorityEnabled: () => alphaSearchCodexPriorityEnabled,
-  resolveMappedModel: (model: string) => modelMappings[model] ?? model,
-}))
-
-await mock.module("~/lib/token", () => ({
-  ...actualTokenModule,
-  setupCodexToken: async () => {},
-}))
-
-const { state } = await import("../src/lib/state")
-const { HTTPError } = await import("../src/lib/error")
-const { closeUsageStore } = await import("../src/lib/token-usage")
+const { state } = await import("~/lib/state")
+const { HTTPError } = await import("~/lib/error")
+const { closeUsageStore } = await import("~/lib/token-usage")
 const { forwardCodexAlphaSearch, resolveCodexAlphaSearchUrl } = await import(
-  "../src/services/codex/alpha-search"
+  "~/services/codex/alpha-search"
 )
 const { forwardCodexModels, getModels, resolveCodexModelsUrl } = await import(
-  "../src/services/codex/get-models"
+  "~/services/codex/get-models"
 )
-const { alphaSearchRoutes } = await import("../src/routes/alpha-search/route")
+const { alphaSearchRouteDependencies, alphaSearchRoutes } = await import(
+  "~/routes/alpha-search/route"
+)
 const { alphaSearchResponsesDependencies, resetAlphaSearchState } =
-  await import("../src/routes/alpha-search/alpha-search-responses")
-const { providerAlphaSearchRoutes } = await import(
-  "../src/routes/provider/alpha-search/route"
-)
+  await import("~/routes/alpha-search/alpha-search-responses")
+const { providerAlphaSearchRouteDependencies, providerAlphaSearchRoutes } =
+  await import("~/routes/provider/alpha-search/route")
 
 const DB_PATH_ENV = "COPILOT_API_SQLITE_DB_PATH"
 
 const originalFetch = globalThis.fetch
 const originalResponsesDependencies = { ...alphaSearchResponsesDependencies }
+const originalRouteDependencies = { ...alphaSearchRouteDependencies }
+const originalProviderRouteDependencies = {
+  ...providerAlphaSearchRouteDependencies,
+}
 const originalModels = state.models
 const originalCopilotToken = state.copilotToken
 const originalMacMachineId = state.macMachineId
@@ -230,6 +208,20 @@ function requestFallback(
   )
 }
 
+const resolveTestProviderConfig = (
+  provider: string,
+): Promise<ResolvedProviderConfig | null> => {
+  if (provider === "codex") return Promise.resolve(codexProviderConfig)
+  if (provider === "openrouter")
+    return Promise.resolve(openrouterProviderConfig)
+  return Promise.resolve(null)
+}
+
+const resolveTestProviderType = (
+  providerConfig: ResolvedProviderConfig,
+  model: string,
+) => providerConfig.models?.[model]?.type ?? providerConfig.type
+
 beforeEach(async () => {
   process.env[DB_PATH_ENV] = ":memory:"
   await closeUsageStore()
@@ -282,6 +274,22 @@ beforeEach(async () => {
     Date.parse("2026-08-03T12:00:00.000Z")
   alphaSearchResponsesDependencies.resolveMappedModel = (model) =>
     modelMappings[model] ?? model
+  alphaSearchResponsesDependencies.resolveEffectiveProviderType =
+    resolveTestProviderType
+  alphaSearchResponsesDependencies.resolveProviderConfig =
+    resolveTestProviderConfig
+  alphaSearchRouteDependencies.findEndpointModel = (model) =>
+    state.models?.data.find((candidate) => candidate.id === model)
+  alphaSearchRouteDependencies.getAlphaSearchModel = () => "gpt-5-mini"
+  alphaSearchRouteDependencies.isAlphaSearchCodexPriorityEnabled = () =>
+    alphaSearchCodexPriorityEnabled
+  alphaSearchRouteDependencies.resolveEffectiveProviderType =
+    resolveTestProviderType
+  alphaSearchRouteDependencies.resolveMappedModel = (model) =>
+    modelMappings[model] ?? model
+  alphaSearchRouteDependencies.resolveProviderConfig = resolveTestProviderConfig
+  providerAlphaSearchRouteDependencies.resolveProviderConfig =
+    resolveTestProviderConfig
   resetAlphaSearchState()
   ;(globalThis as unknown as { fetch: typeof fetch }).fetch =
     fetchMock as unknown as typeof fetch
@@ -299,6 +307,11 @@ afterEach(async () => {
   state.verbose = false
   openrouterProviderConfig = null
   Object.assign(alphaSearchResponsesDependencies, originalResponsesDependencies)
+  Object.assign(alphaSearchRouteDependencies, originalRouteDependencies)
+  Object.assign(
+    providerAlphaSearchRouteDependencies,
+    originalProviderRouteDependencies,
+  )
   resetAlphaSearchState()
 })
 
@@ -497,6 +510,55 @@ describe("Codex alpha search forwarding", () => {
     )
   })
 
+  test("supports srvx-style wrapped requests when rebuilding the Codex request", async () => {
+    // srvx's Node adapter wraps incoming requests in a class whose prototype
+    // chain satisfies `instanceof Request` without native Request internals.
+    const realRequest = new Request("http://localhost/alpha/search?q=srvx", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-client-header": "kept",
+      },
+      body: JSON.stringify(alphaSearchPayload),
+    })
+    class RequestWrapper {
+      get url() {
+        return realRequest.url
+      }
+      get method() {
+        return realRequest.method
+      }
+      get headers() {
+        return realRequest.headers
+      }
+      get signal() {
+        return realRequest.signal
+      }
+      clone() {
+        return realRequest.clone()
+      }
+    }
+    Object.setPrototypeOf(RequestWrapper.prototype, Request.prototype)
+    const wrappedRequest = new RequestWrapper() as unknown as Request
+    expect(wrappedRequest instanceof Request).toBe(true)
+
+    const response = await createApp().fetch(wrappedRequest)
+
+    expect(response.status).toBe(200)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    const [url, init] = fetchMock.mock.calls[0] ?? []
+    expect(url).toBe(
+      "https://chatgpt.com/backend-api/codex/alpha/search?q=srvx",
+    )
+    const headers = new Headers(init?.headers)
+    expect(headers.get("content-type")).toBe("application/json")
+    expect(headers.get("x-client-header")).toBe("kept")
+    expect(await new Response(init?.body).json()).toEqual({
+      ...alphaSearchPayload,
+      model: "gpt-5.6-sol",
+    })
+  })
+
   test("returns 404 when the Codex provider is unavailable", async () => {
     codexProviderConfig = null
 
@@ -531,6 +593,26 @@ describe("Alpha search Responses adapter", () => {
     const [, init] = fetchMock.mock.calls[0] ?? []
     expect(await new Response(init?.body).json()).toMatchObject({
       model: "gpt-5.6-sol",
+    })
+  })
+
+  test("rewrites non-gpt models to gpt-5.6-luna when prioritizing Codex", async () => {
+    const response = await createApp().request("/alpha/search", {
+      method: "POST",
+      body: JSON.stringify(
+        createFallbackPayload(
+          { search_query: [{ q: "non-gpt model" }] },
+          { model: "claude-opus-4.1" },
+        ),
+      ),
+    })
+
+    expect(response.status).toBe(200)
+    expect(createResponsesMock).not.toHaveBeenCalled()
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    const [, init] = fetchMock.mock.calls[0] ?? []
+    expect(await new Response(init?.body).json()).toMatchObject({
+      model: "gpt-5.6-luna",
     })
   })
 
@@ -930,7 +1012,7 @@ describe("Alpha search Responses adapter", () => {
     expect(createResponsesMock).not.toHaveBeenCalled()
   })
 
-  test("requires a Responses-capable mapped Copilot model", async () => {
+  test("requires a Responses-capable alpha search model for Messages-backed models", async () => {
     state.models = {
       object: "list",
       data: [
@@ -948,9 +1030,35 @@ describe("Alpha search Responses adapter", () => {
     expect(response.status).toBe(400)
     const body = (await response.json()) as { error: { message: string } }
     expect(body.error.message).toContain(
-      "does not support the Copilot Responses endpoint",
+      "Configured alphaSearchModel 'gpt-5-mini' does not support the Responses endpoint",
     )
     expect(createResponsesMock).not.toHaveBeenCalled()
+  })
+
+  test("redirects Messages-backed alpha search to alphaSearchModel", async () => {
+    state.models = {
+      object: "list",
+      data: [
+        {
+          capabilities: { limits: {} },
+          id: "gpt-5.6-sol",
+          supported_endpoints: ["/chat/completions"],
+        },
+        {
+          capabilities: { limits: {} },
+          id: "gpt-5-mini",
+          supported_endpoints: ["/responses"],
+        },
+      ],
+    } as typeof state.models
+
+    const response = await requestFallback(
+      createFallbackPayload({ search_query: [{ q: "redirect search" }] }),
+    )
+
+    expect(response.status).toBe(200)
+    expect(createResponsesMock).toHaveBeenCalledTimes(1)
+    expect(createResponsesMock.mock.calls[0]?.[0].model).toBe("gpt-5-mini")
   })
 
   test("keeps stable deduplicated search references across turns", async () => {

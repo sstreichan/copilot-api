@@ -18,13 +18,13 @@ import { generateEnvScript } from "./lib/shell"
 import { state } from "./lib/state"
 import { logUser, setupCopilotToken } from "./lib/token"
 import { prewarmAutoSession } from "./lib/auto-session"
+import { cacheModels } from "./services/copilot/models-cache"
 import {
   cacheMacMachineId,
-  cacheModels,
   cacheVSCodeVersion,
   cacheVsCodeSessionId,
   cacheVsCodeDeviceId,
-} from "./lib/utils"
+} from "./services/vscode-env"
 
 interface RunServerOptions {
   port: number

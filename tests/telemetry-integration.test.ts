@@ -66,10 +66,8 @@ void mock.module("~/lib/config", () => ({
 }))
 
 import { state } from "~/lib/state"
-import {
-  createChatCompletions,
-  type ChatCompletionsPayload,
-} from "~/services/copilot/create-chat-completions"
+import type { ChatCompletionsPayload } from "~/lib/types/chat-completions"
+import { createChatCompletions } from "~/services/copilot/create-chat-completions"
 import {
   initTelemetry,
   trackEvent,

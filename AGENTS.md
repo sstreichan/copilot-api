@@ -3,6 +3,8 @@
 
 GitHub Copilot API 反向代理，基于 **Hono**，对外暴露 OpenAI / Anthropic 兼容端点。
 
+This is a Bun/TypeScript API gateway project. API protocol contract types (OpenAI Chat Completions, OpenAI Responses, Anthropic Messages) live under `src/lib/types/`; tests are in `tests/` and follow the same feature names as the source modules they cover.
+
 ## 全局规则
 
 - 不要猜测；不确定时先验证，无法验证就明确说明。
@@ -22,6 +24,8 @@ bun test tests/foo.test.ts  # 跑单个测试文件
 bun run lint:all --fix # Lint 并修复
 bun run typecheck      # 类型检查
 ```
+
+Run `bun run lint --fix <files>` to format changed files with the repository's ESLint/Prettier configuration. Do not run standalone `prettier` or `bunx prettier`; they may ignore the inline repository options (including `semi: false`) and rewrite entire files with the wrong style.
 
 ## 代码改动最终检查（MUST）
 

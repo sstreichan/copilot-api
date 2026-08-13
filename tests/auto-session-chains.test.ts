@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test"
 
-import type { AnthropicMessagesPayload } from "~/routes/messages/anthropic-types"
-import type { ChatCompletionsPayload } from "~/services/copilot/create-chat-completions"
-import type { ResponsesPayload } from "~/services/copilot/create-responses"
+import type { AnthropicMessagesPayload } from "~/lib/types/anthropic"
+import type { ChatCompletionsPayload } from "~/lib/types/chat-completions"
+import type { ResponsesPayload } from "~/lib/types/responses"
 
 import {
   invalidateAutoSession,

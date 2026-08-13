@@ -1,4 +1,4 @@
-import type { Model } from "~/services/copilot/get-models"
+import type { Model } from "~/lib/types/models"
 
 const ANSI_BOLD_YELLOW = "\x1b[1;33m"
 const ANSI_RESET = "\x1b[0m"

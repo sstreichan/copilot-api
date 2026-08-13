@@ -10,6 +10,8 @@ import {
   type Mock,
 } from "bun:test"
 
+import type { ResponsesPayload } from "~/lib/types/responses"
+
 import * as autoSession from "../src/lib/auto-session"
 import { getAttachedPremiumInfo } from "../src/lib/logger"
 import { getAttachedResponseHeaders } from "../src/lib/response-headers"
@@ -21,7 +23,6 @@ import {
 } from "../src/lib/api-config"
 import { COMPACT_REQUEST } from "../src/lib/compact"
 import { state } from "../src/lib/state"
-import type { ResponsesPayload } from "../src/services/copilot/create-responses"
 import {
   buildResponsesWebSocketPoolKey,
   buildResponsesWebSocketPayload,
@@ -49,46 +50,48 @@ let capturedModelCallId: string | undefined
 
 // Helper: create non-stream fetch mock
 const createFetchMock = () =>
-  mock((_url: string, opts: { headers: Record<string, string> }) =>
-    Promise.resolve({
-      ok: true,
-      json: () =>
-        Promise.resolve({
-          id: "resp-123",
-          output: [
-            {
-              type: "message",
-              role: "assistant",
-              content: [{ type: "output_text", text: "ok" }],
-            },
-          ],
-          usage: { input_tokens: 10, output_tokens: 5 },
-          incomplete_details: null,
-          error: null,
+  mock(
+    (_url: string, opts: { body?: string; headers: Record<string, string> }) =>
+      Promise.resolve({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            id: "resp-123",
+            output: [
+              {
+                type: "message",
+                role: "assistant",
+                content: [{ type: "output_text", text: "ok" }],
+              },
+            ],
+            usage: { input_tokens: 10, output_tokens: 5 },
+            incomplete_details: null,
+            error: null,
+          }),
+        text: () => Promise.resolve('{"itemsReceived":1,"itemsAccepted":1}'),
+        headers: new Headers({
+          ...opts.headers,
+          "x-quota-snapshot-premium_interactions":
+            "ent=300&ov=0.0&ovPerm=false&rem=35.5&rst=2026-04-01T00%3A00%3A00Z",
         }),
-      text: () => Promise.resolve('{"itemsReceived":1,"itemsAccepted":1}'),
-      headers: new Headers({
-        ...opts.headers,
-        "x-quota-snapshot-premium_interactions":
-          "ent=300&ov=0.0&ovPerm=false&rem=35.5&rst=2026-04-01T00%3A00%3A00Z",
       }),
-    }),
   )
 
 // Helper: create stream fetch mock
 const createStreamFetchMock = () =>
-  mock((_url: string, opts: { headers: Record<string, string> }) =>
-    Promise.resolve({
-      ok: true,
-      text: () => Promise.resolve('{"itemsReceived":1,"itemsAccepted":1}'),
-      body: new ReadableStream(),
-      headers: new Headers({
-        ...opts.headers,
-        "x-quota-snapshot-premium_interactions":
-          "ent=300&ov=0.0&ovPerm=false&rem=35.5&rst=2026-04-01T00%3A00%3A00Z",
+  mock(
+    (_url: string, opts: { body?: string; headers: Record<string, string> }) =>
+      Promise.resolve({
+        ok: true,
+        text: () => Promise.resolve('{"itemsReceived":1,"itemsAccepted":1}'),
+        body: new ReadableStream(),
+        headers: new Headers({
+          ...opts.headers,
+          "x-quota-snapshot-premium_interactions":
+            "ent=300&ov=0.0&ovPerm=false&rem=35.5&rst=2026-04-01T00%3A00%3A00Z",
+        }),
+        [Symbol.asyncIterator]: function* () {},
       }),
-      [Symbol.asyncIterator]: function* () {},
-    }),
   )
 
 // Helper: create error fetch mock
@@ -320,6 +323,44 @@ describe("Interaction headers (Wave 1/2)", () => {
     expect(capturedTrackRequestSentRequestId).toBe(headerRequestId)
     expect(capturedScheduleFeedbackRequestId).toBe(headerRequestId)
     expect(capturedSchedulePostResponseRequestId).toBe(headerRequestId)
+  })
+  test("keeps cache-relevant HTTP payloads deterministic", async () => {
+    const payload: ResponsesPayload = {
+      input: [
+        { role: "user", content: "hello" },
+        {
+          encrypted_content: "encrypted-reasoning",
+          id: "reasoning-1",
+          summary: [],
+          type: "reasoning",
+        },
+      ],
+      instructions: "stable instructions",
+      model: "gpt-test",
+      prompt_cache_key: "stable-cache-key",
+      stream: false,
+    }
+
+    await createResponses(structuredClone(payload), {
+      initiator: "user",
+      requestId: "request-1",
+      vision: false,
+    })
+    await createResponses(structuredClone(payload), {
+      initiator: "user",
+      requestId: "request-1",
+      vision: false,
+    })
+
+    expect(fetchMock.mock.calls[0]?.[1]?.body).toBe(
+      fetchMock.mock.calls[1]?.[1]?.body,
+    )
+    expect(fetchMock.mock.calls[0]?.[1]?.body).toContain(
+      '"prompt_cache_key":"stable-cache-key"',
+    )
+    expect(fetchMock.mock.calls[0]?.[1]?.body).toContain(
+      '"encrypted_content":"encrypted-reasoning"',
+    )
   })
 })
 

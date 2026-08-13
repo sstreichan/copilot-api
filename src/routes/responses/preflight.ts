@@ -1,4 +1,4 @@
-import type { ResponsesPayload } from "~/services/copilot/create-responses"
+import type { ResponsesPayload } from "~/lib/types/responses"
 
 import { isResponsesApiWebSearchEnabled } from "~/lib/config"
 import { createHandlerLogger } from "~/lib/logger"

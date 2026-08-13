@@ -4,19 +4,19 @@ import { Hono } from "hono"
 import type {
   AnthropicMessagesPayload,
   AnthropicResponse,
-} from "../src/routes/messages/anthropic-types"
-import type { Model } from "../src/services/copilot/get-models"
+} from "~/lib/types/anthropic"
+import type { Model } from "~/lib/types/models"
 import type {
   ChatCompletionResponse,
   ChatCompletionsPayload,
-} from "../src/services/copilot/create-chat-completions"
-import type { CreateMessagesReturn } from "../src/services/copilot/create-messages"
+} from "~/lib/types/chat-completions"
+import type { CreateMessagesReturn } from "~/services/copilot/create-messages"
 import type {
   CreateResponsesReturn,
   ResponsesPayload,
   ResponsesResult,
   ResponsesTransport,
-} from "../src/services/copilot/create-responses"
+} from "~/lib/types/responses"
 
 import { COMPACT_REQUEST } from "../src/lib/compact"
 import { attachResponseHeaders } from "../src/lib/response-headers"

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test"
 
-import type { ResponsesPayload } from "~/services/copilot/create-responses"
+import type { ResponsesPayload } from "~/lib/types/responses"
 
 import * as configModule from "~/lib/config"
 import {

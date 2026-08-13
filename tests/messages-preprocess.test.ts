@@ -10,7 +10,7 @@ import {
 
 import * as configModule from "~/lib/config"
 
-import type { AnthropicMessagesPayload } from "../src/routes/messages/anthropic-types"
+import type { AnthropicMessagesPayload } from "~/lib/types/anthropic"
 
 let mockedReasoningEffort:
   | "none"
@@ -33,7 +33,7 @@ import {
   prepareMessagesApiPayload,
   sanitizeIdeTools,
   stripToolReferenceTurnBoundary,
-} from "../src/routes/messages/preprocess"
+} from "~/routes/messages/preprocess"
 
 beforeEach(() => {
   mockedReasoningEffort = "xhigh"
@@ -1147,6 +1147,56 @@ describe("prepareMessagesApiPayload", () => {
       display: "summarized",
     })
     expect(payload.output_config).toEqual({ effort: "xhigh" })
+  })
+
+  test("keeps signature-only thinking blocks", () => {
+    const payload: AnthropicMessagesPayload = {
+      model: "claude-opus-5",
+      max_tokens: 128,
+      messages: [
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "thinking",
+              thinking: "",
+              signature: "sig-only",
+            },
+            {
+              type: "text",
+              text: "Visible text",
+            },
+          ],
+        },
+        {
+          role: "user",
+          content: "hello",
+        },
+      ],
+    }
+
+    prepareMessagesApiPayload(payload, {
+      capabilities: {
+        supports: {
+          adaptive_thinking: true,
+        },
+      },
+    } as never)
+
+    expect(payload.messages[0]).toEqual({
+      role: "assistant",
+      content: [
+        {
+          type: "thinking",
+          thinking: "",
+          signature: "sig-only",
+        },
+        {
+          type: "text",
+          text: "Visible text",
+        },
+      ],
+    })
   })
 
   test("sets summarized display for Claude versions at least 4.7", () => {

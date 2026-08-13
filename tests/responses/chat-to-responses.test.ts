@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test"
 
-import type { ChatCompletionResponse } from "~/services/copilot/create-chat-completions"
+import type { ChatCompletionResponse } from "~/lib/types/chat-completions"
 
 import { translateChatCompletionToResponsesResult } from "~/routes/responses/responses-from-chat"
 

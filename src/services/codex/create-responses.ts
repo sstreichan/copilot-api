@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto"
 
-import { events, type ServerSentEventMessage } from "fetch-event-stream"
+import type { ServerSentEventMessage } from "fetch-event-stream"
 
 import type {
   CreateResponsesReturn,
@@ -8,13 +8,15 @@ import type {
   ResponseInputItem,
   ResponseInputMessage,
   ResponsesPayload,
-  ResponseErrorEvent,
   ResponsesResult,
   ResponsesStream,
   ResponsesTransport,
-} from "~/services/copilot/create-responses"
+} from "~/lib/types/responses"
 
-import { isResponsesApiWebSocketEnabled as isConfiguredResponsesApiWebSocketEnabled } from "~/lib/config"
+import {
+  getResponsesTransportConfig,
+  isResponsesApiWebSocketEnabled as isConfiguredResponsesApiWebSocketEnabled,
+} from "~/lib/config"
 import { HTTPError } from "~/lib/error"
 import { attachResponseHeaders } from "~/lib/response-headers"
 import { state } from "~/lib/state"
@@ -23,6 +25,15 @@ import {
   createWebSocketUrl,
   type PooledWebSocketRequest,
 } from "~/services/responses-websocket"
+import {
+  createResponsesSafeStream,
+  encodePoolKeyPart,
+  isTerminalResponsesStreamChunk,
+} from "~/services/responses-websocket-helpers"
+import {
+  createResponsesHttpEventStream,
+  fetchResponsesWithLifecycle,
+} from "~/services/responses-http"
 import { requestContext } from "~/lib/request-context"
 import consola from "consola"
 
@@ -217,6 +228,7 @@ export function prepareCodexResponsesWebSocketRequest(
   payload: ResponsesPayload,
   requestHeaders: Headers,
   baseUrl: string = CODEX_API_BASE_URL,
+  signal?: AbortSignal,
 ): CodexResponsesWebSocketRequest {
   const headers = buildCodexResponsesWebSocketHeaders(requestHeaders)
 
@@ -224,6 +236,7 @@ export function prepareCodexResponsesWebSocketRequest(
     headers,
     payload: buildCodexResponsesWebSocketPayload(payload),
     poolKey: buildCodexResponsesWebSocketPoolKey(payload, headers, baseUrl),
+    signal,
     url: buildCodexResponsesWebSocketUrl(baseUrl),
   }
 }
@@ -233,31 +246,52 @@ export async function forwardCodexResponses(
   requestHeaders: Headers,
   baseUrl: string = CODEX_API_BASE_URL,
   options: {
+    signal?: AbortSignal
     transport?: ResponsesTransport
   } = {},
 ): Promise<CreateResponsesReturn> {
   consola.log(`<-- model: ${payload.model}`)
   const transport = resolveCodexResponsesTransport(options.transport)
   if (payload.stream && transport === "websocket") {
-    return forwardCodexResponsesOverWebSocket(payload, requestHeaders, baseUrl)
+    return forwardCodexResponsesOverWebSocket(
+      payload,
+      requestHeaders,
+      baseUrl,
+      options.signal,
+    )
   }
 
   const normalizedPayload = normalizeCodexResponsesPayload(payload)
 
-  const response = await fetch(resolveCodexResponsesUrl(baseUrl), {
-    method: "POST",
-    headers: buildCodexResponsesHeaders(requestHeaders, {
-      stream: normalizedPayload.stream,
-    }),
-    body: JSON.stringify(normalizedPayload),
-  })
+  const transportConfig = getResponsesTransportConfig()
+  const response = await fetchResponsesWithLifecycle(
+    resolveCodexResponsesUrl(baseUrl),
+    {
+      method: "POST",
+      headers: buildCodexResponsesHeaders(requestHeaders, {
+        stream: normalizedPayload.stream,
+      }),
+      body: JSON.stringify(normalizedPayload),
+    },
+    {
+      headersTimeoutMs: transportConfig.headersTimeoutMs,
+      signal: options.signal,
+      streamInactivityTimeoutMs: transportConfig.streamInactivityTimeoutMs,
+    },
+  )
 
   if (!response.ok) {
     throw new HTTPError("Failed to create codex responses", response)
   }
 
   if (normalizedPayload.stream) {
-    return attachResponseHeaders(events(response), response.headers)
+    return attachResponseHeaders(
+      createResponsesSafeStream(
+        createResponsesHttpEventStream(response, options.signal),
+        { signal: options.signal },
+      ),
+      response.headers,
+    )
   }
 
   return attachResponseHeaders(
@@ -433,11 +467,13 @@ const forwardCodexResponsesOverWebSocket = (
   payload: ResponsesPayload,
   requestHeaders: Headers,
   baseUrl: string,
+  signal?: AbortSignal,
 ): ResponsesStream => {
   const websocketRequest = prepareCodexResponsesWebSocketRequest(
     payload,
     requestHeaders,
     baseUrl,
+    signal,
   )
 
   return createCodexResponsesWebSocketStream(websocketRequest)
@@ -445,26 +481,24 @@ const forwardCodexResponsesOverWebSocket = (
 
 const createCodexResponsesWebSocketStream = (
   request: CodexResponsesWebSocketRequest,
-): ResponsesStream =>
-  createCodexResponsesSafeStream(
+): ResponsesStream => {
+  const transportConfig = getResponsesTransportConfig()
+  return createResponsesSafeStream(
     createPooledWebSocketStream(request, {
       createChunk: createCodexResponsesWebSocketStreamChunk,
-      isTerminalChunk: isTerminalCodexResponsesWebSocketChunk,
+      maxBufferedBytes: transportConfig.websocketMaxBufferedBytes,
+      maxBufferedMessages: transportConfig.websocketMaxBufferedMessages,
+      isTerminalChunk: isTerminalResponsesStreamChunk,
       openErrorMessage: "Failed to create codex responses websocket",
+      openTimeoutMs: transportConfig.websocketOpenTimeoutMs,
+      poolIdleTimeoutMs: transportConfig.websocketPoolIdleTimeoutMs,
+      streamInactivityTimeoutMs: transportConfig.streamInactivityTimeoutMs,
       streamErrorMessage: "Codex responses websocket stream error",
       terminalChunkMissingMessage:
         "Codex responses websocket ended without a terminal response",
     }),
+    { signal: request.signal },
   )
-
-const createCodexResponsesSafeStream = async function* (
-  source: AsyncIterable<ServerSentEventChunk>,
-): AsyncGenerator<ServerSentEventChunk, void, unknown> {
-  try {
-    yield* source
-  } catch (error) {
-    yield createResponsesErrorServerSentEventChunk(getErrorMessage(error))
-  }
 }
 
 const createCodexResponsesWebSocketStreamChunk = (
@@ -498,50 +532,3 @@ const createCodexResponsesWebSocketStreamChunk = (
     return { data }
   }
 }
-
-const isTerminalCodexResponsesWebSocketChunk = (
-  chunk: ServerSentEventChunk,
-): boolean => {
-  if (!chunk.data || chunk.data === "[DONE]") {
-    return false
-  }
-
-  try {
-    const parsed = JSON.parse(chunk.data) as { type?: unknown }
-    return (
-      parsed.type === "response.completed"
-      || parsed.type === "response.failed"
-      || parsed.type === "response.incomplete"
-      || parsed.type === "error"
-    )
-  } catch {
-    return false
-  }
-}
-
-const createResponsesErrorServerSentEventChunk = (
-  message: string,
-): ServerSentEventChunk => {
-  const errorEvent: ResponseErrorEvent = {
-    code: null,
-    message,
-    param: null,
-    sequence_number: 0,
-    type: "error",
-  }
-
-  return {
-    event: errorEvent.type,
-    data: JSON.stringify(errorEvent),
-  }
-}
-
-const getErrorMessage = (error: unknown): string => {
-  if (error instanceof Error && error.message) {
-    return error.message
-  }
-
-  return String(error)
-}
-
-const encodePoolKeyPart = (value: string): string => encodeURIComponent(value)

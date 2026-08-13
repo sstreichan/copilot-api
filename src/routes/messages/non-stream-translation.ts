@@ -1,7 +1,7 @@
 import consola from "consola"
 
 import type { ToolContentSupportType } from "~/lib/config"
-import type { Model } from "~/services/copilot/get-models"
+import type { Model } from "~/lib/types/models"
 
 import { state } from "~/lib/state"
 import {
@@ -12,7 +12,7 @@ import {
   type TextPart,
   type Tool,
   type ToolCall,
-} from "~/services/copilot/create-chat-completions"
+} from "~/lib/types/chat-completions"
 
 import {
   type AnthropicAssistantContentBlock,
@@ -29,7 +29,7 @@ import {
   type AnthropicToolUseBlock,
   type AnthropicUserContentBlock,
   type AnthropicUserMessage,
-} from "./anthropic-types"
+} from "~/lib/types/anthropic"
 import { mapOpenAIStopReasonToAnthropic } from "./utils"
 
 // Compatible with opencode, it will filter out blocks where the thinking text is empty, so we need add a default thinking text

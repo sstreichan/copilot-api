@@ -8,17 +8,17 @@ import type {
   AnthropicResponse,
   AnthropicStreamEventData,
   AnthropicStreamState,
-} from "~/routes/messages/anthropic-types"
+} from "~/lib/types/anthropic"
 import type {
   ChatCompletionChunk,
   ChatCompletionResponse,
   ChatCompletionsPayload,
-} from "~/services/copilot/create-chat-completions"
+} from "~/lib/types/chat-completions"
 import type {
   ResponsesResult,
   ResponseStreamEvent,
   ResponsesStream,
-} from "~/services/copilot/create-responses"
+} from "~/lib/types/responses"
 
 import {
   type ModelConfig,
@@ -47,9 +47,10 @@ import {
   normalizeAnthropicUsage,
   normalizeOpenAIUsage,
   normalizeResponsesUsage,
+  type TokenUsageEndpoint,
   type UsageTokens,
 } from "~/lib/token-usage"
-import { parseUserIdMetadata } from "~/lib/utils"
+import { isResponsesStream, parseUserIdMetadata } from "~/lib/utils"
 import {
   translateToAnthropic,
   translateToOpenAI,
@@ -91,9 +92,19 @@ import {
   forwardProviderMessages,
   forwardProviderResponses,
 } from "~/services/providers/provider-proxy"
+import { createResponsesHttpEventStream } from "~/services/responses-http"
+import { createResponsesSafeStream } from "~/services/responses-websocket-helpers"
+import {
+  applyMissingExtraBody,
+  applyModelDefaults,
+} from "~/routes/provider/utils"
 import consola from "consola"
 
 const logger = createHandlerLogger("provider-messages-handler")
+
+export const providerMessagesHandlerDependencies = {
+  resolveProviderConfig,
+}
 
 export async function handleProviderMessages(
   c: Context<Env, "/:provider">,
@@ -120,10 +131,12 @@ export async function handleProviderMessagesForProvider(
   options: {
     payload: AnthropicMessagesPayload
     provider: string
+    usageEndpoint?: TokenUsageEndpoint
   },
 ): Promise<Response> {
-  const { payload, provider } = options
-  const providerConfig = await resolveProviderConfig(provider)
+  const { payload, provider, usageEndpoint } = options
+  const providerConfig =
+    await providerMessagesHandlerDependencies.resolveProviderConfig(provider)
   if (!providerConfig) {
     return c.json(
       {
@@ -156,6 +169,7 @@ export async function handleProviderMessagesForProvider(
             payload,
             provider,
             providerConfig,
+            usageEndpoint,
           })
         }
 
@@ -167,6 +181,7 @@ export async function handleProviderMessagesForProvider(
         payload,
         provider,
         providerConfig,
+        usageEndpoint,
       })
     }
 
@@ -178,6 +193,7 @@ export async function handleProviderMessagesForProvider(
         payload,
         provider,
         providerConfig,
+        usageEndpoint,
       })
     }
 
@@ -222,6 +238,7 @@ export async function handleProviderMessagesForProvider(
         pricingCurrency: providerConfig.pricingCurrency,
         provider,
         upstreamResponse,
+        usageEndpoint,
       })
     }
 
@@ -233,6 +250,7 @@ export async function handleProviderMessagesForProvider(
       pricingCurrency: providerConfig.pricingCurrency,
       provider,
       sourceHeaders: upstreamResponse.headers,
+      usageEndpoint,
     })
   } catch (error) {
     logger.error("provider.messages.error", {
@@ -250,9 +268,11 @@ const handleOpenAIResponsesProviderWebSearchMessages = async (
     payload: AnthropicMessagesPayload
     provider: string
     providerConfig: ResolvedProviderConfig
+    usageEndpoint?: TokenUsageEndpoint
   },
 ): Promise<Response> => {
-  const { modelConfig, payload, provider, providerConfig } = options
+  const { modelConfig, payload, provider, providerConfig, usageEndpoint } =
+    options
   const responsesPayload = prepareWebSearchResponsesPayload(payload)
 
   debugJson(logger, "provider.messages.responses.web_search.request", {
@@ -265,6 +285,7 @@ const handleOpenAIResponsesProviderWebSearchMessages = async (
       responsesPayload,
       c.req.raw.headers,
       providerConfig.baseUrl,
+      { signal: c.req.raw.signal },
     )
 
     if (isResponsesStream(upstreamResponse)) {
@@ -281,6 +302,7 @@ const handleOpenAIResponsesProviderWebSearchMessages = async (
         payload,
         pricingCurrency: providerConfig.pricingCurrency,
         provider,
+        usageEndpoint,
       })
     }
 
@@ -290,6 +312,7 @@ const handleOpenAIResponsesProviderWebSearchMessages = async (
       payload,
       pricingCurrency: providerConfig.pricingCurrency,
       provider,
+      usageEndpoint,
     })
   }
 
@@ -297,6 +320,7 @@ const handleOpenAIResponsesProviderWebSearchMessages = async (
     providerConfig,
     responsesPayload,
     c.req.raw.headers,
+    { signal: c.req.raw.signal },
   )
 
   if (!upstreamResponse.ok) {
@@ -316,7 +340,10 @@ const handleOpenAIResponsesProviderWebSearchMessages = async (
       errorMessagePrefix: `${provider} web search responses stream`,
       parseEvent: (data) =>
         parseResponsesProviderStreamChunk(data, providerConfig),
-      upstreamResponse: events(upstreamResponse),
+      upstreamResponse: createResponsesHttpEventStream(
+        upstreamResponse,
+        c.req.raw.signal,
+      ),
       logger,
     })
     return respondWebSearchProviderMessagesJson(c, {
@@ -325,6 +352,7 @@ const handleOpenAIResponsesProviderWebSearchMessages = async (
       payload,
       pricingCurrency: providerConfig.pricingCurrency,
       provider,
+      usageEndpoint,
     })
   }
 
@@ -336,6 +364,7 @@ const handleOpenAIResponsesProviderWebSearchMessages = async (
     pricingCurrency: providerConfig.pricingCurrency,
     provider,
     sourceHeaders: upstreamResponse.headers,
+    usageEndpoint,
   })
 }
 
@@ -346,9 +375,11 @@ const handleOpenAIResponsesProviderMessages = async (
     payload: AnthropicMessagesPayload
     provider: string
     providerConfig: ResolvedProviderConfig
+    usageEndpoint?: TokenUsageEndpoint
   },
 ): Promise<Response> => {
-  const { modelConfig, payload, provider, providerConfig } = options
+  const { modelConfig, payload, provider, providerConfig, usageEndpoint } =
+    options
   const selectedModel =
     providerConfig.name === "codex" ?
       getCodexModels().data.find((model) => model.id === payload.model)
@@ -381,6 +412,7 @@ const handleOpenAIResponsesProviderMessages = async (
       responsesPayload,
       c.req.raw.headers,
       providerConfig.baseUrl,
+      { signal: c.req.raw.signal },
     )
 
     if (isResponsesStream(upstreamResponse)) {
@@ -393,6 +425,7 @@ const handleOpenAIResponsesProviderMessages = async (
           provider,
           providerConfig,
           upstreamResponse,
+          usageEndpoint,
         })
       }
 
@@ -410,6 +443,7 @@ const handleOpenAIResponsesProviderMessages = async (
         pricingCurrency: providerConfig.pricingCurrency,
         provider,
         providerConfig,
+        usageEndpoint,
       })
     }
 
@@ -420,6 +454,7 @@ const handleOpenAIResponsesProviderMessages = async (
       pricingCurrency: providerConfig.pricingCurrency,
       provider,
       providerConfig,
+      usageEndpoint,
     })
   }
 
@@ -427,6 +462,7 @@ const handleOpenAIResponsesProviderMessages = async (
     providerConfig,
     responsesPayload,
     c.req.raw.headers,
+    { signal: c.req.raw.signal },
   )
 
   if (!upstreamResponse.ok) {
@@ -442,7 +478,11 @@ const handleOpenAIResponsesProviderMessages = async (
       pricingCurrency: providerConfig.pricingCurrency,
       provider,
       providerConfig,
-      upstreamResponse: events(upstreamResponse),
+      upstreamResponse: createResponsesSafeStream(
+        createResponsesHttpEventStream(upstreamResponse, c.req.raw.signal),
+        { signal: c.req.raw.signal },
+      ),
+      usageEndpoint,
     })
   }
 
@@ -454,27 +494,8 @@ const handleOpenAIResponsesProviderMessages = async (
     pricingCurrency: providerConfig.pricingCurrency,
     provider,
     providerConfig,
+    usageEndpoint,
   })
-}
-
-const applyModelDefaults = (
-  payload: AnthropicMessagesPayload,
-  modelConfig: ModelConfig | undefined,
-): void => {
-  payload.temperature ??= modelConfig?.temperature
-  payload.top_p ??= modelConfig?.topP
-  payload.top_k ??= modelConfig?.topK
-}
-
-const applyMissingExtraBody = (
-  payload: Record<string, unknown>,
-  options: { extraBody: Record<string, unknown> | undefined },
-): void => {
-  for (const [key, value] of Object.entries(options.extraBody ?? {})) {
-    if (!Object.hasOwn(payload, key)) {
-      payload[key] = value
-    }
-  }
 }
 
 const getRequestThinkingBudget = (
@@ -522,9 +543,11 @@ const handleOpenAICompatibleProviderMessages = async (
     payload: AnthropicMessagesPayload
     provider: string
     providerConfig: ResolvedProviderConfig
+    usageEndpoint?: TokenUsageEndpoint
   },
 ): Promise<Response> => {
-  const { modelConfig, payload, provider, providerConfig } = options
+  const { modelConfig, payload, provider, providerConfig, usageEndpoint } =
+    options
   const openAIPayload = createOpenAICompatiblePayload(
     payload,
     modelConfig,
@@ -564,6 +587,7 @@ const handleOpenAICompatibleProviderMessages = async (
       pricingCurrency: providerConfig.pricingCurrency,
       provider,
       upstreamResponse,
+      usageEndpoint,
     })
   }
 
@@ -575,6 +599,7 @@ const handleOpenAICompatibleProviderMessages = async (
     pricingCurrency: providerConfig.pricingCurrency,
     provider,
     sourceHeaders: upstreamResponse.headers,
+    usageEndpoint,
   })
 }
 
@@ -698,6 +723,7 @@ const streamProviderMessages = ({
   pricingCurrency,
   provider,
   upstreamResponse,
+  usageEndpoint,
 }: {
   c: Context
   modelConfig: ModelConfig | undefined
@@ -705,6 +731,7 @@ const streamProviderMessages = ({
   pricingCurrency: string | undefined
   provider: string
   upstreamResponse: Response
+  usageEndpoint?: TokenUsageEndpoint
 }): Response => {
   logger.debug("provider.messages.streaming")
   applyForwardableResponseHeaders(c, upstreamResponse.headers)
@@ -713,6 +740,7 @@ const streamProviderMessages = ({
     provider,
     modelConfig,
     pricingCurrency,
+    usageEndpoint,
   )
   return streamSSE(c, async (stream) => {
     let usage: UsageTokens = {}
@@ -771,6 +799,7 @@ const streamOpenAICompatibleProviderMessages = ({
   pricingCurrency,
   provider,
   upstreamResponse,
+  usageEndpoint,
 }: {
   c: Context
   modelConfig: ModelConfig | undefined
@@ -778,6 +807,7 @@ const streamOpenAICompatibleProviderMessages = ({
   pricingCurrency: string | undefined
   provider: string
   upstreamResponse: Response
+  usageEndpoint?: TokenUsageEndpoint
 }): Response => {
   logger.debug("provider.messages.openai_compatible.streaming")
   applyForwardableResponseHeaders(c, upstreamResponse.headers)
@@ -786,6 +816,7 @@ const streamOpenAICompatibleProviderMessages = ({
     provider,
     modelConfig,
     pricingCurrency,
+    usageEndpoint,
   )
   return streamSSE(c, async (stream) => {
     let usage: UsageTokens = {}
@@ -862,6 +893,7 @@ const streamResponsesProviderMessages = ({
   provider,
   providerConfig,
   upstreamResponse,
+  usageEndpoint,
 }: {
   c: Context
   modelConfig: ModelConfig | undefined
@@ -870,6 +902,7 @@ const streamResponsesProviderMessages = ({
   provider: string
   providerConfig: ResolvedProviderConfig
   upstreamResponse: ResponsesStream
+  usageEndpoint?: TokenUsageEndpoint
 }): Response => {
   logger.debug("provider.messages.responses.streaming", {
     provider,
@@ -885,6 +918,7 @@ const streamResponsesProviderMessages = ({
     provider,
     modelConfig,
     pricingCurrency,
+    usageEndpoint,
   )
   return streamSSE(c, async (stream) => {
     let usage: UsageTokens = {}
@@ -949,13 +983,6 @@ const streamResponsesProviderMessages = ({
 
     recordUsage(usage)
   })
-}
-
-const isResponsesStream = (value: unknown): value is ResponsesStream => {
-  return (
-    Boolean(value)
-    && typeof (value as ResponsesStream)[Symbol.asyncIterator] === "function"
-  )
 }
 
 const parseOpenAICompatibleStreamChunk = (
@@ -1107,6 +1134,7 @@ const respondProviderMessagesJson = (
     pricingCurrency: string | undefined
     provider: string
     sourceHeaders?: Headers | null
+    usageEndpoint?: TokenUsageEndpoint
   },
 ): Response => {
   const {
@@ -1116,12 +1144,14 @@ const respondProviderMessagesJson = (
     pricingCurrency,
     provider,
     sourceHeaders,
+    usageEndpoint,
   } = options
   const recordUsage = createProviderMessagesUsageRecorder(
     payload,
     provider,
     modelConfig,
     pricingCurrency,
+    usageEndpoint,
   )
   recordUsage(normalizeAnthropicUsage(body.usage))
 
@@ -1142,6 +1172,7 @@ const respondOpenAICompatibleProviderMessagesJson = (
     pricingCurrency: string | undefined
     provider: string
     sourceHeaders?: Headers | null
+    usageEndpoint?: TokenUsageEndpoint
   },
 ): Response => {
   const {
@@ -1151,12 +1182,14 @@ const respondOpenAICompatibleProviderMessagesJson = (
     pricingCurrency,
     provider,
     sourceHeaders,
+    usageEndpoint,
   } = options
   const recordUsage = createProviderMessagesUsageRecorder(
     payload,
     provider,
     modelConfig,
     pricingCurrency,
+    usageEndpoint,
   )
   recordUsage(normalizeOpenAIUsage(body.usage))
 
@@ -1179,6 +1212,7 @@ const respondResponsesProviderMessagesJson = (
     provider: string
     providerConfig: ResolvedProviderConfig
     sourceHeaders?: Headers | null
+    usageEndpoint?: TokenUsageEndpoint
   },
 ): Response => {
   const {
@@ -1189,12 +1223,14 @@ const respondResponsesProviderMessagesJson = (
     provider,
     providerConfig,
     sourceHeaders,
+    usageEndpoint,
   } = options
   const recordUsage = createProviderMessagesUsageRecorder(
     payload,
     provider,
     modelConfig,
     pricingCurrency,
+    usageEndpoint,
   )
   recordUsage(normalizeResponsesUsage(body.usage))
 
@@ -1222,6 +1258,7 @@ const respondWebSearchProviderMessagesJson = (
     pricingCurrency: string | undefined
     provider: string
     sourceHeaders?: Headers | null
+    usageEndpoint?: TokenUsageEndpoint
   },
 ): Response => {
   const {
@@ -1231,12 +1268,14 @@ const respondWebSearchProviderMessagesJson = (
     pricingCurrency,
     provider,
     sourceHeaders,
+    usageEndpoint,
   } = options
   const recordUsage = createProviderMessagesUsageRecorder(
     payload,
     provider,
     modelConfig,
     pricingCurrency,
+    usageEndpoint,
   )
   recordUsage(normalizeResponsesUsage(body.usage))
 
@@ -1272,9 +1311,10 @@ const createProviderMessagesUsageRecorder = (
   provider: string,
   modelConfig: ModelConfig | undefined,
   pricingCurrency: string | undefined,
+  endpoint: TokenUsageEndpoint = "provider_messages",
 ) =>
   createProviderTokenUsageRecorder({
-    endpoint: "provider_messages",
+    endpoint,
     model: payload.model,
     pricing: modelConfig?.pricing,
     pricingCurrency,

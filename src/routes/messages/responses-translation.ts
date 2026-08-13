@@ -47,7 +47,7 @@ import {
   type Tool,
   type ToolChoiceFunction,
   type ToolChoiceOptions,
-} from "~/services/copilot/create-responses"
+} from "~/lib/types/responses"
 
 import {
   type AnthropicAssistantContentBlock,
@@ -65,14 +65,14 @@ import {
   type AnthropicToolUseBlock,
   type AnthropicUserContentBlock,
   type AnthropicUserMessage,
-} from "./anthropic-types"
-import { normalizeToolSchema } from "./non-stream-translation"
+} from "~/lib/types/anthropic"
+import { normalizeToolSchema, THINKING_TEXT } from "./non-stream-translation"
 
 const MESSAGE_TYPE = "message"
 const COMPACTION_SIGNATURE_PREFIX = "cm1#"
 const COMPACTION_SIGNATURE_SEPARATOR = "@"
 
-export const THINKING_TEXT = "Thinking..."
+export { THINKING_TEXT }
 export const REASONING_SUMMARY_SEPARATOR = "\u00A0\n\n"
 const REASONING_SUMMARY_SEPARATOR_PATTERN = /\u00a0\n\n|\u2063\n\n/
 

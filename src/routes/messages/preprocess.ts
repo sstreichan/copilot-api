@@ -1,6 +1,6 @@
 import consola from "consola"
 
-import type { Model } from "~/services/copilot/get-models"
+import type { Model } from "~/lib/types/models"
 
 import {
   COMPACT_AUTO_CONTINUE,
@@ -28,7 +28,7 @@ import type {
   AnthropicToolResultContentBlock,
   AnthropicUserContentBlock,
   AnthropicUserMessage,
-} from "./anthropic-types"
+} from "~/lib/types/anthropic"
 
 export const TOOL_REFERENCE_TURN_BOUNDARY = "Tool loaded."
 const SYSTEM_REMINDER_START = "<system-reminder>"
@@ -901,9 +901,10 @@ const filterAssistantThinkingBlocks = (
     if (msg.role === "assistant" && Array.isArray(msg.content)) {
       msg.content = msg.content.filter((block) => {
         if (block.type !== "thinking") return true
-        if (!block.thinking) {
-          reasons.empty++
-        } else if (block.thinking === "Thinking...") {
+        // Keep signature-only blocks (empty `thinking` text): the signature,
+        // not the summary text, carries reasoning continuity across turns.
+        // The `"Thinking..."` placeholder is still excluded: it is synthetic.
+        if (block.thinking === "Thinking...") {
           reasons.placeholder++
         } else if (!block.signature) {
           reasons.noSignature++
@@ -940,7 +941,10 @@ export const prepareMessagesApiPayload = (
   const toolChoice = payload.tool_choice
   const disableThink = toolChoice?.type === "any" || toolChoice?.type === "tool"
 
-  if (selectedModel?.capabilities.supports.adaptive_thinking && !disableThink) {
+  if (
+    selectedModel?.capabilities.supports?.adaptive_thinking
+    && !disableThink
+  ) {
     payload.thinking = {
       type: "adaptive",
     }

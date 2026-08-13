@@ -1,6 +1,6 @@
 import { test, expect, mock, spyOn, afterEach, beforeEach } from "bun:test"
 
-import type { AnthropicMessagesPayload } from "../src/routes/messages/anthropic-types"
+import type { AnthropicMessagesPayload } from "../src/lib/types/anthropic"
 
 import * as configModule from "../src/lib/config"
 import { getAttachedPremiumInfo } from "../src/lib/logger"

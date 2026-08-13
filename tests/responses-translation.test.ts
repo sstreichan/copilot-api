@@ -3,7 +3,7 @@ import { describe, expect, it } from "bun:test"
 import { requestContext } from "~/lib/request-context"
 import { getReasoningEffortForModel } from "~/lib/config"
 import { createMcpToolSearchSentinel } from "~/lib/tool-search"
-import type { AnthropicMessagesPayload } from "~/routes/messages/anthropic-types"
+import type { AnthropicMessagesPayload } from "~/lib/types/anthropic"
 import type {
   ResponseFunctionCallOutputItem,
   ResponseInputMessage,
@@ -11,7 +11,7 @@ import type {
   ResponseToolSearchCallItem,
   ResponseToolSearchOutputItem,
   ResponsesResult,
-} from "~/services/copilot/create-responses"
+} from "~/lib/types/responses"
 
 import {
   REASONING_SUMMARY_SEPARATOR,

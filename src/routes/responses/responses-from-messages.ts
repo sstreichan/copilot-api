@@ -21,7 +21,7 @@ import type {
   AnthropicToolResultContentBlock,
   AnthropicToolResultBlock,
   AnthropicUserContentBlock,
-} from "~/routes/messages/anthropic-types"
+} from "~/lib/types/anthropic"
 import type {
   ResponseCompletedEvent,
   ResponseCreatedEvent,
@@ -46,7 +46,7 @@ import type {
   ResponseInputReasoning,
   ResponsesResult,
   ResponsesPayload,
-} from "~/services/copilot/create-responses"
+} from "~/lib/types/responses"
 
 const DEFAULT_MAX_TOKENS = 12800
 

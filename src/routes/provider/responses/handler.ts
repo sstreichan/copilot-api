@@ -1,6 +1,5 @@
 import type { Context } from "hono"
 
-import { events } from "fetch-event-stream"
 import { streamSSE } from "hono/streaming"
 
 import { logCodexRateLimitsEvent } from "~/lib/codex-rate-limit"
@@ -19,19 +18,23 @@ import {
   normalizeResponsesUsage,
   type UsageTokens,
 } from "~/lib/token-usage"
+import { isResponsesStream } from "~/lib/utils"
 import {
   applyResponsesApiContextManagement,
   compactInputByLatestCompaction,
 } from "~/routes/responses/utils"
+import { handleResponsesViaMessages } from "~/routes/responses/messages-handler"
 
 import type {
   ResponsesPayload,
   ResponsesResult,
   ResponseStreamEvent,
   ResponsesStream,
-} from "~/services/copilot/create-responses"
+} from "~/lib/types/responses"
 import { forwardCodexResponses } from "~/services/codex/create-responses"
 import { getModels as getCodexModels } from "~/services/codex/get-models"
+import { createResponsesSafeStream } from "~/services/responses-websocket-helpers"
+import { createResponsesHttpEventStream } from "~/services/responses-http"
 import {
   createProviderProxyResponse,
   forwardProviderResponses,
@@ -40,24 +43,52 @@ import type { ContentfulStatusCode } from "hono/utils/http-status"
 
 const logger = createHandlerLogger("provider-responses-handler")
 
+export const providerResponsesHandlerDependencies = {
+  resolveProviderConfig,
+}
+
 export async function handleProviderResponsesForProvider(
   c: Context,
   options: {
     payload: ResponsesPayload
     provider: string
+    publicModel?: string
   },
 ): Promise<Response> {
   const { payload, provider } = options
+
   debugJson(logger, "Responses request payload:", {
     payload,
     provider,
   })
-  const providerConfig = await resolveProviderConfig(provider)
-  if (
-    !providerConfig
-    || resolveEffectiveProviderType(providerConfig, payload.model)
-      !== "openai-responses"
-  ) {
+
+  const providerConfig =
+    await providerResponsesHandlerDependencies.resolveProviderConfig(provider)
+  if (!providerConfig) {
+    return c.json(
+      {
+        error: {
+          message: `Provider '${provider}' does not support the /v1/responses endpoint`,
+          type: "invalid_request_error",
+        },
+      },
+      400,
+    )
+  }
+
+  const effectiveType = resolveEffectiveProviderType(
+    providerConfig,
+    payload.model,
+  )
+  if (effectiveType === "anthropic" || effectiveType === "openai-compatible") {
+    return await handleResponsesViaMessages(c, {
+      payload,
+      publicModel: options.publicModel ?? payload.model,
+      targetModel: `${provider}/${payload.model}`,
+    })
+  }
+
+  if (effectiveType !== "openai-responses") {
     return c.json(
       {
         error: {
@@ -99,6 +130,7 @@ export async function handleProviderResponsesForProvider(
       payload,
       c.req.raw.headers,
       providerConfig.baseUrl,
+      { signal: c.req.raw.signal },
     )
     const recordUsage = createProviderResponsesUsageRecorder(
       payload,
@@ -127,6 +159,7 @@ export async function handleProviderResponsesForProvider(
     providerConfig,
     payload,
     c.req.raw.headers,
+    { signal: c.req.raw.signal },
   )
 
   if (!upstreamResponse.ok) {
@@ -144,11 +177,15 @@ export async function handleProviderResponsesForProvider(
   )
 
   if (payload.stream) {
-    return streamProviderResponses(c, getResponsesEvents(upstreamResponse), {
-      normalizeCodex: false,
-      provider,
-      recordUsage,
-    })
+    return streamProviderResponses(
+      c,
+      getResponsesEvents(upstreamResponse, c.req.raw.signal),
+      {
+        normalizeCodex: false,
+        provider,
+        recordUsage,
+      },
+    )
   }
 
   const responseBody = (await upstreamResponse
@@ -191,6 +228,7 @@ const streamProviderResponses = async (
   const iterator = upstreamResponse[Symbol.asyncIterator]()
   const firstResult = await iterator.next()
   if (firstResult.done) {
+    await iterator.return?.()
     throw new HTTPError(
       `Empty stream from ${options.provider} responses`,
       new Response("", { status: 502 }),
@@ -206,6 +244,7 @@ const streamProviderResponses = async (
     if (event?.type === "error") {
       const errorEvent = event
       const statusCode = errorEvent.status_code ?? 500
+      await iterator.return?.()
       return jsonWithForwardedHeaders(
         {
           error: {
@@ -272,6 +311,7 @@ const streamProviderResponses = async (
         await writeChunk(chunk)
       }
     } finally {
+      await iterator.return?.()
       options.recordUsage(usage)
     }
   })
@@ -314,12 +354,10 @@ const getResponsesStreamEventUsage = (
   return null
 }
 
-const getResponsesEvents = (response: Response): ResponsesStream =>
-  events(response)
-
-const isResponsesStream = (value: unknown): value is ResponsesStream => {
-  return (
-    Boolean(value)
-    && typeof (value as ResponsesStream)[Symbol.asyncIterator] === "function"
-  )
-}
+const getResponsesEvents = (
+  response: Response,
+  signal?: AbortSignal,
+): ResponsesStream =>
+  createResponsesSafeStream(createResponsesHttpEventStream(response, signal), {
+    signal,
+  })

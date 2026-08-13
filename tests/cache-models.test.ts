@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test"
 
-import type { ModelsResponse } from "../src/services/copilot/get-models"
+import type { ModelsResponse } from "../src/lib/types/models"
 
 import { state } from "../src/lib/state"
 import rawModelsResponse from "./fixtures/copilot-models-raw-response.json"
@@ -9,7 +9,7 @@ await mock.module("../src/services/copilot/get-models", () => ({
   getModels: () => Promise.resolve(rawModelsResponse as ModelsResponse),
 }))
 
-const { cacheModels } = await import("../src/lib/utils")
+const { cacheModels } = await import("../src/services/copilot/models-cache")
 
 describe("cacheModels", () => {
   beforeEach(() => {

@@ -10,7 +10,7 @@ import type {
   Message,
   Tool,
   ToolCall,
-} from "~/services/copilot/create-chat-completions"
+} from "~/lib/types/chat-completions"
 import type {
   IncompleteDetails,
   ResponseFunctionCallOutputItem,
@@ -28,7 +28,7 @@ import type {
   ResponsesPayload,
   ResponsesResult,
   ToolChoiceOptions,
-} from "~/services/copilot/create-responses"
+} from "~/lib/types/responses"
 
 type ResponseStatus = "completed" | "incomplete"
 
