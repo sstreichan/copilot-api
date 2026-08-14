@@ -6,6 +6,14 @@ import {
   getAttachedResponseHeaders,
 } from "~/lib/response-headers"
 import type { SubagentMarker } from "~/lib/subagent"
+import {
+  copilotUsageToTokens,
+  createCopilotTokenUsageRecorder,
+  mergeCopilotUsage,
+  normalizeOpenAIUsage,
+  type CopilotUsageTokens,
+  type UsageTokens,
+} from "~/lib/token-usage"
 import type {
   ChatCompletionChunk,
   ChatCompletionResponse,
@@ -49,6 +57,11 @@ export async function handleResponsesViaChatCompletions(
   },
 ): Promise<Response> {
   compactInputByLatestCompaction(options.payload)
+  const recordUsage = createCopilotTokenUsageRecorder({
+    endpoint: "responses",
+    fallbackSessionId: options.sessionId,
+    model: options.payload.model,
+  })
   const chatPayload = translateResponsesToChatCompletions(options.payload)
   const chatResponse = await responsesChatDependencies.createChatCompletions(
     chatPayload,
@@ -72,6 +85,10 @@ export async function handleResponsesViaChatCompletions(
         502,
       )
     }
+    recordUsage(
+      normalizeOpenAIUsage(chatResponse.usage),
+      copilotUsageToTokens(chatResponse.copilot_usage),
+    )
     return c.json(translateChatCompletionToResponsesResult(chatResponse))
   }
 
@@ -89,9 +106,20 @@ export async function handleResponsesViaChatCompletions(
 
   return streamSSE(c, async (stream) => {
     const state = createChatCompletionToResponsesStreamState()
+    let usage: UsageTokens = {}
+    let copilotUsage: CopilotUsageTokens = {}
 
     try {
       for await (const chunk of chatResponse) {
+        if (chunk.usage) {
+          usage = normalizeOpenAIUsage(chunk.usage)
+        }
+        if (chunk.copilot_usage) {
+          copilotUsage = mergeCopilotUsage(
+            copilotUsage,
+            copilotUsageToTokens(chunk.copilot_usage),
+          )
+        }
         for (const event of translateChatCompletionChunkToResponsesStreamEvents(
           chunk,
           state,
@@ -121,6 +149,7 @@ export async function handleResponsesViaChatCompletions(
         })
       }
     } finally {
+      recordUsage(usage, copilotUsage)
       if (!stream.closed) {
         await stream.close()
       }

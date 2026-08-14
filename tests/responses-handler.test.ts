@@ -1539,6 +1539,26 @@ describe("responses handler upstream header forwarding across fallbacks", () => 
       model,
       object: "chat.completion.chunk",
     }
+    if (includeUsage) {
+      yield {
+        choices: [],
+        created: 0,
+        id: "chatcmpl_1",
+        model,
+        object: "chat.completion.chunk",
+        copilot_usage: {
+          token_details: [
+            {
+              batch_size: 1,
+              cost_per_batch: 2,
+              token_count: 3,
+              token_type: "input",
+            },
+          ],
+          total_nano_aiu: 1_500_000,
+        },
+      }
+    }
     yield {
       choices: [
         {
@@ -1553,7 +1573,10 @@ describe("responses handler upstream header forwarding across fallbacks", () => 
       model,
       object: "chat.completion.chunk",
       ...(includeUsage ?
-        { usage: { completion_tokens: 1, prompt_tokens: 1, total_tokens: 2 } }
+        {
+          usage: { completion_tokens: 1, prompt_tokens: 1, total_tokens: 2 },
+          copilot_usage: { total_nano_aiu: 1_500_000 },
+        }
       : {}),
     }
   }
@@ -1728,6 +1751,9 @@ describe("responses handler upstream header forwarding across fallbacks", () => 
     expect(completedEvents).toHaveLength(1)
     expect(completedEvents[0]).toMatchObject({
       response: {
+        copilot_usage: {
+          total_nano_aiu: 1_500_000,
+        },
         output_text: "hi",
         status: "completed",
         usage: {
@@ -1736,6 +1762,20 @@ describe("responses handler upstream header forwarding across fallbacks", () => 
           total_tokens: 2,
         },
       },
+    })
+
+    const eventsResponse = await app.request(
+      "/token-usage/events?period=day&page=1&page_size=10",
+    )
+    const page = (await eventsResponse.json()) as {
+      items: Array<{
+        nano_cost_input: number | null
+        total_nano_aiu: number | null
+      }>
+    }
+    expect(page.items[0]).toMatchObject({
+      nano_cost_input: 6,
+      total_nano_aiu: 1_500_000,
     })
   })
 

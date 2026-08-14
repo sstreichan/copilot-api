@@ -72,24 +72,6 @@ export const parseUserIdMetadata = (
   return { safetyIdentifier, sessionId }
 }
 
-interface ResponsesSessionPayload {
-  prompt_cache_key?: string | null
-  metadata?: {
-    user_id?: string
-  } | null
-}
-
-const extractSessionKeyFromUserId = (
-  userId: string | undefined,
-): string | undefined => {
-  if (!userId) {
-    return undefined
-  }
-
-  const sessionMatch = new RegExp(/_session_(.+)$/).exec(userId)
-  return sessionMatch ? sessionMatch[1] : undefined
-}
-
 const findLastUserContent = (
   messages: Array<PayloadMessage>,
 ): string | null => {
@@ -143,51 +125,6 @@ export const getRootSessionId = (
     : c.req.header("x-session-id")
 
   return sessionId ? getUUID(sessionId) : sessionId
-}
-
-export const getStableSessionKeyFromResponsesPayload = (
-  responsesPayload: ResponsesSessionPayload,
-  c: Pick<Context, "req">,
-): string | undefined => {
-  if (
-    typeof responsesPayload.prompt_cache_key === "string"
-    && responsesPayload.prompt_cache_key.trim().length > 0
-  ) {
-    return responsesPayload.prompt_cache_key
-  }
-
-  const sessionFromUserId = extractSessionKeyFromUserId(
-    responsesPayload.metadata?.user_id,
-  )
-  if (sessionFromUserId) {
-    return sessionFromUserId
-  }
-
-  const sessionFromHeader =
-    c.req.header("x-session-id") ?? c.req.header("session-id")
-  if (
-    typeof sessionFromHeader === "string"
-    && sessionFromHeader.trim().length > 0
-  ) {
-    return sessionFromHeader
-  }
-
-  return undefined
-}
-
-export const getRootSessionIdFromResponsesPayload = (
-  responsesPayload: ResponsesSessionPayload,
-  c: Pick<Context, "req">,
-): string | undefined => {
-  const sessionKey = getStableSessionKeyFromResponsesPayload(
-    responsesPayload,
-    c,
-  )
-  if (!sessionKey) {
-    return undefined
-  }
-
-  return getUUID(sessionKey)
 }
 
 export const getUUID = (content: string): string => {

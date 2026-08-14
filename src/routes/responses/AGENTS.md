@@ -32,7 +32,7 @@
 - `stream-id-sync.ts` 会在 `response.output_item.added` 缺少 `item.id` 时补造 `oi_*` ID；后续事件必须复用该映射
 - `responses-from-messages.ts` 的 stream 翻译现在必须输出 monotonic `sequence_number` 和完整的 `response.output_item.added/done` 生命周期；assistant text + tool_use 合并为同一 message（防止 Claude replay 断流）
 - `preflight.ts` 独立管理共享工具 mutation；reasoning 条目原样放行（含 `encrypted_content`），Path A 的 compaction 由 context-management gate 决定，Path B/C 在各自 fallback 前裁剪
-- `prompt_cache_key` 缺失时由 `stableSessionKey` 注入；`normalizeResponsesInputForReplay()` 只在 `createHttpResponses` 的 belong-4xx 重试时执行（剥 `encrypted_content`、保留 id/type/summary、重试一次），路径级 `compactInputByLatestCompaction()` 必须在 stream id sync 之前完成
+- `prompt_cache_key` 完全由客户端自带，本网关不做注入；`normalizeResponsesInputForReplay()` 只在 `createHttpResponses` 的 belong-4xx 重试时执行（剥 `encrypted_content`、保留 id/type/summary、重试一次），路径级 `compactInputByLatestCompaction()` 必须在 stream id sync 之前完成
 - `compactInputByLatestCompaction()` 在 messages → responses 路径（`api-flows.ts`）也复用；改语义时两处一并验
 - stream/non-stream 两条路径都要保留上游 quota/rate-limit headers；缺口通常先查 route helper 调用，再查 service 是否附着了 headers
 
