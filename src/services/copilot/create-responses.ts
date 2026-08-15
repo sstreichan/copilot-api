@@ -46,6 +46,7 @@ import {
 } from "~/services/telemetry/telemetry"
 
 import { retryAfterInvalidAutoModeSelector } from "./auto-session-retry"
+import { retryAfterTlsCertificateVerificationFailure } from "../tls-retry"
 import {
   isReasoningItem,
   normalizeResponsesInputForReplay,
@@ -196,14 +197,19 @@ const createHttpResponses = async (
   const url = `${copilotBaseUrl(state)}/responses`
   const transportConfig = getResponsesTransportConfig()
   const sendRequest = () =>
-    fetchResponsesWithLifecycle(
-      url,
-      { method: "POST", headers, body: JSON.stringify(payload) },
-      {
-        headersTimeoutMs: transportConfig.headersTimeoutMs,
-        signal,
-        streamInactivityTimeoutMs: transportConfig.streamInactivityTimeoutMs,
-      },
+    retryAfterTlsCertificateVerificationFailure(
+      () =>
+        fetchResponsesWithLifecycle(
+          url,
+          { method: "POST", headers, body: JSON.stringify(payload) },
+          {
+            headersTimeoutMs: transportConfig.headersTimeoutMs,
+            signal,
+            streamInactivityTimeoutMs:
+              transportConfig.streamInactivityTimeoutMs,
+          },
+        ),
+      { signal },
     )
 
   let response = await retryAfterInvalidAutoModeSelector(

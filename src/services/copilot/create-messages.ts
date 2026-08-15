@@ -37,6 +37,7 @@ import {
 } from "~/services/telemetry/telemetry"
 
 import { retryAfterInvalidAutoModeSelector } from "./auto-session-retry"
+import { retryAfterTlsCertificateVerificationFailure } from "../tls-retry"
 
 export type MessagesStream = ReturnType<typeof events>
 export type CreateMessagesReturn = AnthropicResponse | MessagesStream
@@ -304,11 +305,13 @@ const sendWithSignatureRetry = async (
   enhancedPayload: ReturnType<typeof buildEnhancedPayload>,
 ): Promise<Response> => {
   const sendRequest = () =>
-    fetch(url, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(enhancedPayload),
-    })
+    retryAfterTlsCertificateVerificationFailure(() =>
+      fetch(url, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(enhancedPayload),
+      }),
+    )
 
   const response = await retryAfterInvalidAutoModeSelector(
     await sendRequest(),
@@ -340,11 +343,14 @@ const sendWithSignatureRetry = async (
           effort: fallbackEffort,
         },
       }
-      const retryResponse = await fetch(url, {
-        method: "POST",
-        headers,
-        body: JSON.stringify(retryPayload),
-      })
+      const retryResponse = await retryAfterTlsCertificateVerificationFailure(
+        () =>
+          fetch(url, {
+            method: "POST",
+            headers,
+            body: JSON.stringify(retryPayload),
+          }),
+      )
       if (!retryResponse.ok) {
         consola.error(
           "Effort-downgrade retry also failed",
@@ -367,11 +373,14 @@ const sendWithSignatureRetry = async (
       "Thinking block error detected, retrying with thinking blocks stripped",
     )
     const strippedPayload = stripThinkingBlocks(enhancedPayload)
-    const retryResponse = await fetch(url, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(strippedPayload),
-    })
+    const retryResponse = await retryAfterTlsCertificateVerificationFailure(
+      () =>
+        fetch(url, {
+          method: "POST",
+          headers,
+          body: JSON.stringify(strippedPayload),
+        }),
+    )
     if (!retryResponse.ok) {
       consola.error("Retry also failed", retryResponse.status)
       throw new HTTPError(

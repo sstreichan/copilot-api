@@ -34,6 +34,7 @@ import {
   createResponsesHttpEventStream,
   fetchResponsesWithLifecycle,
 } from "~/services/responses-http"
+import { retryAfterTlsCertificateVerificationFailure } from "~/services/tls-retry"
 import { requestContext } from "~/lib/request-context"
 import consola from "consola"
 
@@ -264,20 +265,24 @@ export async function forwardCodexResponses(
   const normalizedPayload = normalizeCodexResponsesPayload(payload)
 
   const transportConfig = getResponsesTransportConfig()
-  const response = await fetchResponsesWithLifecycle(
-    resolveCodexResponsesUrl(baseUrl),
-    {
-      method: "POST",
-      headers: buildCodexResponsesHeaders(requestHeaders, {
-        stream: normalizedPayload.stream,
-      }),
-      body: JSON.stringify(normalizedPayload),
-    },
-    {
-      headersTimeoutMs: transportConfig.headersTimeoutMs,
-      signal: options.signal,
-      streamInactivityTimeoutMs: transportConfig.streamInactivityTimeoutMs,
-    },
+  const response = await retryAfterTlsCertificateVerificationFailure(
+    () =>
+      fetchResponsesWithLifecycle(
+        resolveCodexResponsesUrl(baseUrl),
+        {
+          method: "POST",
+          headers: buildCodexResponsesHeaders(requestHeaders, {
+            stream: normalizedPayload.stream,
+          }),
+          body: JSON.stringify(normalizedPayload),
+        },
+        {
+          headersTimeoutMs: transportConfig.headersTimeoutMs,
+          signal: options.signal,
+          streamInactivityTimeoutMs: transportConfig.streamInactivityTimeoutMs,
+        },
+      ),
+    { signal: options.signal },
   )
 
   if (!response.ok) {

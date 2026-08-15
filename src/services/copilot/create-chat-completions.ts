@@ -33,6 +33,7 @@ import {
 } from "~/services/telemetry/telemetry"
 
 import { retryAfterInvalidAutoModeSelector } from "./auto-session-retry"
+import { retryAfterTlsCertificateVerificationFailure } from "../tls-retry"
 import type { CopilotUsage } from "~/lib/token-usage"
 
 export type { CopilotUsage }
@@ -159,9 +160,12 @@ async function retryWithStrippedReasoningFields(
     "Thinking block error detected, retrying with reasoning fields stripped",
   )
   const strippedPayload = stripReasoningFields(payload)
-  const retryResponse = await fetch(
-    `${copilotBaseUrl(state)}/chat/completions`,
-    { method: "POST", headers, body: JSON.stringify(strippedPayload) },
+  const retryResponse = await retryAfterTlsCertificateVerificationFailure(() =>
+    fetch(`${copilotBaseUrl(state)}/chat/completions`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(strippedPayload),
+    }),
   )
   if (!retryResponse.ok) {
     consola.error("Retry also failed", retryResponse.status)
@@ -246,11 +250,13 @@ export const createChatCompletions = async (
   consola.debug(`<-- model: ${payload.model}`)
   const url = `${copilotBaseUrl(state)}/chat/completions`
   const sendRequest = () =>
-    fetch(url, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(payload),
-    })
+    retryAfterTlsCertificateVerificationFailure(() =>
+      fetch(url, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(payload),
+      }),
+    )
 
   const response = await retryAfterInvalidAutoModeSelector(
     await sendRequest(),
