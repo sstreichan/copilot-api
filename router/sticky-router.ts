@@ -26,6 +26,23 @@ const DEFAULT_COOLDOWN_MS =
 const MAX_LINES = 200
 const TRIM_TO = 150
 const DASHBOARD_FILE = Bun.file(new URL("./dashboard.html", import.meta.url))
+const DASHBOARD_V2_FILES = [
+  {
+    path: "/v2",
+    file: Bun.file(new URL("./dashboard-v2.html", import.meta.url)),
+    contentType: "text/html; charset=utf-8",
+  },
+  {
+    path: "/v2/dashboard-v2.css",
+    file: Bun.file(new URL("./dashboard-v2.css", import.meta.url)),
+    contentType: "text/css; charset=utf-8",
+  },
+  {
+    path: "/v2/dashboard-v2.js",
+    file: Bun.file(new URL("./dashboard-v2.js", import.meta.url)),
+    contentType: "text/javascript; charset=utf-8",
+  },
+] as const
 
 function log(line: string) {
   const entry = `[${new Date().toISOString()}] ${line}\n`
@@ -65,6 +82,7 @@ export async function main() {
       state,
       logger: log,
       dashboardFile: DASHBOARD_FILE,
+      staticFiles: DASHBOARD_V2_FILES,
     }),
   })
 

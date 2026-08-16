@@ -107,10 +107,17 @@ export interface ProxyToOptions {
   }) => void
 }
 
+export interface DashboardStaticFile {
+  path: string
+  file: Bun.BunFile
+  contentType: string
+}
+
 export interface DashboardHandlerOptions {
   state: StickyRouterState
   logger: (line: string) => void
   dashboardFile: Bun.BunFile
+  staticFiles?: ReadonlyArray<DashboardStaticFile>
   fetchImpl?: typeof fetch
   encoder?: TextEncoder
   sseRetryMs?: number
@@ -1343,6 +1350,20 @@ export function createDashboardHandler(options: DashboardHandlerOptions) {
       return new Response(options.dashboardFile, {
         headers: { "Content-Type": "text/html; charset=utf-8" },
       })
+    }
+
+    if (req.method === "GET" && options.staticFiles) {
+      const match = options.staticFiles.find(
+        (entry) => entry.path === url.pathname,
+      )
+      if (match) {
+        if (!(await match.file.exists())) {
+          return new Response("not found", { status: 404 })
+        }
+        return new Response(match.file, {
+          headers: { "Content-Type": match.contentType },
+        })
+      }
     }
 
     if (url.pathname === "/api/status" && req.method === "GET") {

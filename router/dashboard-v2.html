@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sticky Router — Dashboard</title>
+  <link rel="stylesheet" href="/v2/dashboard-v2.css" />
+</head>
+<body>
+  <header class="appbar">
+    <div class="appbar-inner">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">⇄</span>
+        <div class="brand-text">
+          <h1>Sticky Router</h1>
+          <p>Live routing overview</p>
+        </div>
+      </div>
+      <div class="appbar-actions">
+        <span id="sse-status" class="sse-pill is-down" role="status">
+          <span class="sse-dot" aria-hidden="true"></span>
+          <span id="sse-label">Connecting</span>
+        </span>
+        <button id="pip-btn" class="btn btn-ghost" type="button" title="Pop out as always-on-top Picture-in-Picture window">📌 PiP</button>
+        <a class="btn btn-ghost" href="/" title="Back to the classic dashboard">Classic UI</a>
+      </div>
+    </div>
+  </header>
+
+  <main class="page">
+    <section class="hero card" id="budget-panel" aria-label="Monthly budget">
+      <div class="hero-main">
+        <div class="hero-label">
+          <span>Budget · <span id="budget-month">—</span></span>
+          <span class="hero-note" id="budget-snapshot-note"></span>
+        </div>
+        <div class="hero-numbers">
+          <span class="hero-used" id="budget-used">–</span>
+          <span class="hero-total">/ <span id="budget-total">–</span></span>
+        </div>
+        <div class="hero-bar" role="progressbar" aria-label="Budget used" aria-valuemin="0" aria-valuemax="100">
+          <div class="hero-bar-fill" id="budget-bar"></div>
+        </div>
+        <div class="hero-sub">
+          <span id="budget-pct">–</span>
+          <span class="hero-status" id="budget-status"></span>
+        </div>
+      </div>
+      <div class="hero-side">
+        <div class="stat-chip">
+          <span class="stat-chip-label">Pace / day</span>
+          <span class="stat-chip-value" id="budget-pace">–</span>
+        </div>
+        <div class="stat-chip">
+          <span class="stat-chip-label">Month-end forecast</span>
+          <span class="stat-chip-value" id="budget-forecast">–</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" aria-label="Instances">
+      <div class="section-head">
+        <h2>Instances <span class="count-badge" id="instance-count">0</span></h2>
+        <button id="refresh-usage" class="btn" type="button">Refresh usage</button>
+      </div>
+      <div class="table-wrap" id="instances-table">
+        <table class="tbl">
+          <thead>
+            <tr><th>Instance</th><th>Port</th><th>Premium</th><th>Model requests</th><th>Cooldown &amp; rate limits</th><th>Last active</th><th>Enabled</th></tr>
+          </thead>
+          <tbody id="instances-body"></tbody>
+        </table>
+      </div>
+      <div class="empty-state" id="instances-empty" hidden>No instances discovered.</div>
+    </section>
+
+    <section class="section" aria-label="Active bindings">
+      <div class="section-head">
+        <h2>Active Bindings <span class="count-badge" id="binding-count">0</span></h2>
+        <button id="clear-bindings" class="btn btn-danger" type="button">Clear bindings</button>
+      </div>
+      <div class="binding-list" id="binding-list"></div>
+      <div class="empty-state" id="bindings-empty" hidden>No active bindings.</div>
+    </section>
+
+    <section class="section" aria-label="Route history">
+      <div class="section-head">
+        <h2>
+          Route History <span class="count-badge" id="history-count">0</span>
+          <span class="total-badge" id="history-total-usd">$0.000000</span>
+        </h2>
+        <button id="clear-history" class="btn btn-danger" type="button">Clear history</button>
+      </div>
+      <div class="filter-row" id="history-session-filters" role="group" aria-label="Filter by session"></div>
+      <div class="history-list" id="history-list"></div>
+      <div class="empty-state" id="history-empty" hidden>No routes yet.</div>
+    </section>
+  </main>
+
+  <script src="/v2/dashboard-v2.js"></script>
+</body>
+</html>

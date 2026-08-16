@@ -279,6 +279,21 @@
     .switch input:checked + .slider::before { left: 18px; background: var(--accent); }
     .switch input:disabled + .slider { opacity: .6; cursor: wait; }
 
+    .btn-new-ui {
+      appearance: none;
+      display: inline-flex;
+      align-items: center;
+      border: 1px solid rgba(88,166,255,.4);
+      background: rgba(88,166,255,.10);
+      color: var(--accent);
+      border-radius: 8px;
+      padding: 6px 10px;
+      font: inherit;
+      text-decoration: none;
+      transition: background .15s ease, border-color .15s ease;
+    }
+    .btn-new-ui:hover { background: rgba(88,166,255,.18); border-color: rgba(88,166,255,.6); }
+
   </style>
 </head>
 <body>
@@ -288,7 +303,10 @@
         <h1>Sticky Router Dashboard</h1>
         <div class="muted">Live route stream on SSE, practical view only.</div>
       </div>
-      <div id="sse-status" class="status disconnected">SSE disconnected</div>
+      <div style="display:flex; align-items:center; gap:10px">
+        <a class="btn-new-ui" href="/v2" title="Try the new dashboard UI">✨ New UI</a>
+        <div id="sse-status" class="status disconnected">SSE disconnected</div>
+      </div>
     </div>
 
     <div class="grid">

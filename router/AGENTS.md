@@ -14,7 +14,10 @@ router/
 ├── lib.ts              # 纯函数层——解析、格式化、取 header，不沾状态
 ├── state.ts            # 状态与 I/O——binding 表、SSE 广播、路由决策、代理转发、dashboard handler
 ├── sticky-router.ts    # 装配壳——读配置、发现模型、起两个 Bun.serve、裁日志
-├── dashboard.html      # 前端仪表盘——SSE 实时流、binding/history 可视、按钮清除
+├── dashboard.html      # 前端仪表盘（经典版，默认）——SSE 实时流、binding/history 可视、按钮清除
+├── dashboard-v2.html   # 新版仪表盘入口（/v2，与经典版共存；旧版顶栏有 ✨ New UI 按钮）
+├── dashboard-v2.css    # 新版样式
+├── dashboard-v2.js     # 新版交互逻辑（纯浏览器 JS，复用同一组 /api 端点）
 ├── start.sh            # tmux 编排脚本——验 tokens/端口 → 起多实例 → 等就绪 → 起 router
 └── AGENTS.md           # 此文也
 ```
@@ -27,6 +30,7 @@ router/
 | `state.test.ts` | 状态操作：least-loaded 选择、计数累加、SSE 广播、路由记录 |
 | `proxy.test.ts` | 代理转发：正常透传、上游失败 502、GET 不发 body |
 | `integration.test.ts` | 端到端：sticky 复用、无 model 降级、模型不存在 502 |
+| `dashboard-static.test.ts` | 静态分发：/v2 三件套 content-type、未知路径 404、缺文件 404、非 GET 不服务 |
 
 ## 卷二 · 令典（命令速查）
 
