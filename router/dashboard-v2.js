@@ -338,10 +338,10 @@ function renderBindings(bindings) {
   list.innerHTML = entries
     .map(
       ([key, port]) => `
-    <span class="binding-chip" title="${escapeHtml(key)}">
-      <span class="binding-key">${escapeHtml(key)}</span>
-      <span class="binding-port">:${escapeHtml(String(port))}</span>
-    </span>
+    <tr>
+      <td><span class="binding-key" title="${escapeHtml(key)}">${escapeHtml(key)}</span></td>
+      <td><span class="binding-port">:${escapeHtml(String(port))}</span></td>
+    </tr>
   `,
     )
     .join("")
@@ -428,12 +428,9 @@ function usageSummaryParts(item, ranks, index) {
   if (!usage && !copilotUsage) return []
   const parts = []
   const cached = historyCached(item)
-  const usd = historyUsd(item)
   const rankKey = historyRankKey(item, index)
   const lowCacheRank = ranks.lowCache?.get(rankKey)
   const highCacheRank = ranks.highCache?.get(rankKey)
-  const highCostRank = ranks.highCost?.get(rankKey)
-  const lowCostRank = ranks.lowCost?.get(rankKey)
   const tokenDetails =
     Array.isArray(copilotUsage?.token_details) ? copilotUsage.token_details : []
   const typeOrder = ["input", "cache_read", "cache_write", "output"]
@@ -477,20 +474,6 @@ function usageSummaryParts(item, ranks, index) {
       : escapeHtml(text),
     )
   }
-  if (usd !== null) {
-    const text = `$${usd.toFixed(6)}`
-    const rank = chooseUsageRank(lowCostRank, highCostRank)
-    parts.push(
-      rank ?
-        highlightUsagePart(
-          text,
-          rank.direction === "low" ? "usage-low-cost" : "usage-high-cost",
-          rank.rank,
-          rank.direction,
-        )
-      : escapeHtml(text),
-    )
-  }
   for (const tokenType of typeOrder) {
     const typeNano = typeCosts[tokenType]
     if (!Number.isFinite(typeNano)) continue
@@ -500,6 +483,25 @@ function usageSummaryParts(item, ranks, index) {
     )
   }
   return parts
+}
+
+function costCellHtml(item, ranks, index) {
+  const usd = historyUsd(item)
+  if (usd === null) return "-"
+  const text = `$${usd.toFixed(6)}`
+  const rankKey = historyRankKey(item, index)
+  const rank = chooseUsageRank(
+    ranks.lowCost?.get(rankKey),
+    ranks.highCost?.get(rankKey),
+  )
+  return rank ?
+      highlightUsagePart(
+        text,
+        rank.direction === "low" ? "usage-low-cost" : "usage-high-cost",
+        rank.rank,
+        rank.direction,
+      )
+    : escapeHtml(text)
 }
 
 function usageCellHtml(item, ranks, index) {
@@ -565,17 +567,16 @@ function clearHistoryHover() {
 function historyRowHtml(item, ranks, index) {
   const session = String(item.sid || "-")
   return `
-    <div class="history-row" data-session="${escapeHtml(session)}" style="${sessionStyle(session)}">
-      <div class="history-line">
-        <span class="history-cell history-time">${escapeHtml(fmtTime(item.ts))}</span>
-        <span class="history-cell"><button type="button" class="session-badge" data-session="${escapeHtml(session)}" title="${escapeHtml(item.sid || "-")}" style="${sessionStyle(session)}">${escapeHtml(cut(session, 18))}</button></span>
-        <span class="history-cell history-agent" title="${escapeHtml(item.agent || "-")}">${escapeHtml(cut(item.agent, 18))}</span>
-        <span class="history-cell history-model" title="${escapeHtml(item.model || "-")}">${escapeHtml(cut(item.model, 28))}</span>
-        <span class="history-cell history-target">:${escapeHtml(String(item.port || "-"))}</span>
-        <span class="history-cell history-reason" title="${escapeHtml(item.reason || "-")}">${escapeHtml(item.reason || "-")}</span>
-        ${usageCellHtml(item, ranks, index)}
-      </div>
-    </div>
+    <tr class="history-row" data-session="${escapeHtml(session)}" style="${sessionStyle(session)}">
+      <td class="history-time">${escapeHtml(fmtTime(item.ts))}</td>
+      <td class="history-target">:${escapeHtml(String(item.port || "-"))}</td>
+      <td><button type="button" class="session-badge" data-session="${escapeHtml(session)}" title="${escapeHtml(item.sid || "-")}" style="${sessionStyle(session)}">${escapeHtml(cut(session, 18))}</button></td>
+      <td class="history-agent" title="${escapeHtml(item.agent || "-")}">${escapeHtml(cut(item.agent, 18))}</td>
+      <td class="history-model" title="${escapeHtml(item.model || "-")}">${escapeHtml(cut(item.model, 28))}</td>
+      <td class="history-reason" title="${escapeHtml(item.reason || "-")}">${escapeHtml(item.reason || "-")}</td>
+      <td class="cost-cell">${costCellHtml(item, ranks, index)}</td>
+      <td>${usageCellHtml(item, ranks, index)}</td>
+    </tr>
   `
 }
 
@@ -587,6 +588,7 @@ function renderHistory(history) {
         .slice(0, HISTORY_DISPLAY_LIMIT)
     : []
   renderSessionFilters(state.history)
+  renderInsights(state.history)
   const visibleHistory =
     state.activeSession === null ?
       state.history
@@ -631,6 +633,72 @@ function updateHistoryItem(item) {
   if (index === -1) return
   state.history[index] = item
   renderHistory(state.history)
+}
+
+/* ---------- Insights (cost breakdown, aggregated client-side) ---------- */
+
+const INSIGHT_TOP_N = 5
+
+function sumCostBy(history, keyFn) {
+  const totals = new Map()
+  for (const item of history) {
+    const usd = historyUsd(item)
+    if (usd === null) continue
+    const key = keyFn(item)
+    if (!key) continue
+    totals.set(key, (totals.get(key) || 0) + usd)
+  }
+  return [...totals.entries()].sort((a, b) => b[1] - a[1])
+}
+
+function rankListHtml(entries) {
+  if (!entries.length)
+    return '<div class="insight-empty">No cost data yet.</div>'
+  const max = entries[0][1] || 1
+  return entries
+    .slice(0, INSIGHT_TOP_N)
+    .map(
+      ([label, usd]) => `
+    <div class="rank-row" title="${escapeHtml(label)}">
+      <span class="rank-label">${escapeHtml(cut(label, 22))}</span>
+      <span class="rank-bar"><span style="width: ${(usd / max) * 100}%"></span></span>
+      <span class="rank-val">$${usd.toFixed(6)}</span>
+    </div>`,
+    )
+    .join("")
+}
+
+function topRequestsHtml(history) {
+  const top = (Array.isArray(history) ? [...history] : [])
+    .map((item) => ({ item, usd: historyUsd(item) }))
+    .filter((entry) => entry.usd !== null)
+    .sort(
+      (a, b) =>
+        b.usd - a.usd || (b.item.ts || "").localeCompare(a.item.ts || ""),
+    )
+    .slice(0, INSIGHT_TOP_N)
+  if (!top.length) return '<div class="insight-empty">No cost data yet.</div>'
+  return top
+    .map(
+      ({ item, usd }) => `
+    <div class="rank-row rank-row--top" title="${escapeHtml(item.model || "-")} via :${escapeHtml(String(item.port || "-"))}">
+      <span class="rank-val">$${usd.toFixed(6)}</span>
+      <span class="rank-label">${escapeHtml(cut(item.model, 20))} · :${escapeHtml(String(item.port || "-"))}</span>
+      <span class="rank-time">${escapeHtml(formatRelativeTime(item.ts).label)}</span>
+    </div>`,
+    )
+    .join("")
+}
+
+function renderInsights(history) {
+  byId("insights-window").textContent = `last ${history.length} routes`
+  byId("by-model-list").innerHTML = rankListHtml(
+    sumCostBy(history, (item) => item.model),
+  )
+  byId("by-session-list").innerHTML = rankListHtml(
+    sumCostBy(history, (item) => (item.sid ? String(item.sid) : null)),
+  )
+  byId("top-requests-list").innerHTML = topRequestsHtml(history)
 }
 
 /* ---------- Data loading & actions ---------- */
