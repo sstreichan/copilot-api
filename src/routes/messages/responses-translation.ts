@@ -55,8 +55,9 @@ import {
   type AnthropicDocumentBlock,
   type AnthropicResponse,
   type AnthropicImageBlock,
-  type AnthropicMessage,
+  type AnthropicInputMessage,
   type AnthropicMessagesPayload,
+  type AnthropicSystemMessage,
   type AnthropicTextBlock,
   type AnthropicThinkingBlock,
   type AnthropicTool,
@@ -110,7 +111,7 @@ export const translateAnthropicMessagesToResponsesPayload = (
     toolUseNameById: new Map(),
   }
 
-  for (const message of payload.messages as Array<AnthropicMessage>) {
+  for (const message of payload.messages) {
     input.push(
       ...translateMessage(message, payload.model, applyPhase, translationState),
     )
@@ -217,7 +218,7 @@ export const decodeCompactionCarrierSignature = (
 }
 
 const translateMessage = (
-  message: AnthropicMessage,
+  message: AnthropicInputMessage,
   model: string,
   applyPhase: boolean,
   state: TranslationState,
@@ -226,7 +227,22 @@ const translateMessage = (
     return translateUserMessage(message, state)
   }
 
+  if (message.role === "system") {
+    return translateSystemMessage(message)
+  }
+
   return translateAssistantMessage(message, model, applyPhase, state)
+}
+
+const translateSystemMessage = (
+  message: AnthropicSystemMessage,
+): Array<ResponseInputItem> => {
+  if (typeof message.content === "string") {
+    return [createMessage("developer", message.content)]
+  }
+
+  const content = message.content.map((block) => createTextContent(block.text))
+  return content.length > 0 ? [createMessage("developer", content)] : []
 }
 
 const translateUserMessage = (
@@ -788,7 +804,7 @@ const convertToolToFunction = (tool: AnthropicTool): Tool => ({
   type: "function",
   name: tool.name,
   parameters: normalizeToolSchema(tool.input_schema),
-  strict: false,
+  strict: tool.strict ?? false,
   ...(tool.description ? { description: tool.description } : {}),
 })
 
@@ -801,7 +817,7 @@ const convertDeferredToolToNamespace = (tool: AnthropicTool): Tool => ({
       type: "function",
       name: tool.name,
       parameters: normalizeToolSchema(tool.input_schema),
-      strict: false,
+      strict: tool.strict ?? false,
       defer_loading: true,
       ...(tool.description ? { description: tool.description } : {}),
     },

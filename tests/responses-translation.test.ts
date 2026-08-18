@@ -481,6 +481,45 @@ describe("translateAnthropicMessagesToResponsesPayload", () => {
     expect(result.instructions).not.toContain("cch=<stable>;")
   })
 
+  it("translates inline system messages to developer items", () => {
+    const result = translateAnthropicMessagesToResponsesPayload({
+      model: "gpt-5.4",
+      max_tokens: 1024,
+      messages: [
+        {
+          role: "system",
+          content: "leading system prompt",
+        },
+        {
+          role: "user",
+          content: "hello",
+        },
+        {
+          role: "system",
+          content: "late system prompt",
+        },
+      ],
+    })
+
+    expect(result.input).toEqual([
+      {
+        type: "message",
+        role: "developer",
+        content: "leading system prompt",
+      },
+      {
+        type: "message",
+        role: "user",
+        content: "hello",
+      },
+      {
+        type: "message",
+        role: "developer",
+        content: "late system prompt",
+      },
+    ])
+  })
+
   it("ignores blank subagent agent_id", () => {
     const result = translateAnthropicMessagesToResponsesPayload(
       {
@@ -663,6 +702,7 @@ describe("translateAnthropicMessagesToResponsesPayload", () => {
         {
           name: "Read",
           description: "Read a file",
+          strict: true,
           input_schema: {
             type: "object",
             properties: {
@@ -751,7 +791,7 @@ describe("translateAnthropicMessagesToResponsesPayload", () => {
           },
           required: ["file_path"],
         },
-        strict: false,
+        strict: true,
       },
     ])
   })

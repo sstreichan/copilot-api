@@ -238,6 +238,85 @@ describe("provider Responses context management", () => {
     ])
   })
 
+  test("does not add context management for non-GPT Responses models", async () => {
+    responsesUtilsDependencies.isContextManagementEnabledForResponses = () =>
+      true
+
+    const app = createApp()
+    const response = await app.request("/v1/responses", {
+      body: JSON.stringify({
+        input: [
+          {
+            content: "older",
+            role: "user",
+          },
+          {
+            encrypted_content: "cipher",
+            id: "compaction-1",
+            type: "compaction",
+          },
+          {
+            content: "latest",
+            role: "user",
+          },
+        ],
+        model: "openai/grok-4.5",
+      }),
+      headers: {
+        "content-type": "application/json",
+      },
+      method: "POST",
+    })
+
+    expect(response.status).toBe(200)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+
+    const [, init] = fetchMock.mock.calls[0]
+    const body = parseJsonRequestBody((init as RequestInit).body) as {
+      context_management?: unknown
+      input: Array<unknown>
+    }
+
+    expect(body.context_management).toBeUndefined()
+    expect(body.input).toHaveLength(3)
+  })
+
+  test("normalizes Grok effort across the Codex Messages fallback", async () => {
+    providerConfig = {
+      apiKey: "provider-key",
+      authType: "authorization",
+      baseUrl: "https://openai-responses.example",
+      models: {
+        "grok-4.5": {},
+      },
+      name: "opencode-go",
+      type: "openai-responses",
+    }
+
+    const app = createApp()
+    const response = await app.request("/opencode-go/v1/responses", {
+      body: JSON.stringify({
+        input: "hello",
+        model: "grok-4.5",
+        reasoning: { effort: "max" },
+      }),
+      headers: {
+        "content-type": "application/json",
+        "user-agent": "codex-cli/1.0.0",
+      },
+      method: "POST",
+    })
+
+    expect(response.status).toBe(200)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+
+    const [, init] = fetchMock.mock.calls[0]
+    const body = parseJsonRequestBody((init as RequestInit).body) as {
+      reasoning?: { effort?: string }
+    }
+    expect(body.reasoning?.effort).toBe("high")
+  })
+
   test("disables context management for gpt-5.6 models even when responses is enabled", async () => {
     responsesUtilsDependencies.isContextManagementEnabledForResponses = () =>
       true
@@ -349,6 +428,44 @@ describe("provider Responses context management", () => {
     }
     expect(body.model).toBe("gpt-test")
     expect((init as RequestInit).signal).toBeInstanceOf(AbortSignal)
+  })
+
+  test("keeps codex-prefixed provider models on the native Responses route for Codex clients", async () => {
+    providerConfig = {
+      apiKey: "provider-key",
+      authType: "authorization",
+      baseUrl: "https://openai-responses.example",
+      models: {
+        "codex-mini-latest": {},
+      },
+      name: "openai",
+      type: "openai-responses",
+    }
+
+    const response = await createApp().request("/openai/v1/responses", {
+      body: JSON.stringify({
+        input: "hello",
+        model: "codex-mini-latest",
+      }),
+      headers: {
+        "content-type": "application/json",
+        "user-agent": "codex-cli/1.0.0",
+      },
+      method: "POST",
+    })
+
+    expect(response.status).toBe(200)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+
+    const [, init] = fetchMock.mock.calls[0]
+    const body = parseJsonRequestBody((init as RequestInit).body) as {
+      input: unknown
+      model: string
+    }
+    expect(body).toMatchObject({
+      input: "hello",
+      model: "codex-mini-latest",
+    })
   })
 
   test("propagates provider-scoped client cancellation upstream without a 500", async () => {
@@ -474,7 +591,7 @@ describe("provider Responses context management", () => {
         model: string
         tools: Array<{
           type: string
-          function: { name: string }
+          function: { name: string; strict?: boolean }
         }>
       }
       expect(body.model).toBe("chat-test")
@@ -482,6 +599,7 @@ describe("provider Responses context management", () => {
         "apply_patch",
         "workspace__read_file",
       ])
+      expect(body.tools[0]?.function.strict).toBe(true)
       return Promise.resolve(
         Response.json({
           id: "chatcmpl-lite",
@@ -581,6 +699,70 @@ describe("provider Responses context management", () => {
         arguments: JSON.stringify({ path: "README.md" }),
       },
     ])
+  })
+
+  test("applies strict to custom tools for the Kimi provider", async () => {
+    providerConfig = {
+      apiKey: "provider-key",
+      authType: "authorization",
+      baseUrl: "https://kimi.example",
+      models: { k3: {} },
+      name: "kimi",
+      type: "openai-compatible",
+    }
+    fetchMock.mockImplementation((_url, init) => {
+      const body = parseJsonRequestBody(init?.body) as {
+        tools: Array<{
+          function: Record<string, unknown>
+          type: string
+        }>
+      }
+      expect(body.tools).toHaveLength(1)
+      expect(body.tools[0]?.function).toMatchObject({ name: "apply_patch" })
+      expect(body.tools[0]?.function.strict).toBe(true)
+      return Promise.resolve(
+        Response.json({
+          id: "chatcmpl-kimi",
+          object: "chat.completion",
+          created: 1,
+          model: "k3",
+          choices: [
+            {
+              index: 0,
+              finish_reason: "stop",
+              message: { role: "assistant", content: "done" },
+            },
+          ],
+          usage: {
+            prompt_tokens: 4,
+            completion_tokens: 1,
+            total_tokens: 5,
+          },
+        }),
+      )
+    })
+
+    const response = await createApp().request("/v1/responses", {
+      body: JSON.stringify({
+        model: "kimi/k3",
+        input: [
+          {
+            role: "developer",
+            type: "additional_tools",
+            tools: [{ type: "custom", name: "apply_patch" }],
+          },
+          { type: "message", role: "user", content: "Update the file" },
+        ],
+      }),
+      headers: { "content-type": "application/json" },
+      method: "POST",
+    })
+
+    expect(response.status).toBe(200)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      "https://kimi.example/v1/chat/completions",
+    )
   })
 
   test("adapts Responses Lite directly to an Anthropic Messages provider", async () => {

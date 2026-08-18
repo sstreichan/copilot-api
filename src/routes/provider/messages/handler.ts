@@ -97,6 +97,7 @@ import { createResponsesSafeStream } from "~/services/responses-websocket-helper
 import {
   applyMissingExtraBody,
   applyModelDefaults,
+  normalizeProviderResponsesReasoningEffort,
 } from "~/routes/provider/utils"
 import consola from "consola"
 
@@ -274,6 +275,7 @@ const handleOpenAIResponsesProviderWebSearchMessages = async (
   const { modelConfig, payload, provider, providerConfig, usageEndpoint } =
     options
   const responsesPayload = prepareWebSearchResponsesPayload(payload)
+  normalizeProviderResponsesReasoningEffort(responsesPayload, providerConfig)
 
   debugJson(logger, "provider.messages.responses.web_search.request", {
     payload: responsesPayload,
@@ -386,6 +388,7 @@ const handleOpenAIResponsesProviderMessages = async (
     : undefined
   const wantsStream = payload.stream === true
   const responsesPayload = translateAnthropicMessagesToResponsesPayload(payload)
+  normalizeProviderResponsesReasoningEffort(responsesPayload, providerConfig)
 
   if (providerConfig.name === "codex" && !wantsStream) {
     responsesPayload.stream = true
