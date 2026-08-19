@@ -6,9 +6,14 @@
 
 const state = {
   history: [],
+  /** @type {string | null} */
   activeSession: null,
   routeHistorySize: 0,
   totalNanoAiuSinceStart: 0,
+  instances: [],
+  sseLive: false,
+  /** @type {{ model: string | null, instance: number | null }} */
+  filter: { model: null, instance: null },
 }
 const HISTORY_DISPLAY_LIMIT = 200
 const PIP_TOP_REQUEST_LIMIT = 3
@@ -169,8 +174,14 @@ function renderInstances(instances) {
         : '<span class="history-agent">none</span>'
 
       const last = formatRelativeTime(item.lastActive)
+      const st = instanceState(item)
+      const rowClass =
+        st.key === "cool" ? ' class="row-cool"'
+        : st.key === "off" ? ' class="is-off row-off"'
+        : st.key === "down" ? ' class="row-down"'
+        : ""
       return `
-      <tr${item.disabled ? ' class="is-off"' : ""}>
+      <tr${rowClass}>
         <td>
           <div class="cell-name">
             <span class="status-dot${item.healthy ? " is-up" : ""}" title="${item.healthy ? "up" : "down"}"></span>
@@ -178,6 +189,7 @@ function renderInstances(instances) {
           </div>
         </td>
         <td><span class="port-code">:${escapeHtml(String(item.port))}</span></td>
+        <td><span class="state-pill state-${st.key}">${escapeHtml(st.label)}</span></td>
         <td class="cell-usage">
           ${usageLabel}
           <div class="mini-bar"><div class="mini-bar-fill" style="width: ${usagePct}%"></div></div>
@@ -324,6 +336,115 @@ function renderBudget(instances) {
   }
 }
 
+/* ---------- Attention strip ---------- */
+
+function budgetPaceRatio(instances) {
+  const reporting = (instances || []).filter((instance) => {
+    const usage = instance?.headerSnapshot?.premiumUsage
+    return (
+      usage
+      && Number.isFinite(Number(usage.used))
+      && Number.isFinite(Number(usage.total))
+    )
+  })
+  if (!reporting.length) return null
+  const totalUsedCredits = reporting.reduce(
+    (sum, i) => sum + Number(i.headerSnapshot.premiumUsage.used),
+    0,
+  )
+  const totalCapCredits = reporting.reduce(
+    (sum, i) => sum + Number(i.headerSnapshot.premiumUsage.total),
+    0,
+  )
+  const now = new Date()
+  const elapsed = now.getDate()
+  const daysInMonth = new Date(
+    now.getFullYear(),
+    now.getMonth() + 1,
+    0,
+  ).getDate()
+  const remaining = Math.max(0, daysInMonth - elapsed)
+  const paceUsd = elapsed > 0 ? (totalUsedCredits * 0.01) / elapsed : 0
+  const dailyBudgetUsd =
+    remaining > 0 ?
+      ((totalCapCredits - totalUsedCredits) * 0.01) / remaining
+    : 0
+  return dailyBudgetUsd > 0 ? paceUsd / dailyBudgetUsd : Infinity
+}
+
+function instanceState(item) {
+  if (item.disabled) return { key: "off", label: "已禁用" }
+  const cooldownMs = Math.max(
+    0,
+    new Date(item.cooldownUntil || 0).getTime() - Date.now(),
+  )
+  const remainingMs = Math.max(
+    cooldownMs,
+    Number(item.remainingCooldownMs) || 0,
+  )
+  if (remainingMs > 0)
+    return {
+      key: "cool",
+      label: `冷却 ${formatCooldownRemaining(remainingMs)}`,
+    }
+  if (!item.healthy) return { key: "down", label: "down" }
+  return { key: "ok", label: "正常" }
+}
+
+function renderAttention() {
+  const strip = byId("attention-strip")
+  if (!strip) return
+  const instances = state.instances || []
+  const okCount = instances.filter((i) => instanceState(i).key === "ok").length
+  const liveChip = `<span class="a-chip ${state.sseLive ? "is-ok" : "is-bad"}"><span class="a-dot"></span>${state.sseLive ? "Live" : "SSE down"}</span>`
+
+  const problems = []
+  for (const item of instances) {
+    const st = instanceState(item)
+    if (st.key === "cool")
+      problems.push(
+        `<span class="a-chip is-warn"><span class="a-dot"></span>:${escapeHtml(String(item.port))} ${escapeHtml(st.label)}</span>`,
+      )
+    else if (st.key === "down")
+      problems.push(
+        `<span class="a-chip is-bad"><span class="a-dot"></span>:${escapeHtml(String(item.port))} down</span>`,
+      )
+  }
+  const disabledCount = instances.filter((i) => i.disabled).length
+  if (disabledCount > 0)
+    problems.push(
+      `<span class="a-chip is-warn"><span class="a-dot"></span>${disabledCount} 已禁用</span>`,
+    )
+  const ratio = budgetPaceRatio(instances)
+  if (ratio === Infinity || (ratio !== null && ratio > 1.1))
+    problems.push(
+      `<span class="a-chip is-bad"><span class="a-dot"></span>预算预测超 ${ratio === Infinity ? "100" : Math.round((ratio - 1) * 100)}%</span>`,
+    )
+  else if (ratio !== null && ratio > 0.9)
+    problems.push(
+      `<span class="a-chip is-warn"><span class="a-dot"></span>预算接近限速</span>`,
+    )
+
+  if (!problems.length && state.sseLive) {
+    const budgetChip =
+      ratio !== null && ratio <= 0.9 ?
+        `<span class="a-chip is-ok">预算节奏正常</span>`
+      : ""
+    strip.className = "attention-strip is-calm"
+    strip.innerHTML =
+      liveChip
+      + `<span class="a-chip is-ok">${okCount}/${instances.length} 正常</span>`
+      + budgetChip
+    return
+  }
+  strip.className = "attention-strip"
+  strip.innerHTML = [
+    liveChip,
+    `<span class="a-chip">${okCount}/${instances.length} 正常</span>`,
+    ...problems,
+  ].join("")
+}
+
 /* ---------- Bindings ---------- */
 
 function renderBindings(bindings) {
@@ -336,14 +457,22 @@ function renderBindings(bindings) {
     return
   }
   list.innerHTML = entries
-    .map(
-      ([key, port]) => `
+    .map(([key, port]) => {
+      // key format: `${sessionId}:${agent}:${model}` — split from the right so
+      // session ids containing ":" stay intact
+      const parts = String(key).split(":")
+      const model = parts.length > 1 ? parts.pop() : "-"
+      const agent = parts.length > 1 ? parts.pop() : "-"
+      const session = parts.join(":") || "-"
+      return `
     <tr>
-      <td><span class="binding-key" title="${escapeHtml(key)}">${escapeHtml(key)}</span></td>
-      <td><span class="binding-port">:${escapeHtml(String(port))}</span></td>
+      <td><span class="binding-key" title="${escapeHtml(key)}">${escapeHtml(session)}</span></td>
+      <td class="binding-dim">${escapeHtml(agent)}</td>
+      <td class="binding-dim">${escapeHtml(model)}</td>
+      <td class="num"><span class="binding-port">:${escapeHtml(String(port))}</span></td>
     </tr>
-  `,
-    )
+  `
+    })
     .join("")
 }
 
@@ -569,15 +698,75 @@ function historyRowHtml(item, ranks, index) {
   return `
     <tr class="history-row" data-session="${escapeHtml(session)}" style="${sessionStyle(session)}">
       <td class="history-time">${escapeHtml(fmtTime(item.ts))}</td>
-      <td class="history-target">:${escapeHtml(String(item.port || "-"))}</td>
+      <td class="history-target"><button type="button" class="port-link" data-port="${escapeHtml(String(item.port || ""))}" title="Filter by this instance">:${escapeHtml(String(item.port || "-"))}</button></td>
       <td><button type="button" class="session-badge" data-session="${escapeHtml(session)}" title="${escapeHtml(item.sid || "-")}" style="${sessionStyle(session)}">${escapeHtml(cut(session, 18))}</button></td>
       <td class="history-agent" title="${escapeHtml(item.agent || "-")}">${escapeHtml(cut(item.agent, 18))}</td>
       <td class="history-model" title="${escapeHtml(item.model || "-")}">${escapeHtml(cut(item.model, 28))}</td>
       <td class="history-reason" title="${escapeHtml(item.reason || "-")}">${escapeHtml(item.reason || "-")}</td>
-      <td class="cost-cell">${costCellHtml(item, ranks, index)}</td>
+      <td class="cost-cell num">${costCellHtml(item, ranks, index)}</td>
       <td>${usageCellHtml(item, ranks, index)}</td>
     </tr>
   `
+}
+
+function historyPassesFilter(item) {
+  if (
+    state.activeSession !== null
+    && String(item.sid || "-") !== state.activeSession
+  )
+    return false
+  if (state.filter.model && item.model !== state.filter.model) return false
+  if (state.filter.instance && Number(item.port) !== state.filter.instance)
+    return false
+  return true
+}
+
+function anyHistoryFilterActive() {
+  return (
+    state.activeSession !== null
+    || state.filter.model !== null
+    || state.filter.instance !== null
+  )
+}
+
+function applyFilter(key, value) {
+  if (value === null || value === undefined || value === "") {
+    if (key === "model") state.filter.model = null
+    else if (key === "instance") state.filter.instance = null
+    else if (key === "session") state.activeSession = null
+    renderHistory(state.history)
+    return
+  }
+  if (key === "model")
+    state.filter.model = state.filter.model === value ? null : value
+  else if (key === "instance") {
+    const port = Number(value)
+    state.filter.instance = state.filter.instance === port ? null : port
+  } else if (key === "session")
+    state.activeSession = state.activeSession === value ? null : value
+  renderHistory(state.history)
+}
+
+function renderFilterBar() {
+  const bar = byId("history-filters")
+  if (!bar) return
+  const chips = []
+  if (state.filter.model)
+    chips.push({ key: "model", label: `模型: ${state.filter.model}` })
+  if (state.activeSession)
+    chips.push({ key: "session", label: `会话: ${state.activeSession}` })
+  if (state.filter.instance)
+    chips.push({
+      key: "instance",
+      label: `实例: :${String(state.filter.instance)}`,
+    })
+  bar.hidden = chips.length === 0
+  bar.innerHTML = chips
+    .map(
+      (chip) =>
+        `<button type="button" class="f-chip" data-filter="${chip.key}" title="Clear this filter">${escapeHtml(chip.label)} <span class="x">✕</span></button>`,
+    )
+    .join("")
 }
 
 function renderHistory(history) {
@@ -588,17 +777,14 @@ function renderHistory(history) {
         .slice(0, HISTORY_DISPLAY_LIMIT)
     : []
   renderSessionFilters(state.history)
+  renderFilterBar()
   renderInsights(state.history)
-  const visibleHistory =
-    state.activeSession === null ?
-      state.history
-    : state.history.filter(
-        (item) => String(item.sid || "-") === state.activeSession,
-      )
+  renderCostChart(state.history)
+  const visibleHistory = state.history.filter(historyPassesFilter)
   const historyCount =
-    state.activeSession === null ?
-      Math.max(state.routeHistorySize, visibleHistory.length)
-    : visibleHistory.length
+    anyHistoryFilterActive() ?
+      visibleHistory.length
+    : Math.max(state.routeHistorySize, visibleHistory.length)
   byId("history-count").textContent = String(historyCount)
   const list = byId("history-list")
   byId("history-empty").hidden = visibleHistory.length > 0
@@ -651,7 +837,7 @@ function sumCostBy(history, keyFn) {
   return [...totals.entries()].sort((a, b) => b[1] - a[1])
 }
 
-function rankListHtml(entries) {
+function rankListHtml(entries, filterKey) {
   if (!entries.length)
     return '<div class="insight-empty">No cost data yet.</div>'
   const max = entries[0][1] || 1
@@ -659,7 +845,7 @@ function rankListHtml(entries) {
     .slice(0, INSIGHT_TOP_N)
     .map(
       ([label, usd]) => `
-    <div class="rank-row" title="${escapeHtml(label)}">
+    <div class="rank-row rank-row--click" role="button" tabindex="0" data-filter-key="${filterKey}" data-filter-value="${escapeHtml(label)}" title="Filter by ${escapeHtml(label)}">
       <span class="rank-label">${escapeHtml(cut(label, 22))}</span>
       <span class="rank-bar"><span style="width: ${(usd / max) * 100}%"></span></span>
       <span class="rank-val">$${usd.toFixed(6)}</span>
@@ -681,7 +867,7 @@ function topRequestsHtml(history) {
   return top
     .map(
       ({ item, usd }) => `
-    <div class="rank-row rank-row--top" title="${escapeHtml(item.model || "-")} via :${escapeHtml(String(item.port || "-"))}">
+    <div class="rank-row rank-row--top rank-row--click" role="button" tabindex="0" data-filter-key="instance" data-filter-value="${escapeHtml(String(item.port || ""))}" title="Filter by :${escapeHtml(String(item.port || "-"))} — ${escapeHtml(item.model || "-")}">
       <span class="rank-val">$${usd.toFixed(6)}</span>
       <span class="rank-label">${escapeHtml(cut(item.model, 20))} · :${escapeHtml(String(item.port || "-"))}</span>
       <span class="rank-time">${escapeHtml(formatRelativeTime(item.ts).label)}</span>
@@ -694,11 +880,72 @@ function renderInsights(history) {
   byId("insights-window").textContent = `last ${history.length} routes`
   byId("by-model-list").innerHTML = rankListHtml(
     sumCostBy(history, (item) => item.model),
+    "model",
   )
   byId("by-session-list").innerHTML = rankListHtml(
     sumCostBy(history, (item) => (item.sid ? String(item.sid) : null)),
+    "session",
   )
   byId("top-requests-list").innerHTML = topRequestsHtml(history)
+}
+
+/* ---------- Hourly cost chart (client-side bucketing) ---------- */
+
+function renderCostChart(history) {
+  const chart = byId("cost-chart")
+  if (!chart) return
+  const axis = byId("cost-chart-axis")
+  const note = byId("cost-chart-note")
+  const rows = (Array.isArray(history) ? history : [])
+    .map((item) => ({ ts: item.ts, usd: historyUsd(item) }))
+    .filter((row) => row.ts && row.usd !== null)
+  note.textContent = `last ${(Array.isArray(history) ? history : []).length} routes`
+  if (!rows.length) {
+    chart.innerHTML = '<div class="insight-empty">No cost data yet.</div>'
+    axis.innerHTML = ""
+    return
+  }
+  const buckets = new Map()
+  for (const row of rows) {
+    const ms = new Date(row.ts).getTime()
+    if (Number.isNaN(ms)) continue
+    const hourStart = Math.floor(ms / 3600000) * 3600000
+    buckets.set(hourStart, (buckets.get(hourStart) || 0) + row.usd)
+  }
+  if (!buckets.size) {
+    chart.innerHTML = '<div class="insight-empty">No cost data yet.</div>'
+    axis.innerHTML = ""
+    return
+  }
+  const MAX_HOURS = 24
+  const nowHour = Math.floor(Date.now() / 3600000) * 3600000
+  const startHour = nowHour - (MAX_HOURS - 1) * 3600000
+  const hours = []
+  for (let h = startHour; h <= nowHour; h += 3600000) hours.push(h)
+  const maxVal = Math.max(...hours.map((h) => buckets.get(h) || 0), 1e-9)
+  const peakHour = hours.reduce((a, b) =>
+    (buckets.get(b) || 0) > (buckets.get(a) || 0) ? b : a,
+  )
+  const fmtHour = (ms) =>
+    new Date(ms).toLocaleTimeString("en-GB", {
+      hour: "2-digit",
+      minute: "2-digit",
+    })
+  chart.innerHTML = hours
+    .map((h) => {
+      const value = buckets.get(h) || 0
+      const pct = Math.max(2, (value / maxVal) * 100)
+      const cls =
+        h === peakHour && value > 0 ? "bar peak"
+        : h === nowHour ? "bar now"
+        : "bar"
+      return `<div class="${cls}" style="height:${pct}%" title="${fmtHour(h)} · $${value.toFixed(4)}"></div>`
+    })
+    .join("")
+  const step = Math.max(1, Math.ceil(hours.length / 8))
+  axis.innerHTML = hours
+    .map((h, i) => `<span>${i % step === 0 ? fmtHour(h) : ""}</span>`)
+    .join("")
 }
 
 /* ---------- Data loading & actions ---------- */
@@ -706,19 +953,19 @@ function renderInsights(history) {
 async function loadStatus() {
   const response = await fetch("/api/status")
   const payload = await response.json()
-  renderInstances(payload.instances || [])
-  renderBudget(payload.instances || [])
+  state.instances = payload.instances || []
+  renderInstances(state.instances)
+  renderBudget(state.instances)
+  renderAttention()
   renderBindings(payload.sessionBindings || {})
   state.totalNanoAiuSinceStart = Number(payload.totalNanoAiuSinceStart || 0)
   renderHistoryTotal(state.totalNanoAiuSinceStart)
   if (typeof payload.routeHistorySize === "number") {
     state.routeHistorySize = payload.routeHistorySize
     const historyCount =
-      state.activeSession === null ?
-        state.routeHistorySize
-      : state.history.filter(
-          (item) => String(item.sid || "-") === state.activeSession,
-        ).length
+      anyHistoryFilterActive() ?
+        state.history.filter(historyPassesFilter).length
+      : state.routeHistorySize
     byId("history-count").textContent = String(historyCount)
   }
 }
@@ -792,10 +1039,14 @@ function connectSse() {
   events.onopen = () => {
     label.textContent = "Live"
     pill.className = "sse-pill is-up"
+    state.sseLive = true
+    renderAttention()
   }
   events.onerror = () => {
     label.textContent = "Reconnecting"
     pill.className = "sse-pill is-down"
+    state.sseLive = false
+    renderAttention()
   }
   events.onmessage = async (event) => {
     try {
@@ -1012,6 +1263,11 @@ byId("history-session-filters").addEventListener("click", (event) => {
 
 const historyList = byId("history-list")
 historyList.addEventListener("click", (event) => {
+  const portLink = event.target.closest(".port-link")
+  if (portLink && portLink.dataset.port) {
+    applyFilter("instance", portLink.dataset.port)
+    return
+  }
   const badge = event.target.closest(".session-badge")
   if (!badge) return
   setActiveSession(badge.dataset.session || "-")
@@ -1059,6 +1315,29 @@ byId("instances-table").addEventListener("change", async (event) => {
   }
 })
 
-setInterval(refreshLastActiveCells, LAST_ACTIVE_REFRESH_INTERVAL_MS)
+byId("history-filters").addEventListener("click", (event) => {
+  const chip = event.target.closest(".f-chip")
+  if (!chip) return
+  applyFilter(chip.dataset.filter, null)
+})
+
+const insightGrid = document.querySelector(".insight-grid")
+insightGrid.addEventListener("click", (event) => {
+  const row = event.target.closest(".rank-row[data-filter-key]")
+  if (!row || !row.dataset.filterValue) return
+  applyFilter(row.dataset.filterKey, row.dataset.filterValue)
+})
+insightGrid.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter" && event.key !== " ") return
+  const row = event.target.closest(".rank-row[data-filter-key]")
+  if (!row || !row.dataset.filterValue) return
+  event.preventDefault()
+  applyFilter(row.dataset.filterKey, row.dataset.filterValue)
+})
+
+setInterval(() => {
+  refreshLastActiveCells()
+  renderAttention()
+}, LAST_ACTIVE_REFRESH_INTERVAL_MS)
 
 void Promise.all([loadStatus(), loadHistory()]).finally(connectSse)

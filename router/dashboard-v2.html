@@ -28,6 +28,9 @@
   </header>
 
   <main class="page">
+    <!-- ATTENTION: anything needing action right now; collapses to one calm line when all is well -->
+    <div id="attention-strip" class="attention-strip" aria-live="polite"></div>
+
     <!-- MONEY: how much is spent, are we on pace, where did it go -->
     <section class="section" aria-label="Budget">
       <div class="hero">
@@ -59,6 +62,11 @@
           </div>
         </div>
       </div>
+      <div class="cost-chart-wrap">
+        <div class="insight-head">Cost per hour <span class="insight-note" id="cost-chart-note"></span></div>
+        <div class="cost-chart" id="cost-chart" role="img" aria-label="Hourly cost bar chart"></div>
+        <div class="cost-chart-axis" id="cost-chart-axis"></div>
+      </div>
       <div class="insight-grid">
         <div class="insight">
           <div class="insight-head">Cost by model <span class="insight-note" id="insights-window"></span></div>
@@ -84,7 +92,7 @@
       <div class="table-wrap" id="instances-table">
         <table class="tbl">
           <thead>
-            <tr><th>Instance</th><th>Port</th><th>Premium</th><th>Model requests</th><th>Cooldown &amp; rate limits</th><th>Last active</th><th>Enabled</th></tr>
+            <tr><th>Instance</th><th>Port</th><th>State</th><th>Premium</th><th>Model requests</th><th>Cooldown &amp; rate limits</th><th>Last active</th><th>Enabled</th></tr>
           </thead>
           <tbody id="instances-body"></tbody>
         </table>
@@ -103,6 +111,7 @@
             </h2>
             <button id="clear-history" class="btn btn-danger" type="button">Clear history</button>
           </div>
+          <div class="filter-bar" id="history-filters" hidden></div>
           <div class="filter-row" id="history-session-filters" role="group" aria-label="Filter by session"></div>
           <div class="table-wrap">
             <table class="tbl history-tbl">
@@ -122,7 +131,7 @@
           <div class="table-wrap">
             <table class="tbl">
               <thead>
-                <tr><th>Binding Key</th><th>Port</th></tr>
+                <tr><th>Session</th><th>Agent</th><th>Model</th><th class="num">Port</th></tr>
               </thead>
               <tbody id="binding-list"></tbody>
             </table>
