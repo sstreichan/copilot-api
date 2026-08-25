@@ -574,7 +574,7 @@ The dashboard provides a user-friendly interface to view your Copilot usage data
 > Token usage history requires Bun or Node.js >= 22.13.0. On Node.js < 22.13.0, the server runs normally but token usage storage is disabled.
 
 - **API Endpoint URL**: The dashboard is pre-configured to fetch data from your local server endpoint via a URL query parameter. You can manually switch this to any other compatible API endpoint.
-- **x-api-key Authentication**: If API Key authentication is enabled, you can provide the `x-api-key` request header. The key is persisted in the browser's local storage.
+- **API Key Authentication**: If API Key authentication is enabled, enter a raw API key (sent as the `x-api-key` header) or `Authorization: Bearer <key>`. Credentials are remembered in the browser's local storage per endpoint origin, and switching to a different endpoint origin does not automatically send the previous credential.
 - **Period Selector**: Choose from Day, Week, or Month time ranges. The URL query parameter updates automatically when you switch, making it easy to bookmark and share.
 - **Fetch Data**: Click the "Refresh" button to load or refresh the usage data. The dashboard also fetches data automatically on page load.
 - **Copilot Quotas**: View quota usage for services such as Chat and Completions via progress bars. Hover over a card to see used/remaining details.
@@ -635,7 +635,7 @@ The following command line options are available for the `start` command:
 
 Use `copilot-api auth login --provider copilot` only when you want to enable the GitHub Copilot provider. Copilot is not required for `codex` or third-party provider-only usage.
 
-Use `copilot-api auth login --provider deepseek`, `--provider dashscope`, `--provider openrouter`, `--provider opencode-go`, or `--provider kimi` to add or update those common third-party providers from the CLI. DeepSeek prompts for masked `apiKey`, provider `type` (default `anthropic`), and `baseUrl` defaulting to `https://api.deepseek.com/anthropic`. DashScope prompts for masked `apiKey`, provider `type` (default `openai-compatible`), and prefilled `baseUrl`. OpenRouter prompts for masked `apiKey` and prefilled `baseUrl` only, and writes `type: "anthropic"`. OpenCode Go prompts for masked `apiKey` and prefilled `baseUrl` only, and writes `type: "openai-compatible"` (baseUrl `https://opencode.ai/zen/go`). Kimi prompts for masked `apiKey` and prefilled `baseUrl` only, and writes `type: "openai-compatible"` (baseUrl `https://api.kimi.com/coding`). OpenCode Go additionally routes built-in `qwen*` and `minimax*` models through Anthropic Messages and `gpt*`/`grok*` models through OpenAI Responses; other models keep the OpenAI-compatible default. After a provider is configured and enabled, `copilot-api start` can run without any GitHub token.
+Use `copilot-api auth login --provider deepseek`, `--provider dashscope`, `--provider openrouter`, `--provider opencode-go`, or `--provider kimi` to add or update those common third-party providers from the CLI. DeepSeek prompts for masked `apiKey`, provider `type` (default `anthropic`), and `baseUrl` defaulting to `https://api.deepseek.com/anthropic`. DashScope prompts for masked `apiKey`, provider `type` (default `openai-compatible`), and prefilled `baseUrl`. OpenRouter prompts for masked `apiKey` and prefilled `baseUrl` only, and writes `type: "anthropic"`. OpenCode Go prompts for masked `apiKey` and prefilled `baseUrl` only, and writes `type: "openai-compatible"` (baseUrl `https://opencode.ai/zen/go`). Kimi prompts for masked `apiKey`, provider `type` (default `anthropic`), and `baseUrl` defaulting to `https://api.kimi.com/coding` (the same base URL serves both the Anthropic and OpenAI-compatible endpoints). OpenCode Go additionally routes built-in `qwen*` and `minimax*` models through Anthropic Messages and `gpt*`/`grok*` models through OpenAI Responses; other models keep the OpenAI-compatible default. After a provider is configured and enabled, `copilot-api start` can run without any GitHub token.
 
 Use `copilot-api auth login --provider custom` to add or update another third-party provider from the CLI. The command prompts for the provider name, supported type (`anthropic`, `openai-compatible`, or `openai-responses`), `baseUrl`, masked `apiKey`, and `authType`; `authType` may be left as the type default or set to `x-api-key` / `authorization`.
 
@@ -802,7 +802,6 @@ New endpoints for monitoring your Copilot usage and quotas.
 | Endpoint     | Method | Description                                                  |
 | ------------ | ------ | ------------------------------------------------------------ |
 | `GET /usage` | `GET`  | Get detailed Copilot usage statistics and quota information. |
-| `GET /token` | `GET`  | Get the current Copilot token being used by the API.         |
 
 ### Admin / Configuration Endpoints
 

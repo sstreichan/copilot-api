@@ -18,14 +18,17 @@ import {
   writeStreamLog,
 } from "~/lib/logger"
 import { findEndpointModel } from "~/lib/models"
-import { parseProviderModelAlias } from "~/lib/provider-model"
+import { resolveConfiguredProviderModelAlias } from "~/lib/provider-resolver"
 import {
   applyForwardableResponseHeaders,
   getAttachedResponseHeaders,
   jsonWithForwardedHeaders,
 } from "~/lib/response-headers"
 import { isCodexUserAgent } from "~/routes/models/codex-models"
-import { handleProviderResponsesForProvider } from "~/routes/provider/responses/handler"
+import {
+  handleProviderResponsesForProvider,
+  providerResponsesHandlerDependencies,
+} from "~/routes/provider/responses/handler"
 import {
   createCopilotTokenUsageRecorder,
   copilotUsageFromResponsesEvent,
@@ -59,6 +62,7 @@ import {
   getResponsesTransportForModel,
   getResponsesRequestOptions,
   normalizeInputImageDetails,
+  normalizeResponsesReasoningEffort,
   sanitizeAllInputImages,
   sanitizeOversizedInputImages,
   sanitizeUnsupportedInputFields,
@@ -86,7 +90,10 @@ export const handleResponses = async (c: Context) => {
     )
   }
 
-  const providerModelAlias = parseProviderModelAlias(payload.model)
+  const providerModelAlias = await resolveConfiguredProviderModelAlias(
+    payload.model,
+    providerResponsesHandlerDependencies.resolveProviderConfig,
+  )
   if (providerModelAlias) {
     payload.model = providerModelAlias.model
     return await handleProviderResponsesForProvider(c, {
@@ -117,6 +124,15 @@ export const handleResponses = async (c: Context) => {
     payload.model,
   )
   payload.model = selectedModel?.id ?? payload.model
+  const normalizedReasoningEffort = normalizeResponsesReasoningEffort(
+    payload,
+    selectedModel?.capabilities?.supports?.reasoning_effort,
+  )
+  if (normalizedReasoningEffort) {
+    logger.debug(
+      `Normalized reasoning effort from ${normalizedReasoningEffort.from} to ${normalizedReasoningEffort.to} based on the selected model capabilities`,
+    )
+  }
   const responsesTransport = getResponsesTransportForModel(selectedModel)
 
   const fallback = getFallback(

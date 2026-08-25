@@ -29,7 +29,7 @@ export const getCopilotToken = async () => {
 }
 
 // Trimmed for the sake of simplicity
-interface GetCopilotTokenResponse {
+export interface GetCopilotTokenResponse {
   agent_mode_auto_approval?: boolean
   annotations_enabled?: boolean
   azure_only?: boolean
@@ -55,7 +55,15 @@ interface GetCopilotTokenResponse {
   vsc_electron_fetcher_v2?: boolean
   xcode?: boolean
   xcode_chat?: boolean
-  endpoints?: { telemetry?: string; [key: string]: string | undefined }
+  // Per-SKU isolated endpoints returned by the token exchange. This is the
+  // authoritative routing source for the issued token; `/copilot_internal/user`
+  // may advertise a different segmented host (e.g. business vs enterprise).
+  endpoints?: {
+    api?: string
+    proxy?: string
+    telemetry?: string
+    [key: string]: string | undefined
+  }
   organization_list?: Array<string>
   enterprise_list?: Array<number>
 }

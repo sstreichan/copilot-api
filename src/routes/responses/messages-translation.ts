@@ -449,21 +449,11 @@ function registerMessagesTool(
   const existing = registry.byOriginal.get(originalKey)
   if (existing) return existing
 
-  const preferredName =
-    registration.namespace ?
-      `${registration.namespace.replaceAll(".", "_")}__${registration.name}`
-    : registration.name
-  const alias = createToolAlias(preferredName, originalKey, registry)
-  const descriptor: MessagesToolDescriptor = {
-    alias,
-    kind: registration.kind,
-    name: registration.name,
-    ...(registration.namespace ? { namespace: registration.namespace } : {}),
-  }
-  registry.byAlias.set(alias, descriptor)
+  const descriptor = createMessagesToolDescriptor(registration, registry)
+  registry.byAlias.set(descriptor.alias, descriptor)
   registry.byOriginal.set(originalKey, descriptor)
   registry.tools.push({
-    name: alias,
+    name: descriptor.alias,
     ...(registration.description ?
       { description: registration.description }
     : {}),
@@ -474,6 +464,24 @@ function registerMessagesTool(
     ...(registration.kind === "custom" ? { strict: true } : {}),
   })
   return descriptor
+}
+
+function createMessagesToolDescriptor(
+  registration: Pick<ToolRegistration, "kind" | "name" | "namespace">,
+  registry: MessagesToolRegistry,
+): MessagesToolDescriptor {
+  const originalKey = createOriginalToolKey(registration)
+  const preferredName =
+    registration.namespace ?
+      `${registration.namespace.replaceAll(".", "_")}__${registration.name}`
+    : registration.name
+  const alias = createToolAlias(preferredName, originalKey, registry)
+  return {
+    alias,
+    kind: registration.kind,
+    name: registration.name,
+    ...(registration.namespace ? { namespace: registration.namespace } : {}),
+  }
 }
 
 function translateInputToAnthropic(
@@ -686,7 +694,11 @@ function translateInputToolCall(
   }
   const name = requireStringField(item, "name", `${kind}_tool_call`)
   const namespace = getOptionalStringField(item, "namespace") ?? undefined
-  const descriptor = registerMessagesTool({ kind, name, namespace }, registry)
+  const toolIdentity = { kind, name, namespace }
+  // Historical calls preserve conversation state; they do not define tools.
+  const descriptor =
+    registry.byOriginal.get(createOriginalToolKey(toolIdentity))
+    ?? createMessagesToolDescriptor(toolIdentity, registry)
   const input =
     kind === "custom" ?
       { input: getStringField(item, "input") ?? "" }
@@ -1131,17 +1143,15 @@ function appendUserBlock(
 
 function parseFunctionArguments(
   value: string,
-  path: string,
+  _path: string,
 ): Record<string, unknown> {
   try {
     const parsed = JSON.parse(value) as unknown
     if (isRecord(parsed)) return parsed
   } catch {
-    // The request error below contains the stable public message.
+    return {}
   }
-  throw new ResponsesMessagesTranslationError(
-    `${path} must be a JSON object string`,
-  )
+  return {}
 }
 
 function parseDataUrl(

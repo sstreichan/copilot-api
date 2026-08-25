@@ -19,7 +19,7 @@ This is a Bun/TypeScript API gateway project. API protocol contract types (OpenA
 bun run dev            # 开发服务器（watch，启用 system CA）
 bun run build          # 构建（tsdown）
 bun run build:desktop  # 构建 desktop server bundle
-bun test               # 全量测试
+bun run test           # 全量测试（bun test --isolate，每文件全新 global，防止跨文件 mock 泄漏）
 bun test tests/foo.test.ts  # 跑单个测试文件
 bun run lint:all --fix # Lint 并修复
 bun run typecheck      # 类型检查
@@ -34,11 +34,11 @@ pre-commit hook 只跑 `lint-staged`（仅暂存文件的 lint），不保证项
 
 1. `bun run lint:all --fix` — 先修复格式或 lint；若改动文件，继续后续所有检查
 2. `bun run build`
-3. `bun test`（全量测试，不是 `bun test -- --testPathPattern=...`）
+3. `bun run test`（全量测试，即 `bun test --isolate`；不要只跑目标文件）
 4. `bun run typecheck`
 5. `bun run lint:all` — 确认修复后零 lint 错误
 
-任何一步失败，必须修复后从受影响检查重新运行；**不要用 `--no-verify` 跳过**。目标测试可用于定位，但不能替代全量 `bun test`。
+任何一步失败，必须修复后从受影响检查重新运行；**不要用 `--no-verify` 跳过**。目标测试可用于定位，但不能替代全量 `bun run test`。
 
 ## Commit 规范
 

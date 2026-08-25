@@ -16,7 +16,10 @@ import {
   type CodexCredentials,
 } from "~/lib/oauth/codex"
 import { CODEX_API_BASE_URL } from "~/services/codex/create-responses"
-import { getCopilotToken } from "~/services/github/get-copilot-token"
+import {
+  getCopilotToken,
+  type GetCopilotTokenResponse,
+} from "~/services/github/get-copilot-token"
 import { getCopilotUsage } from "~/services/github/get-copilot-usage"
 import { getDeviceCode } from "~/services/github/get-device-code"
 import { pollAccessToken } from "~/services/github/poll-access-token"
@@ -60,7 +63,9 @@ function applyCopilotTokenMetadata(
   if (previousToken !== token) {
     invalidateAutoSession()
   }
-  state.copilotApiUrl = endpoints?.api
+  if (endpoints?.api) {
+    state.copilotApiUrl = endpoints.api
+  }
   state.copilotTrackingId = tracking_id
   state.copilotTelemetryEnabled = telemetry === "enabled"
   state.sku = parseSku(token)
@@ -142,6 +147,20 @@ export async function persistCodexCredentials(
     enabled: options?.enableProvider ? true : undefined,
   })
   applyCodexCredentials(credentials)
+}
+
+export const applyCopilotTokenResponse = (
+  response: GetCopilotTokenResponse,
+): void => {
+  state.copilotToken = response.token
+
+  // The token exchange response is authoritative for routing the token it just
+  // issued: `/copilot_internal/user` can disagree (e.g. enterprise seats via an
+  // org entitlement advertise the business host, while the issued token is
+  // bound to the enterprise host, causing 421 Misdirected Request).
+  if (response.endpoints?.api) {
+    state.copilotApiUrl = response.endpoints.api
+  }
 }
 
 export const setupCopilotToken = async () => {

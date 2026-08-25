@@ -37,8 +37,8 @@
 ## Commands
 
 ```bash
-bun test
-bun test tests/create-messages.test.ts
+bun run test  # 全量（bun test --isolate，防止跨文件 mock.module 泄漏）
+bun test tests/create-messages.test.ts  # 单文件无需 --isolate
 ```
 
 ## Anti-Patterns

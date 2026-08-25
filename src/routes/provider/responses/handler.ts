@@ -86,7 +86,15 @@ export async function handleProviderResponsesForProvider(
     providerConfig,
     payload.model,
   )
-  normalizeProviderResponsesReasoningEffort(payload, providerConfig)
+  const normalizedReasoningEffort = normalizeProviderResponsesReasoningEffort(
+    payload,
+    providerConfig,
+  )
+  if (normalizedReasoningEffort) {
+    logger.debug(
+      `Normalized reasoning effort from ${normalizedReasoningEffort.from} to ${normalizedReasoningEffort.to} based on the provider model configuration`,
+    )
+  }
 
   if (shouldFallbackToMessages(c, payload.model, effectiveType)) {
     return await handleResponsesViaMessages(c, {

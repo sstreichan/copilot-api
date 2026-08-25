@@ -86,6 +86,7 @@ function completePendingMessage(
     type: "message_stop",
   })
   state.pendingMessageDelta = undefined
+  state.messageCompleted = true
 }
 
 function handleFinish(
