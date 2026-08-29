@@ -485,7 +485,9 @@ function toPrettyJson(value) {
 function historyCached(item) {
   const usage = item.usage
   const cached =
-    usage?.input_tokens_details?.cached_tokens ?? usage?.cache_read_input_tokens
+    usage?.input_tokens_details?.cached_tokens
+    ?? usage?.prompt_tokens_details?.cached_tokens
+    ?? usage?.cache_read_input_tokens
   const value = Number(cached)
   return Number.isFinite(value) ? value : null
 }

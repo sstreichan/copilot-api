@@ -4,13 +4,20 @@ import type { Context } from "hono"
 import { streamSSE, type SSEMessage } from "hono/streaming"
 
 import { resolveMappedModel } from "~/lib/config"
-import { createHandlerLogger, debugJson } from "~/lib/logger"
+import {
+  colorizeModel,
+  createHandlerLogger,
+  debugJson,
+  shouldUseColor,
+} from "~/lib/logger"
 import { findEndpointModel } from "~/lib/models"
 import { resolveConfiguredProviderModelAlias } from "~/lib/provider-resolver"
 import {
+  copilotUsageToTokens,
   createCopilotTokenUsageRecorder,
+  mergeCopilotUsage,
   normalizeOpenAIUsage,
-  normalizeOptionalToken,
+  type CopilotUsageTokens,
   type UsageTokens,
 } from "~/lib/token-usage"
 import {
@@ -85,6 +92,14 @@ export async function handleCompletion(c: Context) {
     model: payload.model,
   })
 
+  const modelLabel =
+    shouldUseColor() ? colorizeModel(payload.model) : payload.model
+  const effortSuffix =
+    payload.reasoning_effort ?
+      ` [effort=${payload.reasoning_effort} (request)]`
+    : ""
+  consola.info(`IN ${modelLabel}${effortSuffix}`)
+
   const response = await createChatCompletions(payload, {
     requestId,
     sessionId,
@@ -93,12 +108,10 @@ export async function handleCompletion(c: Context) {
 
   if (isNonStreaming(response)) {
     debugJson(logger, "Non-streaming response:", response)
-    recordUsage({
-      ...normalizeOpenAIUsage(response.usage),
-      total_nano_aiu: normalizeOptionalToken(
-        response.copilot_usage?.total_nano_aiu,
-      ),
-    })
+    recordUsage(
+      normalizeOpenAIUsage(response.usage),
+      response.copilot_usage ?? null,
+    )
     return jsonWithForwardedHeaders(response, sourceHeaders)
   }
 
@@ -106,22 +119,22 @@ export async function handleCompletion(c: Context) {
   applyForwardableResponseHeaders(c, sourceHeaders)
   return streamSSE(c, async (stream) => {
     let usage: UsageTokens = {}
-
+    let copilotUsage: CopilotUsageTokens = {}
     for await (const chunk of response) {
       debugJson(logger, "Streaming chunk:", chunk)
       const parsedChunk = parseChatCompletionChunk(chunk)
-      if (parsedChunk?.usage || parsedChunk?.copilot_usage) {
-        usage = {
-          ...normalizeOpenAIUsage(parsedChunk.usage),
-          total_nano_aiu: normalizeOptionalToken(
-            parsedChunk.copilot_usage?.total_nano_aiu,
-          ),
-        }
+      if (parsedChunk?.usage) {
+        usage = normalizeOpenAIUsage(parsedChunk.usage)
+      }
+      if (parsedChunk?.copilot_usage) {
+        copilotUsage = mergeCopilotUsage(
+          copilotUsage,
+          copilotUsageToTokens(parsedChunk.copilot_usage),
+        )
       }
       await stream.writeSSE(chunk as SSEMessage)
     }
-
-    recordUsage(usage)
+    recordUsage(usage, copilotUsage)
   })
 }
 

@@ -363,7 +363,7 @@ describe("router discovery and proxy helpers", () => {
     const observedUsage: Array<unknown> = []
     const sseBody = [
       'data: {"id":"chatcmpl_1","choices":[],"copilot_usage":{"total_nano_aiu":456789}}\n\n',
-      'data: {"id":"chatcmpl_1","choices":[],"usage":{"prompt_tokens":7},"copilot_usage":{"total_nano_aiu":null}}\n\n',
+      'data: {"id":"chatcmpl_1","choices":[],"usage":{"prompt_tokens":7,"prompt_tokens_details":{"cached_tokens":5}},"copilot_usage":{"total_nano_aiu":null}}\n\n',
     ].join("")
     const fetchImpl = createFetchStub(() =>
       Promise.resolve(
@@ -392,7 +392,10 @@ describe("router discovery and proxy helpers", () => {
     expect(await res.text()).toBe(sseBody)
     expect(observedUsage).toEqual([
       {
-        usage: { prompt_tokens: 7 },
+        usage: {
+          prompt_tokens: 7,
+          prompt_tokens_details: { cached_tokens: 5 },
+        },
         copilotUsage: { total_nano_aiu: 456789 },
       },
     ])

@@ -97,4 +97,35 @@ describe("route history session visuals", () => {
     ])
     expect(history[0]?.historyId).toBe("old-expensive")
   })
+
+  test("reads cached tokens from Responses, Chat Completions, and Anthropic usage", async () => {
+    const sources = await Promise.all([
+      Bun.file(dashboardPath).text(),
+      Bun.file(new URL("../../router/dashboard-v2.js", import.meta.url)).text(),
+    ])
+
+    for (const source of sources) {
+      const sandbox: {
+        historyCached?: (item: Record<string, unknown>) => number | null
+      } = {}
+      const historyCachedSource = extractFunction(source, "historyCached")
+      new Script(
+        `${historyCachedSource}; globalThis.historyCached = historyCached`,
+      ).runInContext(createContext(sandbox))
+      const historyCached = sandbox.historyCached
+      if (!historyCached) throw new TypeError("historyCached unavailable")
+
+      expect(
+        historyCached({
+          usage: { input_tokens_details: { cached_tokens: 11 } },
+        }),
+      ).toBe(11)
+      expect(
+        historyCached({
+          usage: { prompt_tokens_details: { cached_tokens: 22 } },
+        }),
+      ).toBe(22)
+      expect(historyCached({ usage: { cache_read_input_tokens: 33 } })).toBe(33)
+    }
+  })
 })
