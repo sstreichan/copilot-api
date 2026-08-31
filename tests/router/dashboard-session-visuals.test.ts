@@ -128,4 +128,61 @@ describe("route history session visuals", () => {
       expect(historyCached({ usage: { cache_read_input_tokens: 33 } })).toBe(33)
     }
   })
+
+  test("keeps the month-end budget status aligned with a below-cap forecast", async () => {
+    const sources = await Promise.all([
+      Bun.file(dashboardPath).text(),
+      Bun.file(new URL("../../router/dashboard-v2.js", import.meta.url)).text(),
+    ])
+    const instances = [
+      {
+        headerSnapshot: {
+          premiumUsage: { total: 250000, used: 218900 },
+        },
+      },
+    ]
+
+    for (const [index, source] of sources.entries()) {
+      const elements = new Map<string, Record<string, unknown>>()
+      const byId = (id: string) => {
+        const element = elements.get(id) ?? {
+          className: "",
+          style: {},
+          textContent: "",
+        }
+        elements.set(id, element)
+        return element
+      }
+      class MonthEndDate extends Date {
+        constructor(...args: ConstructorParameters<typeof Date>) {
+          super(...(args.length === 0 ? ["2026-08-31T12:00:00.000Z"] : args))
+        }
+      }
+      const sandbox = {
+        Date: MonthEndDate,
+        byId,
+        renderBudget: undefined as
+          ((items: Array<Record<string, unknown>>) => void) | undefined,
+      }
+      const budgetForecastRatioSource = extractFunction(
+        source,
+        "budgetForecastRatio",
+      )
+      const renderBudgetSource = extractFunction(source, "renderBudget")
+      new Script(
+        `${budgetForecastRatioSource}; ${renderBudgetSource}; globalThis.renderBudget = renderBudget`,
+      ).runInContext(createContext(sandbox))
+      if (!sandbox.renderBudget) throw new TypeError("renderBudget unavailable")
+
+      sandbox.renderBudget(instances)
+
+      if (index === 0) {
+        expect(elements.get("budget-forecast")?.className).toBe(
+          "budget-cell budget-good",
+        )
+      } else {
+        expect(elements.get("budget-status")?.textContent).toBe("On track")
+      }
+    }
+  })
 })

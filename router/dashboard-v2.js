@@ -19,6 +19,10 @@ const HISTORY_DISPLAY_LIMIT = 200
 const PIP_TOP_REQUEST_LIMIT = 3
 const LAST_ACTIVE_REFRESH_INTERVAL_MS = 5000
 
+function budgetForecastRatio(forecastUsd, totalCapUsd) {
+  return totalCapUsd > 0 ? forecastUsd / totalCapUsd : Infinity
+}
+
 const byId = (id) => document.getElementById(id)
 
 const cut = (value, size = 24) => {
@@ -289,13 +293,10 @@ function renderBudget(instances) {
     now.getMonth() + 1,
     0,
   ).getDate()
-  const remaining = Math.max(0, daysInMonth - elapsed)
   const paceUsd = elapsed > 0 ? totalUsedUsd / elapsed : 0
   const forecastUsd = paceUsd * daysInMonth
   const pct = totalCapUsd > 0 ? (totalUsedUsd / totalCapUsd) * 100 : 0
-  const dailyBudgetUsd =
-    remaining > 0 ? (totalCapUsd - totalUsedUsd) / remaining : 0
-  const ratio = dailyBudgetUsd > 0 ? paceUsd / dailyBudgetUsd : Infinity
+  const ratio = budgetForecastRatio(forecastUsd, totalCapUsd)
 
   let statusClass = "is-good"
   let statusText = "On track"
@@ -363,13 +364,11 @@ function budgetPaceRatio(instances) {
     now.getMonth() + 1,
     0,
   ).getDate()
-  const remaining = Math.max(0, daysInMonth - elapsed)
-  const paceUsd = elapsed > 0 ? (totalUsedCredits * 0.01) / elapsed : 0
-  const dailyBudgetUsd =
-    remaining > 0 ?
-      ((totalCapCredits - totalUsedCredits) * 0.01) / remaining
-    : 0
-  return dailyBudgetUsd > 0 ? paceUsd / dailyBudgetUsd : Infinity
+  const totalUsedUsd = totalUsedCredits * 0.01
+  const totalCapUsd = totalCapCredits * 0.01
+  const paceUsd = elapsed > 0 ? totalUsedUsd / elapsed : 0
+  const forecastUsd = paceUsd * daysInMonth
+  return budgetForecastRatio(forecastUsd, totalCapUsd)
 }
 
 function instanceState(item) {
@@ -1170,11 +1169,7 @@ byId("pip-btn").addEventListener("click", async () => {
       ).getDate()
       const paceUsd = elapsed > 0 ? totalUsedUsd / elapsed : 0
       const forecastUsd = paceUsd * daysInMonth
-      const dailyBudgetUsd =
-        daysInMonth - elapsed > 0 ?
-          (totalCapUsd - totalUsedUsd) / (daysInMonth - elapsed)
-        : 0
-      const ratio = dailyBudgetUsd > 0 ? paceUsd / dailyBudgetUsd : Infinity
+      const ratio = budgetForecastRatio(forecastUsd, totalCapUsd)
       let fcClass = "ok"
       if (ratio > 1.1) fcClass = "danger"
       else if (ratio > 0.9) fcClass = "warn"
