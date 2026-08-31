@@ -9,18 +9,14 @@ let providerConfig: ResolvedProviderConfig | null = null
 
 const { closeUsageStore } = await import("~/lib/token-usage")
 const { responsesRoutes } = await import("~/routes/responses/route")
-const { providerResponsesRoutes } = await import(
-  "~/routes/provider/responses/route"
-)
-const { providerMessagesHandlerDependencies } = await import(
-  "~/routes/provider/messages/handler"
-)
-const { providerResponsesHandlerDependencies } = await import(
-  "~/routes/provider/responses/handler"
-)
-const { responsesHandlerDependencies } = await import(
-  "~/routes/responses/handler"
-)
+const { providerResponsesRoutes } =
+  await import("~/routes/provider/responses/route")
+const { providerMessagesHandlerDependencies } =
+  await import("~/routes/provider/messages/handler")
+const { providerResponsesHandlerDependencies } =
+  await import("~/routes/provider/responses/handler")
+const { responsesHandlerDependencies } =
+  await import("~/routes/responses/handler")
 const { responsesUtilsDependencies } = await import("~/routes/responses/utils")
 
 const defaultProviderMessagesHandlerDependencies = {

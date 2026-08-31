@@ -327,8 +327,7 @@ const isResponseInputMessage = (
 const isResponseFunctionCallOutputItem = (
   item: ResponseInputItem,
 ): item is
-  | ResponseCustomToolCallOutputItem
-  | ResponseFunctionCallOutputItem => {
+  ResponseCustomToolCallOutputItem | ResponseFunctionCallOutputItem => {
   return (
     typeof item === "object"
     && item !== null

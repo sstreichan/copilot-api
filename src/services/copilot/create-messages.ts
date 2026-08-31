@@ -5,7 +5,6 @@ import { randomUUID } from "node:crypto"
 import type { CompactType } from "~/lib/compact"
 import type { SubagentMarker } from "~/lib/subagent"
 import type {
-  AnthropicAssistantMessage,
   AnthropicMessagesPayload,
   AnthropicResponse,
 } from "~/lib/types/anthropic"
@@ -107,7 +106,7 @@ const stripThinkingBlocks = (
     return {
       ...msg,
       content: msg.content.filter((block) => block.type !== "thinking"),
-    } as AnthropicAssistantMessage
+    }
   }),
 })
 

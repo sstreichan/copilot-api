@@ -26,9 +26,8 @@ await mock.module("~/lib/token-usage", () => ({
   createProviderTokenUsageRecorder: () => providerTokenUsageRecorder,
 }))
 
-const { providerMessageRoutes } = await import(
-  "~/routes/provider/messages/route"
-)
+const { providerMessageRoutes } =
+  await import("~/routes/provider/messages/route")
 
 const originalFetch = globalThis.fetch
 const fetchMock = mock(() => Promise.resolve(upstreamResponseFactory()))

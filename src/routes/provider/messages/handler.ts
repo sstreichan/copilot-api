@@ -669,10 +669,7 @@ const createOpenAICompatiblePayload = (
     extraBody: modelConfig?.extraBody,
   })
 
-  applyDashScopePreserveThinkingDefault(
-    openAIPayload as unknown as Record<string, unknown>,
-    providerConfig,
-  )
+  applyDashScopePreserveThinkingDefault(openAIPayload, providerConfig)
 
   if (!Object.hasOwn(openAIPayload, "parallel_tool_calls")) {
     openAIPayload.parallel_tool_calls = true

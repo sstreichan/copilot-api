@@ -34,9 +34,8 @@ await mock.module("../src/services/copilot/get-models", () => ({
 
 const { state } = await import("../src/lib/state")
 const { modelRoutes } = await import("../src/routes/models/route")
-const { providerModelRoutes } = await import(
-  "../src/routes/provider/models/route"
-)
+const { providerModelRoutes } =
+  await import("../src/routes/provider/models/route")
 
 // Dev-side global state setup
 state.copilotToken = "test-token"
@@ -688,8 +687,7 @@ describe("model routes", () => {
     })
     expect(synthetic?.available_in_plans).toContain("pro")
     const modelMessages = synthetic?.model_messages as
-      | { instructions_template?: string }
-      | undefined
+      { instructions_template?: string } | undefined
     expect(modelMessages?.instructions_template).toContain(
       "You are Codex, an agent based on GPT-5.",
     )

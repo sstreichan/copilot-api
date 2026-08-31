@@ -44,12 +44,12 @@ describe("writeFileAtomically", () => {
     const filePath = path.join(tempDir, "config.json")
     fs.writeFileSync(filePath, "old", "utf8")
     const originalWriteFileSync = fs.writeFileSync
-    fs.writeFileSync = ((target, ...args) => {
+    fs.writeFileSync = (target, ...args) => {
       if (typeof target === "number") {
         throw new Error("forced temporary write failure")
       }
       return Reflect.apply(originalWriteFileSync, fs, [target, ...args])
-    }) as typeof fs.writeFileSync
+    }
 
     try {
       expect(() => writeFileAtomically(filePath, "new")).toThrow(
@@ -68,9 +68,9 @@ describe("writeFileAtomically", () => {
     const filePath = path.join(tempDir, "config.json")
     fs.writeFileSync(filePath, "old", "utf8")
     const originalRenameSync = fs.renameSync
-    fs.renameSync = (() => {
+    fs.renameSync = () => {
       throw new Error("forced atomic replacement failure")
-    }) as typeof fs.renameSync
+    }
 
     try {
       expect(() => writeFileAtomically(filePath, "new")).toThrow(

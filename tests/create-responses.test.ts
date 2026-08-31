@@ -549,20 +549,19 @@ const createBelongThenSuccessFetchMock = (): Mock<TestFetchImpl> => {
 }
 
 describe("Reasoning strip-retry on belong 4xx", () => {
-  const reasoningPayload = (): ResponsesPayload =>
-    ({
-      model: "gpt-test",
-      input: [
-        { role: "user", content: "hi" },
-        {
-          type: "reasoning",
-          id: "r-1",
-          summary: [],
-          encrypted_content: "enc-abc",
-        },
-        { role: "user", content: "next" },
-      ],
-    }) as unknown as ResponsesPayload
+  const reasoningPayload = (): ResponsesPayload => ({
+    model: "gpt-test",
+    input: [
+      { role: "user", content: "hi" },
+      {
+        type: "reasoning",
+        id: "r-1",
+        summary: [],
+        encrypted_content: "enc-abc",
+      },
+      { role: "user", content: "next" },
+    ],
+  })
 
   const setFetch = (fetchImpl: Mock<TestFetchImpl>) => {
     // @ts-expect-error - Mock fetch doesn't implement all fetch properties

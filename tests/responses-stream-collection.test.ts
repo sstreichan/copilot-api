@@ -53,7 +53,7 @@ const makeStream = (chunks: Array<StreamChunk>): ResponsesStream =>
       await Promise.resolve()
       yield chunk
     }
-  })() as ResponsesStream
+  })()
 
 const collect = (chunks: Array<StreamChunk>) =>
   collectResponsesStreamResult({

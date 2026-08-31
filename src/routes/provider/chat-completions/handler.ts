@@ -69,10 +69,7 @@ export async function handleProviderChatCompletionsForProvider(
     extraBody: modelConfig?.extraBody,
   })
   applyProviderStreamOptions(payload)
-  applyDashScopePreserveThinkingDefault(
-    payload as unknown as Record<string, unknown>,
-    providerConfig,
-  )
+  applyDashScopePreserveThinkingDefault(payload, providerConfig)
   applyProviderContextCache(payload, modelConfig, providerConfig)
 
   debugJson(logger, "provider.chat_completions.request", {

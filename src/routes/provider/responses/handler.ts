@@ -45,7 +45,6 @@ import {
   createProviderProxyResponse,
   forwardProviderResponses,
 } from "~/services/providers/provider-proxy"
-import type { ContentfulStatusCode } from "hono/utils/http-status"
 
 const logger = createHandlerLogger("provider-responses-handler")
 
@@ -286,7 +285,7 @@ const streamProviderResponses = async (
         },
         sourceHeaders,
         {
-          status: statusCode as ContentfulStatusCode,
+          status: statusCode,
           overrides: Object.fromEntries(
             Object.entries(errorEvent.headers ?? {}).map(([name, value]) => [
               name,

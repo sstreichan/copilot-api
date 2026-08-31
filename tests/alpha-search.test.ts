@@ -12,15 +12,12 @@ let modelMappings: Record<string, string> = {}
 const { state } = await import("~/lib/state")
 const { HTTPError } = await import("~/lib/error")
 const { closeUsageStore } = await import("~/lib/token-usage")
-const { forwardCodexAlphaSearch, resolveCodexAlphaSearchUrl } = await import(
-  "~/services/codex/alpha-search"
-)
-const { forwardCodexModels, getModels, resolveCodexModelsUrl } = await import(
-  "~/services/codex/get-models"
-)
-const { alphaSearchRouteDependencies, alphaSearchRoutes } = await import(
-  "~/routes/alpha-search/route"
-)
+const { forwardCodexAlphaSearch, resolveCodexAlphaSearchUrl } =
+  await import("~/services/codex/alpha-search")
+const { forwardCodexModels, getModels, resolveCodexModelsUrl } =
+  await import("~/services/codex/get-models")
+const { alphaSearchRouteDependencies, alphaSearchRoutes } =
+  await import("~/routes/alpha-search/route")
 const { alphaSearchResponsesDependencies, resetAlphaSearchState } =
   await import("~/routes/alpha-search/alpha-search-responses")
 const { providerAlphaSearchRouteDependencies, providerAlphaSearchRoutes } =
@@ -264,12 +261,10 @@ beforeEach(async () => {
   state.verbose = false
   fetchMock.mockClear()
   createResponsesMock.mockClear()
-  alphaSearchResponsesDependencies.createResponses =
-    createResponsesMock as never
+  alphaSearchResponsesDependencies.createResponses = createResponsesMock
   alphaSearchResponsesDependencies.findEndpointModel = (model) =>
     state.models?.data.find((candidate) => candidate.id === model)
-  alphaSearchResponsesDependencies.createUsageRecorder = (() =>
-    () => {}) as never
+  alphaSearchResponsesDependencies.createUsageRecorder = () => () => {}
   alphaSearchResponsesDependencies.now = () =>
     Date.parse("2026-08-03T12:00:00.000Z")
   alphaSearchResponsesDependencies.resolveMappedModel = (model) =>
@@ -480,9 +475,8 @@ describe("Codex alpha search forwarding", () => {
 
   test("preserves non-JSON upstream responses when debug logging is enabled", async () => {
     state.verbose = true
-    const nonJsonFetchMock = mock(
-      (): Promise<Response> =>
-        Promise.resolve(new Response("upstream failed", { status: 502 })),
+    const nonJsonFetchMock = mock((): Promise<Response> =>
+      Promise.resolve(new Response("upstream failed", { status: 502 })),
     )
     ;(globalThis as unknown as { fetch: typeof fetch }).fetch =
       nonJsonFetchMock as unknown as typeof fetch
@@ -1316,7 +1310,7 @@ describe("Alpha search Responses adapter", () => {
     }
     expect(missingAuthBody.error.message).toContain("Copilot token not found")
 
-    alphaSearchResponsesDependencies.createResponses = (() =>
+    alphaSearchResponsesDependencies.createResponses = () =>
       Promise.reject(
         new HTTPError(
           "rate limited",
@@ -1328,7 +1322,7 @@ describe("Alpha search Responses adapter", () => {
             },
           }),
         ),
-      )) as never
+      )
     const rateLimited = await requestFallback(
       createFallbackPayload(
         { search_query: [{ q: "rate limit" }] },

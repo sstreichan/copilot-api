@@ -234,8 +234,7 @@ describe("Interaction headers", () => {
 describe("modelCallId telemetry alignment", () => {
   let capturedModelCallIdFromRequestSent: string | undefined
   let capturedSuccessOpts:
-    | telemetryModule.TrackResponseSuccessOptions
-    | undefined
+    telemetryModule.TrackResponseSuccessOptions | undefined
   let capturedErrorOpts: telemetryModule.TrackResponseErrorOptions | undefined
   let schedulePostResponseEventsCallCount: number
 

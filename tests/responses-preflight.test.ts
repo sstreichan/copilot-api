@@ -17,12 +17,11 @@ type WebSearchEnabledSpy = {
 const makePayload = (
   tools?: ResponsesPayload["tools"],
   input?: ResponsesPayload["input"],
-): ResponsesPayload =>
-  ({
-    model: "gpt-5",
-    input: input ?? [],
-    tools,
-  }) as unknown as ResponsesPayload
+): ResponsesPayload => ({
+  model: "gpt-5",
+  input: input ?? [],
+  tools,
+})
 
 describe("removeUnsupportedTools", () => {
   it("removes image_generation tools", () => {
@@ -142,7 +141,7 @@ describe("preflightResponsesPayload", () => {
       compactionItem,
       reasoningItem,
       userItem,
-    ] as unknown as ResponsesPayload["input"])
+    ])
 
     preflightResponsesPayload(payload)
 

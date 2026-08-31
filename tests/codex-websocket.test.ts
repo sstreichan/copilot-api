@@ -131,9 +131,8 @@ await mock.module("undici", () => ({
 }))
 
 const { state } = await import("~/lib/state")
-const { forwardCodexResponses } = await import(
-  "~/services/codex/create-responses"
-)
+const { forwardCodexResponses } =
+  await import("~/services/codex/create-responses")
 
 const originalState = {
   codexAccessToken: state.codexAccessToken,

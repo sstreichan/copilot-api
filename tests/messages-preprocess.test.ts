@@ -13,12 +13,7 @@ import * as configModule from "~/lib/config"
 import type { AnthropicMessagesPayload } from "~/lib/types/anthropic"
 
 let mockedReasoningEffort:
-  | "none"
-  | "minimal"
-  | "low"
-  | "medium"
-  | "high"
-  | "xhigh" = "xhigh"
+  "none" | "minimal" | "low" | "medium" | "high" | "xhigh" = "xhigh"
 
 const getReasoningEffortForModelSpy = spyOn(
   configModule,

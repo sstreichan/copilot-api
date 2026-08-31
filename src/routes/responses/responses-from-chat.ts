@@ -519,8 +519,7 @@ const createFunctionCallOutput = (
 
 const mapFinishReasonToStatus = (
   finishReason:
-    | ChatCompletionResponse["choices"][number]["finish_reason"]
-    | undefined,
+    ChatCompletionResponse["choices"][number]["finish_reason"] | undefined,
 ): ResponseStatus => {
   if (finishReason === "length" || finishReason === "content_filter") {
     return "incomplete"
@@ -531,8 +530,7 @@ const mapFinishReasonToStatus = (
 
 const mapIncompleteDetails = (
   finishReason:
-    | ChatCompletionResponse["choices"][number]["finish_reason"]
-    | undefined,
+    ChatCompletionResponse["choices"][number]["finish_reason"] | undefined,
 ): IncompleteDetails | null => {
   if (finishReason === "length") {
     return { reason: "max_output_tokens" }

@@ -2,7 +2,6 @@ import { describe, expect, test } from "bun:test"
 
 import type { AnthropicStreamEventData } from "~/lib/types/anthropic"
 import type {
-  ResponseCompletedEvent,
   ResponseOutputItemAddedEvent,
   ResponseOutputItemDoneEvent,
   ResponseFunctionCallArgumentsDeltaEvent,
@@ -53,7 +52,7 @@ describe("translateResponsesStreamEvent tool calls", () => {
           output_index: 1,
           sequence_number: 2,
           delta: '{"todos":',
-        } as ResponseFunctionCallArgumentsDeltaEvent,
+        },
         state,
       ),
       translateResponsesStreamEvent(
@@ -63,7 +62,7 @@ describe("translateResponsesStreamEvent tool calls", () => {
           output_index: 1,
           sequence_number: 3,
           delta: "[]}",
-        } as ResponseFunctionCallArgumentsDeltaEvent,
+        },
         state,
       ),
       translateResponsesStreamEvent(
@@ -74,7 +73,7 @@ describe("translateResponsesStreamEvent tool calls", () => {
           output_index: 1,
           sequence_number: 4,
           arguments: '{"todos":[]}',
-        } as ResponseFunctionCallArgumentsDoneEvent,
+        },
         state,
       ),
     ].flat()
@@ -193,7 +192,7 @@ describe("translateResponsesStreamEvent tool calls", () => {
             tools: [],
             top_p: null,
           },
-        } as ResponseCompletedEvent,
+        },
         state,
       ),
     ].flat()
@@ -302,7 +301,7 @@ describe("translateResponsesStreamEvent tool calls", () => {
             tools: [],
             top_p: null,
           },
-        } as ResponseCompletedEvent,
+        },
         state,
       ),
     ].flat()
@@ -368,7 +367,7 @@ describe("translateResponsesStreamEvent tool calls", () => {
           sequence_number: 2,
           arguments:
             '{"todos":[{"content":"Review src/routes/responses/translation.ts"}]}',
-        } as ResponseFunctionCallArgumentsDoneEvent,
+        },
         state,
       ),
     ].flat()
@@ -405,7 +404,7 @@ describe("translateResponsesStreamEvent tool calls", () => {
           output_index: 1,
           sequence_number: 2,
           arguments: '{"todos":[]}',
-        } as ResponseFunctionCallArgumentsDoneEvent,
+        },
         state,
       ),
       translateResponsesStreamEvent(
@@ -431,7 +430,7 @@ describe("translateResponsesStreamEvent tool calls", () => {
             tools: [],
             top_p: null,
           },
-        } as ResponseCompletedEvent,
+        },
         state,
       ),
     ].flat()
@@ -487,7 +486,7 @@ describe("translateResponsesStreamEvent tool calls", () => {
           tools: [],
           top_p: null,
         },
-      } as ResponseCompletedEvent,
+      },
       state,
     )
 
@@ -537,7 +536,7 @@ describe("translateResponsesStreamEvent tool calls", () => {
             total_nano_aiu: 999,
           },
         },
-      } as ResponseCompletedEvent,
+      },
       state,
     )
 
@@ -583,7 +582,7 @@ describe("translateResponsesStreamEvent tool calls", () => {
           tools: [],
           top_p: null,
         },
-      } as ResponseCompletedEvent,
+      },
       state,
     )
 

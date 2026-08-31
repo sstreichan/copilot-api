@@ -25,9 +25,8 @@ describe("resolveInitiatorWithSmartAgent", () => {
   test("returns defaultInitiator when state.forceAgent is false", async () => {
     state.forceAgent = false
 
-    const { resolveInitiatorWithSmartAgent } = await import(
-      "../src/lib/smart-agent"
-    )
+    const { resolveInitiatorWithSmartAgent } =
+      await import("../src/lib/smart-agent")
 
     const result = await resolveInitiatorWithSmartAgent("user", midMonth)
     expect(result.initiator).toBe("user")
@@ -56,9 +55,8 @@ describe("resolveInitiatorWithSmartAgent", () => {
     // @ts-expect-error - Mock fetch
     globalThis.fetch = fetchMock
 
-    const { resolveInitiatorWithSmartAgent } = await import(
-      "../src/lib/smart-agent"
-    )
+    const { resolveInitiatorWithSmartAgent } =
+      await import("../src/lib/smart-agent")
 
     // Clear cache before test
     const { clearSmartAgentCache } = await import("../src/lib/smart-agent")

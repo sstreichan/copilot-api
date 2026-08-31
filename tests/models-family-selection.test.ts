@@ -9,26 +9,23 @@ const makeModels = (
   ids: Array<string>,
 ): { data: Array<Model>; object: string } => ({
   object: "list",
-  data: ids.map(
-    (id) =>
-      ({
-        id,
-        name: id,
-        object: "model",
-        preview: false,
-        vendor: "anthropic",
-        version: id,
-        model_picker_enabled: true,
-        capabilities: {
-          family: id,
-          object: "model_capabilities",
-          tokenizer: "o200k_base",
-          type: "chat",
-          limits: {},
-          supports: {},
-        },
-      }) as Model,
-  ),
+  data: ids.map((id) => ({
+    id,
+    name: id,
+    object: "model",
+    preview: false,
+    vendor: "anthropic",
+    version: id,
+    model_picker_enabled: true,
+    capabilities: {
+      family: id,
+      object: "model_capabilities",
+      tokenizer: "o200k_base",
+      type: "chat",
+      limits: {},
+      supports: {},
+    },
+  })),
 })
 
 const previousModels = state.models

@@ -84,9 +84,8 @@ const {
   messagesApiFlowDependencies,
   prepareCopilotChatCompletionsPayload,
 } = await import("../src/routes/messages/api-flows")
-const { responsesUtilsDependencies } = await import(
-  "../src/routes/responses/utils"
-)
+const { responsesUtilsDependencies } =
+  await import("../src/routes/responses/utils")
 const { tokenUsageRoute } = await import("../src/routes/token-usage/route")
 
 const defaultMessagesApiFlowDependencies = { ...messagesApiFlowDependencies }
@@ -838,7 +837,7 @@ test("messages Messages flow emits an error event when the upstream stream throw
         }
         throw new Error("upstream connection reset")
       })()
-      return Promise.resolve(stream) as unknown as Promise<CreateMessagesReturn>
+      return Promise.resolve(stream)
     },
   )
 
@@ -871,17 +870,16 @@ test("messages Messages flow forwards an upstream error event without appending 
     error: { message: "overloaded", type: "overloaded_error" },
     type: "error",
   })
-  createMessages.mockImplementationOnce(
-    (): Promise<CreateMessagesReturn> =>
-      Promise.resolve(
-        createMessagesStream([
-          {
-            event: "error",
-            data: upstreamError,
-          },
-          // The stream ends here without message_stop.
-        ]) as unknown as CreateMessagesReturn,
-      ),
+  createMessages.mockImplementationOnce((): Promise<CreateMessagesReturn> =>
+    Promise.resolve(
+      createMessagesStream([
+        {
+          event: "error",
+          data: upstreamError,
+        },
+        // The stream ends here without message_stop.
+      ]) as unknown as CreateMessagesReturn,
+    ),
   )
 
   const payload: AnthropicMessagesPayload = {

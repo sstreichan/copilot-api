@@ -293,7 +293,7 @@ export function normalizeOpenAIUsage(
   const promptDetails = usage?.prompt_tokens_details
   const hasCacheCreationTokens = Boolean(
     promptDetails
-      && Object.hasOwn(promptDetails, "cache_creation_input_tokens"),
+    && Object.hasOwn(promptDetails, "cache_creation_input_tokens"),
   )
   const hasCachedTokens = Boolean(
     promptDetails && Object.hasOwn(promptDetails, "cached_tokens"),

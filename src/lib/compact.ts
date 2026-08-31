@@ -30,6 +30,4 @@ export const compactMessageSections = [
 ] as const
 
 export type CompactType =
-  | 0
-  | typeof COMPACT_REQUEST
-  | typeof COMPACT_AUTO_CONTINUE
+  0 | typeof COMPACT_REQUEST | typeof COMPACT_AUTO_CONTINUE

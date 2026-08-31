@@ -47,8 +47,7 @@ const CLAUDE_CODE_CCH_SEGMENT_PATTERN = /(^|;\s*)cch=[^;]+;/u
 
 type AnthropicAttachmentBlock = AnthropicImageBlock | AnthropicDocumentBlock
 type AnthropicMessageContentBlock =
-  | AnthropicUserContentBlock
-  | AnthropicAssistantContentBlock
+  AnthropicUserContentBlock | AnthropicAssistantContentBlock
 
 const createTextBlock = (text: string): AnthropicTextBlock => ({
   type: "text",
@@ -971,11 +970,7 @@ export const prepareMessagesApiPayload = (
     const reasoningEffort = selectedModel.capabilities.supports.reasoning_effort
     if (reasoningEffort && !reasoningEffort.includes(effort)) {
       effort = reasoningEffort.at(-1) as
-        | "low"
-        | "medium"
-        | "high"
-        | "xhigh"
-        | "max"
+        "low" | "medium" | "high" | "xhigh" | "max"
     }
     payload.output_config = {
       effort: effort,

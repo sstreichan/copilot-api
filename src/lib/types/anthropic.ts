@@ -184,13 +184,11 @@ export interface AnthropicWebSearchToolResultBlock {
   type: "web_search_tool_result"
   tool_use_id: string
   content:
-    | Array<AnthropicWebSearchResultItem>
-    | AnthropicWebSearchToolResultErrorBlock
+    Array<AnthropicWebSearchResultItem> | AnthropicWebSearchToolResultErrorBlock
 }
 
 export type AnthropicWebSearchContentBlock =
-  | AnthropicServerToolUseBlock
-  | AnthropicWebSearchToolResultBlock
+  AnthropicServerToolUseBlock | AnthropicWebSearchToolResultBlock
 
 export interface AnthropicUsage {
   cost?: number
@@ -209,12 +207,11 @@ export interface CopilotUsage {
 }
 
 export type AnthropicResponseContentBlock =
-  | AnthropicAssistantContentBlock
-  | AnthropicWebSearchContentBlock
+  AnthropicAssistantContentBlock | AnthropicWebSearchContentBlock
 
 export interface AnthropicResponse<
-  TContentBlock extends
-    AnthropicResponseContentBlock = AnthropicResponseContentBlock,
+  TContentBlock extends AnthropicResponseContentBlock =
+    AnthropicResponseContentBlock,
 > {
   id: string
   type: "message"

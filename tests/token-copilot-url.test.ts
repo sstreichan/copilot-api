@@ -10,13 +10,12 @@ type TokenResponse = {
 const BUSINESS_API_URL = "https://api.business.githubcopilot.com"
 const ENTERPRISE_API_URL = "https://api.enterprise.githubcopilot.com"
 
-const getCopilotTokenMock = mock(
-  (): Promise<TokenResponse> =>
-    Promise.resolve({
-      token: "copilot-token-1",
-      refresh_in: 1_800,
-      expires_at: 0,
-    }),
+const getCopilotTokenMock = mock((): Promise<TokenResponse> =>
+  Promise.resolve({
+    token: "copilot-token-1",
+    refresh_in: 1_800,
+    expires_at: 0,
+  }),
 )
 
 const getCopilotUsageMock = mock(() =>
@@ -54,13 +53,12 @@ beforeEach(() => {
   state.copilotApiUrl = undefined
   getCopilotTokenMock.mockClear()
   getCopilotUsageMock.mockClear()
-  getCopilotTokenMock.mockImplementation(
-    (): Promise<TokenResponse> =>
-      Promise.resolve({
-        token: "copilot-token-1",
-        refresh_in: 1_800,
-        expires_at: 0,
-      }),
+  getCopilotTokenMock.mockImplementation((): Promise<TokenResponse> =>
+    Promise.resolve({
+      token: "copilot-token-1",
+      refresh_in: 1_800,
+      expires_at: 0,
+    }),
   )
 })
 
@@ -73,14 +71,13 @@ test("token exchange endpoint overrides the /user endpoints.api (enterprise seat
   await logUser()
   expect(state.copilotApiUrl).toBe(BUSINESS_API_URL)
 
-  getCopilotTokenMock.mockImplementation(
-    (): Promise<TokenResponse> =>
-      Promise.resolve({
-        token: "copilot-token-enterprise",
-        refresh_in: 1_800,
-        expires_at: 0,
-        endpoints: { api: ENTERPRISE_API_URL },
-      }),
+  getCopilotTokenMock.mockImplementation((): Promise<TokenResponse> =>
+    Promise.resolve({
+      token: "copilot-token-enterprise",
+      refresh_in: 1_800,
+      expires_at: 0,
+      endpoints: { api: ENTERPRISE_API_URL },
+    }),
   )
 
   await setupCopilotToken()
@@ -93,13 +90,12 @@ test("keeps the /user endpoints.api when the token response carries no endpoints
   await logUser()
   expect(state.copilotApiUrl).toBe(BUSINESS_API_URL)
 
-  getCopilotTokenMock.mockImplementation(
-    (): Promise<TokenResponse> =>
-      Promise.resolve({
-        token: "copilot-token-plain",
-        refresh_in: 1_800,
-        expires_at: 0,
-      }),
+  getCopilotTokenMock.mockImplementation((): Promise<TokenResponse> =>
+    Promise.resolve({
+      token: "copilot-token-plain",
+      refresh_in: 1_800,
+      expires_at: 0,
+    }),
   )
 
   await setupCopilotToken()
@@ -162,14 +158,13 @@ test("refresh loop re-applies the exchanged endpoints.api", async () => {
   await logUser()
   expect(state.copilotApiUrl).toBe(BUSINESS_API_URL)
 
-  getCopilotTokenMock.mockImplementation(
-    (): Promise<TokenResponse> =>
-      Promise.resolve({
-        token: "copilot-token-enterprise",
-        refresh_in: 0,
-        expires_at: 0,
-        endpoints: { api: ENTERPRISE_API_URL },
-      }),
+  getCopilotTokenMock.mockImplementation((): Promise<TokenResponse> =>
+    Promise.resolve({
+      token: "copilot-token-enterprise",
+      refresh_in: 0,
+      expires_at: 0,
+      endpoints: { api: ENTERPRISE_API_URL },
+    }),
   )
 
   await setupCopilotToken()
@@ -178,14 +173,13 @@ test("refresh loop re-applies the exchanged endpoints.api", async () => {
 
   // Refresh deadline for refresh_in=0 is clamped to 1s; allow the loop to fire
   // once more with a different endpoint and verify routing follows the token.
-  getCopilotTokenMock.mockImplementation(
-    (): Promise<TokenResponse> =>
-      Promise.resolve({
-        token: "copilot-token-reloaded",
-        refresh_in: 0,
-        expires_at: 0,
-        endpoints: { api: BUSINESS_API_URL },
-      }),
+  getCopilotTokenMock.mockImplementation((): Promise<TokenResponse> =>
+    Promise.resolve({
+      token: "copilot-token-reloaded",
+      refresh_in: 0,
+      expires_at: 0,
+      endpoints: { api: BUSINESS_API_URL },
+    }),
   )
 
   await Bun.sleep(2_000)

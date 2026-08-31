@@ -619,17 +619,17 @@ const isTextReadable = (
 ): value is { text: () => Promise<string> } =>
   Boolean(
     value
-      && typeof value === "object"
-      && "text" in value
-      && typeof (value as { text?: unknown }).text === "function",
+    && typeof value === "object"
+    && "text" in value
+    && typeof (value as { text?: unknown }).text === "function",
   )
 
 const isSized = (value: unknown): value is { size: number } =>
   Boolean(
     value
-      && typeof value === "object"
-      && "size" in value
-      && typeof (value as { size?: unknown }).size === "number",
+    && typeof value === "object"
+    && "size" in value
+    && typeof (value as { size?: unknown }).size === "number",
   )
 
 const toAbortReason = (reason: unknown): Error => {

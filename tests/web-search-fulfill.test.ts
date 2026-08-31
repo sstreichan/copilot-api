@@ -465,13 +465,11 @@ describe("Responses web search backend", () => {
 describe("handleWebSearchViaResponses", () => {
   it("switches model, runs Responses web_search, and reconstructs blocks", async () => {
     let sentPayload: ResponsesPayload | undefined
-    webSearchFlowDependencies.createResponses = ((
-      payload: ResponsesPayload,
-    ) => {
+    webSearchFlowDependencies.createResponses = (payload: ResponsesPayload) => {
       sentPayload = payload
       return Promise.resolve(makeResponsesStream(makeResponsesResult()))
-    }) as never
-    webSearchFlowDependencies.createUsageRecorder = (() => () => {}) as never
+    }
+    webSearchFlowDependencies.createUsageRecorder = () => () => {}
 
     const { c } = makeContext()
     const upstreamResponse = await handleWebSearchViaResponses(
@@ -515,7 +513,7 @@ describe("handleWebSearchViaResponses", () => {
   })
 
   it("returns just text when the backend produced no sources", async () => {
-    webSearchFlowDependencies.createResponses = (() =>
+    webSearchFlowDependencies.createResponses = () =>
       Promise.resolve(
         makeResponsesResult({
           output: [
@@ -529,8 +527,8 @@ describe("handleWebSearchViaResponses", () => {
             },
           ] as never,
         }),
-      )) as never
-    webSearchFlowDependencies.createUsageRecorder = (() => () => {}) as never
+      )
+    webSearchFlowDependencies.createUsageRecorder = () => () => {}
 
     const { c } = makeContext()
     const upstreamResponse = await handleWebSearchViaResponses(

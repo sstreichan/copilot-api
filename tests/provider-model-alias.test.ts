@@ -45,9 +45,8 @@ await mock.module("~/lib/token-usage", () => ({
 }))
 
 const { messageRoutes } = await import("~/routes/messages/route")
-const { resolveCountTokensModel } = await import(
-  "~/routes/messages/count-tokens-handler"
-)
+const { resolveCountTokensModel } =
+  await import("~/routes/messages/count-tokens-handler")
 
 const originalFetch = globalThis.fetch
 
@@ -202,10 +201,7 @@ describe("provider/model aliases on top-level messages routes", () => {
     })
     expect(getTokenCount).toHaveBeenCalledTimes(1)
 
-    const [openAIPayload, selectedModel] = getTokenCount.mock.calls[0] as [
-      TokenCountPayload,
-      TokenCountModel,
-    ]
+    const [openAIPayload, selectedModel] = getTokenCount.mock.calls[0]
     expect(openAIPayload.model).toBe("qwen-plus")
     expect(selectedModel.id).toBe("qwen-plus")
     expect(selectedModel.capabilities.tokenizer).toBe("o200k_base")
@@ -235,10 +231,7 @@ describe("provider/model aliases on top-level messages routes", () => {
     })
     expect(getTokenCount).toHaveBeenCalledTimes(1)
 
-    const [openAIPayload, selectedModel] = getTokenCount.mock.calls[0] as [
-      TokenCountPayload,
-      TokenCountModel,
-    ]
+    const [openAIPayload, selectedModel] = getTokenCount.mock.calls[0]
     expect(openAIPayload.model).toBe("qwen-plus")
     expect(selectedModel.id).toBe("qwen-plus")
     expect(selectedModel.capabilities.tokenizer).toBe("o200k_base")
@@ -355,10 +348,7 @@ describe("namespaced model ids fall through to the default lookup", () => {
 
     expect(response.status).toBe(200)
     expect(getTokenCount).toHaveBeenCalledTimes(1)
-    const [, selectedModel] = getTokenCount.mock.calls[0] as [
-      TokenCountPayload,
-      TokenCountModel,
-    ]
+    const [, selectedModel] = getTokenCount.mock.calls[0]
     expect(selectedModel.id).toBe("qwen-plus")
   })
 })

@@ -39,7 +39,7 @@ function createFetchStub(responseForUrl: (url: URL) => Response): typeof fetch {
       return Promise.resolve(responseForUrl(url))
     },
     { preconnect },
-  ) as typeof fetch
+  )
 }
 
 function createDiscoverModelsFetchStub(

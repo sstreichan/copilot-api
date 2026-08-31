@@ -31,14 +31,12 @@ describe("sanitizeUnsupportedInputFields", () => {
   })
 
   test("returns zero when input is missing or unsupported fields are absent", () => {
-    expect(
-      sanitizeUnsupportedInputFields({ model: "gpt-5.5" } as ResponsesPayload),
-    ).toBe(0)
+    expect(sanitizeUnsupportedInputFields({ model: "gpt-5.5" })).toBe(0)
     expect(
       sanitizeUnsupportedInputFields({
         input: [{ content: "hello", role: "user" }],
         model: "gpt-5.5",
-      } as ResponsesPayload),
+      }),
     ).toBe(0)
   })
 })

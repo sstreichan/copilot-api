@@ -56,9 +56,8 @@ await mock.module("~/lib/token-usage", () => ({
   createProviderTokenUsageRecorder: () => noopTokenUsageRecorder,
 }))
 
-const { providerMessageRoutes } = await import(
-  "~/routes/provider/messages/route"
-)
+const { providerMessageRoutes } =
+  await import("~/routes/provider/messages/route")
 const { messageRoutes } = await import("~/routes/messages/route")
 const { state } = await import("~/lib/state")
 const { responsesUtilsDependencies } = await import("~/routes/responses/utils")
@@ -642,7 +641,7 @@ describe("provider messages web_search", () => {
           toolContentSupportType: [],
         },
       },
-    } as ResolvedProviderConfig
+    }
 
     const app = createApp()
     const response = await app.request("/search/v1/messages", {

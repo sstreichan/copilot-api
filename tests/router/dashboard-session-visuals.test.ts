@@ -154,8 +154,12 @@ describe("route history session visuals", () => {
         return element
       }
       class MonthEndDate extends Date {
-        constructor(...args: ConstructorParameters<typeof Date>) {
-          super(...(args.length === 0 ? ["2026-08-31T12:00:00.000Z"] : args))
+        constructor(...args: [] | [number, number, number]) {
+          if (args.length === 0) {
+            super("2026-08-31T12:00:00.000Z")
+          } else {
+            super(...args)
+          }
         }
       }
       const sandbox = {

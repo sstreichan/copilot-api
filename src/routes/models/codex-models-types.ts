@@ -73,14 +73,7 @@ export type CodexReasoningSummaryFormat = "experimental"
 export type CodexReasoningSummary = "auto" | "none"
 
 export type CodexReasoningEffort =
-  | "none"
-  | "minimal"
-  | "low"
-  | "medium"
-  | "high"
-  | "xhigh"
-  | "max"
-  | "ultra"
+  "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra"
 
 export interface CodexReasoningLevel {
   effort: CodexReasoningEffort

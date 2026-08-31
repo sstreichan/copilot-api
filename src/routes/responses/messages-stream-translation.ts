@@ -37,8 +37,7 @@ interface StreamOutputState<T extends ResponseOutputItem> {
   outputIndex: number
 }
 
-interface StreamReasoningState
-  extends StreamOutputState<ResponseOutputReasoning> {
+interface StreamReasoningState extends StreamOutputState<ResponseOutputReasoning> {
   signature: string
   summaryStarted: boolean
   text: string
@@ -50,13 +49,11 @@ interface StreamMessageState extends StreamOutputState<ResponseOutputMessage> {
   type: "message"
 }
 
-interface StreamFunctionToolState
-  extends StreamOutputState<ResponseOutputFunctionCall> {
+interface StreamFunctionToolState extends StreamOutputState<ResponseOutputFunctionCall> {
   type: "function_tool"
 }
 
-interface StreamCustomToolState
-  extends StreamOutputState<ResponseOutputCustomToolCall> {
+interface StreamCustomToolState extends StreamOutputState<ResponseOutputCustomToolCall> {
   decoder: CustomToolInputStreamDecoder
   type: "custom_tool"
 }

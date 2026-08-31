@@ -17,8 +17,9 @@ import type { createResponses as createCopilotResponses } from "~/services/copil
 
 let responsesApiWebSocketEnabled = true
 
-const createResponses = mock((() =>
-  Promise.resolve(streamChunks([]))) as typeof createCopilotResponses)
+const createResponses = mock<typeof createCopilotResponses>(() =>
+  Promise.resolve(streamChunks([])),
+)
 
 const createResponsesResult = (model: string) => ({
   created_at: 0,
@@ -43,15 +44,12 @@ const createResponsesResult = (model: string) => ({
 const { state } = await import("~/lib/state")
 const { closeUsageStore } = await import("~/lib/token-usage")
 const { tokenUsageRoute } = await import("~/routes/token-usage/route")
-const { responsesHandlerDependencies } = await import(
-  "~/routes/responses/handler"
-)
-const { responsesMessagesDependencies } = await import(
-  "~/routes/responses/messages-handler"
-)
-const { responsesChatDependencies } = await import(
-  "~/routes/responses/chat-handler"
-)
+const { responsesHandlerDependencies } =
+  await import("~/routes/responses/handler")
+const { responsesMessagesDependencies } =
+  await import("~/routes/responses/messages-handler")
+const { responsesChatDependencies } =
+  await import("~/routes/responses/chat-handler")
 const { responsesRoutes } = await import("~/routes/responses/route")
 const { responsesUtilsDependencies } = await import("~/routes/responses/utils")
 const { generateRequestIdFromPayload, getUUID } = await import("~/lib/utils")
@@ -2233,8 +2231,7 @@ describe("responses handler upstream header forwarding across fallbacks", () => 
       capturedMessages = payload.messages
       return Promise.resolve(createChatResponse(payload.model))
     })
-    responsesChatDependencies.createChatCompletions =
-      createChatCompletions as typeof responsesChatDependencies.createChatCompletions
+    responsesChatDependencies.createChatCompletions = createChatCompletions
 
     const app = createApp()
     const response = await app.request("/v1/responses", {
@@ -2286,7 +2283,7 @@ describe("responses handler interrupted streams", () => {
           version: "test",
         },
       ],
-    } as typeof state.models
+    }
     const handleMessages = mock(
       (_context: Context, _payload: AnthropicMessagesPayload) =>
         Promise.resolve(

@@ -165,8 +165,8 @@ async function promptRequiredText(
 function canUseMaskedPrompt(): boolean {
   return Boolean(
     process.stdin.isTTY
-      && process.stdout.isTTY
-      && typeof process.stdin.setRawMode === "function",
+    && process.stdout.isTTY
+    && typeof process.stdin.setRawMode === "function",
   )
 }
 

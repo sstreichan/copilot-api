@@ -7,8 +7,11 @@ import {
   removeUnsupportedTools,
 } from "~/routes/responses/handler"
 
-const makePayload = (tools: ResponsesPayload["tools"]): ResponsesPayload =>
-  ({ model: "gpt-5", input: [], tools }) as unknown as ResponsesPayload
+const makePayload = (tools: ResponsesPayload["tools"]): ResponsesPayload => ({
+  model: "gpt-5",
+  input: [],
+  tools,
+})
 
 describe("removeUnsupportedTools", () => {
   it("removes image_generation tools", () => {

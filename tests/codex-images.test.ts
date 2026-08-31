@@ -29,12 +29,10 @@ await mock.module("~/lib/token", () => ({
 }))
 
 const { state } = await import("~/lib/state")
-const { forwardCodexImages, resolveCodexImagesUrl } = await import(
-  "~/services/codex/images"
-)
-const { imageRouteDependencies, imageRoutes } = await import(
-  "~/routes/images/route"
-)
+const { forwardCodexImages, resolveCodexImagesUrl } =
+  await import("~/services/codex/images")
+const { imageRouteDependencies, imageRoutes } =
+  await import("~/routes/images/route")
 const { providerImageRoutes } = await import("~/routes/provider/images/route")
 const { server } = await import("~/server")
 
@@ -53,7 +51,6 @@ const debugJsonAsyncMock = mock(
 )
 
 const originalFetch = globalThis.fetch
-type StreamingRequestInit = RequestInit & { duplex?: "half" }
 const fetchMock = mock(
   (_url: string | URL | Request, _init?: RequestInit): Promise<Response> =>
     Promise.resolve(
@@ -174,7 +171,7 @@ describe("Codex images forwarding", () => {
       "https://chatgpt.com/backend-api/codex/images/generations?output=base64",
     )
     expect(init?.method).toBe("POST")
-    expect((init as StreamingRequestInit | undefined)?.duplex).toBe("half")
+    expect(init?.duplex).toBe("half")
     const headers = new Headers(init?.headers)
     expect(headers.get("authorization")).toBe("Bearer codex-access-token")
     expect(headers.get("chatgpt-account-id")).toBe("account-123")
@@ -347,7 +344,7 @@ describe("Codex images forwarding", () => {
       "https://openrouter.example/v1/images/generations?output=base64",
     )
     expect(init?.method).toBe("POST")
-    expect((init as StreamingRequestInit | undefined)?.duplex).toBe("half")
+    expect(init?.duplex).toBe("half")
     expect(init?.signal).toBeInstanceOf(AbortSignal)
     const headers = new Headers(init?.headers)
     expect(headers.get("authorization")).toBe("Bearer openrouter-key")

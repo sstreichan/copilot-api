@@ -224,9 +224,8 @@ const {
   ResponsesWebSocketOpenTimeoutError,
   WebSocketMessageBuffer,
 } = await import("~/services/responses-websocket")
-const { createResponsesSafeStream } = await import(
-  "~/services/responses-websocket-helpers"
-)
+const { createResponsesSafeStream } =
+  await import("~/services/responses-websocket-helpers")
 
 const originalState = {
   accountType: state.accountType,

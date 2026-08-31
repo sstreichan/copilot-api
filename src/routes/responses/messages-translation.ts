@@ -1050,8 +1050,7 @@ function translateStopReason(stopReason: AnthropicResponse["stop_reason"]): {
 function translateReasoningEffort(
   effort: Reasoning["effort"],
 ):
-  | NonNullable<AnthropicMessagesPayload["output_config"]>["effort"]
-  | undefined {
+  NonNullable<AnthropicMessagesPayload["output_config"]>["effort"] | undefined {
   if (effort === "minimal") return "low"
   if (
     effort === "low"

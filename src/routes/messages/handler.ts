@@ -108,8 +108,8 @@ export async function handleCompletionPayload(
   const claudeAutoModel = getClaudeAutoModel()
   const shouldUseClaudeAutoModel = Boolean(
     !dispatchOptions.skipClaudeAutoModel
-      && claudeAutoModel
-      && isClaudeAutoModelRequest(anthropicPayload),
+    && claudeAutoModel
+    && isClaudeAutoModelRequest(anthropicPayload),
   )
   if (claudeAutoModel && shouldUseClaudeAutoModel) {
     consola.debug(

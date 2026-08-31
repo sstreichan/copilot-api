@@ -90,14 +90,7 @@ export interface ModelConfig {
 }
 
 export type CodexReasoningEffort =
-  | "none"
-  | "minimal"
-  | "low"
-  | "medium"
-  | "high"
-  | "xhigh"
-  | "max"
-  | "ultra"
+  "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra"
 
 export type ProviderAuthType = "authorization" | "oauth2" | "x-api-key"
 export const SUPPORTED_PROVIDER_TYPES = [
@@ -242,7 +235,9 @@ export function readEditableConfigFromDisk(): AppConfig {
       return {}
     }
     if (error instanceof SyntaxError) {
-      throw new Error(`Config file is not valid JSON: ${PATHS.CONFIG_PATH}`)
+      throw new Error(`Config file is not valid JSON: ${PATHS.CONFIG_PATH}`, {
+        cause: error,
+      })
     }
     throw error
   }
