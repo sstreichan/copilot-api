@@ -32,7 +32,7 @@
     "dev": "NODE_USE_SYSTEM_CA=1 bun run --watch ./src/main.ts",
     "knip": "knip-bun",
     "lint": "eslint --cache",
-    "lint:all": "eslint --cache .",
+    "lint:all": "eslint .",
     "prepack": "bun run build",
     "prepare": "simple-git-hooks",
     "release": "bumpp && bun publish --access public",

@@ -5,7 +5,7 @@ import path from "node:path"
 
 const execAsync = (command: string): Promise<string> => {
   return new Promise((resolve, reject) => {
-    exec(command, (error, stdout) => {
+    exec(command, (error: Error | null, stdout) => {
       if (error) {
         reject(error)
         return
