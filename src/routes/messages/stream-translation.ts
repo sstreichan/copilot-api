@@ -428,7 +428,8 @@ function handleThinkingText(
   state: AnthropicStreamState,
   events: Array<AnthropicStreamEventData>,
 ) {
-  const reasoningText = delta.reasoning_text ?? delta.reasoning_content
+  const reasoningText =
+    delta.reasoning_text ?? delta.reasoning_content ?? delta.reasoning
   if (reasoningText && reasoningText.length > 0) {
     // compatible with copilot API returning content->reasoning_text->reasoning_opaque in different deltas
     // this is an extremely abnormal situation, probably a server-side bug
@@ -437,6 +438,7 @@ function handleThinkingText(
       delta.content = reasoningText
       delta.reasoning_text = undefined
       delta.reasoning_content = undefined
+      delta.reasoning = undefined
       return
     }
 
@@ -492,7 +494,8 @@ export function translateErrorToAnthropicErrorEvent(): AnthropicStreamEventData 
     type: "error",
     error: {
       type: "api_error",
-      message: "An unexpected error occurred during streaming.",
+      message:
+        "An unexpected error occurred during streaming, retry your request.",
     },
   }
 }

@@ -342,7 +342,8 @@ test("messages Chat Completions flow emits an error event when the stream breaks
   expect(JSON.parse(events.at(-1)?.data ?? "{}")).toEqual({
     type: "error",
     error: {
-      message: "An unexpected error occurred during streaming.",
+      message:
+        "An unexpected error occurred during streaming, retry your request.",
       type: "api_error",
     },
   })
@@ -801,7 +802,8 @@ test("messages Messages flow emits an error event when the stream ends without m
   expect(JSON.parse(events.at(-1)?.data ?? "{}")).toEqual({
     type: "error",
     error: {
-      message: "An unexpected error occurred during streaming.",
+      message:
+        "An unexpected error occurred during streaming, retry your request.",
       type: "api_error",
     },
   })

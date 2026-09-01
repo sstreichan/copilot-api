@@ -27,6 +27,7 @@ import {
   resolveEffectiveProviderType,
   resolveProviderAuthType,
 } from "~/lib/config"
+import { builtinProviderModelRegistry } from "~/lib/builtin-provider-models"
 import { logCodexRateLimitsEvent } from "~/lib/codex-rate-limit"
 import {
   applyDashScopePreserveThinkingDefault,
@@ -654,7 +655,10 @@ const createOpenAICompatiblePayload = (
     }
   }
 
-  normalizeOpenAICompatibleReasoningContent(openAIPayload)
+  normalizeOpenAICompatibleReasoningContent(openAIPayload, {
+    modelConfig,
+    providerConfig,
+  })
 
   applyOpenAICompatibleRequestOverrides(openAIPayload, {
     extraBody: modelConfig?.extraBody,
@@ -685,18 +689,44 @@ const createOpenAICompatiblePayload = (
 
 const normalizeOpenAICompatibleReasoningContent = (
   payload: ChatCompletionsPayload,
+  options: {
+    modelConfig: ModelConfig | undefined
+    providerConfig: ResolvedProviderConfig
+  },
 ): void => {
+  // Some models (e.g. opencode-go hy3/hy4) follow the OpenRouter convention
+  // and expect the reasoning text in the "reasoning" field of assistant
+  // history messages instead of the default "reasoning_content" field
+  const reasoningField =
+    options.modelConfig?.reasoningField
+    ?? builtinProviderModelRegistry.getModelConfig(
+      options.providerConfig.name,
+      payload.model,
+    )?.reasoningField
+    ?? "reasoning_content"
+
   let dropped = 0
   for (const message of payload.messages) {
     if (message.role !== "assistant") {
       continue
     }
 
-    if (
-      message.reasoning_content === undefined
-      && message.reasoning_text !== undefined
-    ) {
-      message.reasoning_content = message.reasoning_text
+    const reasoningText =
+      message.reasoning_text ?? message.reasoning_content ?? message.reasoning
+    if (reasoningText && reasoningText.length > 0) {
+      if (reasoningField === "reasoning") {
+        message.reasoning ??= reasoningText
+      } else {
+        message.reasoning_content ??= reasoningText
+      }
+    }
+
+    // Send exactly one reasoning field upstream, even when the history
+    // message carries an empty value in the field this model does not use
+    if (reasoningField === "reasoning") {
+      delete message.reasoning_content
+    } else {
+      delete message.reasoning
     }
 
     if (
@@ -711,7 +741,7 @@ const normalizeOpenAICompatibleReasoningContent = (
   }
   if (dropped > 0) {
     consola.info(
-      `drop thinking block, reason: openai-compatible provider does not recognize reasoning_text/reasoning_opaque; deleted after mapping to reasoning_content in ${dropped} message(s)`,
+      `drop thinking block, reason: openai-compatible provider does not recognize reasoning_text/reasoning_opaque; deleted after mapping to ${reasoningField} in ${dropped} message(s)`,
     )
   }
 }
@@ -1027,7 +1057,7 @@ const streamResponsesProviderMessages = ({
 
     if (!streamState.messageCompleted) {
       const errorEvent = buildErrorEvent(
-        `${provider} stream ended without a completion event`,
+        `${provider} stream ended without a completion event, retry your request.`,
       )
       await stream.writeSSE({
         event: errorEvent.type,

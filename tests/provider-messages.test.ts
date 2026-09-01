@@ -347,7 +347,8 @@ describe("provider Messages Anthropic forwarding", () => {
     expect(eventTypes).not.toContain("message_stop")
     expect(events.at(-1)).toEqual({
       error: {
-        message: "An unexpected error occurred during streaming.",
+        message:
+          "An unexpected error occurred during streaming, retry your request.",
         type: "api_error",
       },
       type: "error",
@@ -377,7 +378,8 @@ describe("provider Messages Anthropic forwarding", () => {
     expect(parseStreamData(await response.text())).toEqual([
       {
         error: {
-          message: "An unexpected error occurred during streaming.",
+          message:
+            "An unexpected error occurred during streaming, retry your request.",
           type: "api_error",
         },
         type: "error",
