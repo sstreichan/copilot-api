@@ -2504,6 +2504,87 @@ describe("responses handler upstream header forwarding across fallbacks", () => 
     expect(createChatCompletions).toHaveBeenCalledTimes(1)
     expect(capturedMessages).toEqual([{ role: "user", content: "fresh" }])
   })
+  test("tolerates upstream stream events shaped as SSE envelopes (no direct choices)", async () => {
+    state.models = {
+      object: "list",
+      data: [
+        {
+          capabilities: {
+            limits: { max_prompt_tokens: 128000 },
+          },
+          id: "chat-fallback-test",
+          supported_endpoints: ["/v1/chat/completions"],
+        },
+      ],
+    } as typeof state.models
+
+    // 真实 createChatCompletions 流式返回 fetch-event-stream 的 envelope
+    // （{ data: "<json string>" }），不是裸 ChatCompletionChunk。
+    // 复现线上 bug：chat-handler 直接 for-await envelope 当 chunk，
+    // 读 chunk.choices.length 时崩（envelope 无 choices 字段）。
+    async function* createEnvelopeStream(
+      model: string,
+    ): AsyncGenerator<{ data: string; event?: string }> {
+      await Promise.resolve()
+      yield {
+        data: JSON.stringify({
+          choices: [
+            {
+              delta: { content: "hi" },
+              finish_reason: null,
+              index: 0,
+              logprobs: null,
+            },
+          ],
+          created: 0,
+          id: "chatcmpl_1",
+          model,
+        }),
+      }
+      yield {
+        data: JSON.stringify({
+          choices: [
+            {
+              delta: {},
+              finish_reason: "stop",
+              index: 0,
+              logprobs: null,
+            },
+          ],
+          created: 0,
+          id: "chatcmpl_1",
+          model,
+          usage: { completion_tokens: 1, prompt_tokens: 1, total_tokens: 2 },
+        }),
+      }
+      yield { data: "[DONE]" }
+    }
+
+    responsesChatDependencies.createChatCompletions = mock(
+      (payload: ChatCompletionsPayload) =>
+        Promise.resolve(createEnvelopeStream(payload.model)),
+    )
+
+    const response = await createApp().request("/v1/responses", {
+      body: JSON.stringify({
+        input: "hello",
+        model: "chat-fallback-test",
+        stream: true,
+      }),
+      headers: { "content-type": "application/json" },
+      method: "POST",
+    })
+    const body = await response.text()
+    const types = body
+      .split("\n")
+      .filter((line) => line.startsWith("event:"))
+      .map((line) => line.slice(6).trim())
+
+    // 红→绿判据：envelope 流应被解包成 chunk 后正常完成，
+    // 而不是因 chunk.choices 为 undefined 抛错发 response.failed。
+    expect(types).toContain("response.completed")
+    expect(types).not.toContain("response.failed")
+  })
 })
 
 describe("responses handler interrupted streams", () => {

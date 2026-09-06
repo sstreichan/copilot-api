@@ -47,6 +47,42 @@ const isChatCompletionResponse = (
   )
 }
 
+const isChatCompletionChunkShape = (
+  value: object,
+): value is ChatCompletionChunk => {
+  // 真实上游 chunk 必有 choices 数组（usage-only chunk 可能 choices: []）。
+  // 不依赖 object 字段：Copilot 上游实际 chunk 无 "chat.completion.chunk"。
+  return "choices" in value && Array.isArray(value.choices)
+}
+
+const toChatCompletionChunk = (
+  value: unknown,
+): ChatCompletionChunk | undefined => {
+  if (typeof value !== "object" || value === null) return undefined
+  // createChatCompletions 流式返回 fetch-event-stream envelope
+  // （{ data: "<json>" }）；解包成 ChatCompletionChunk。
+  if ("data" in value && typeof value.data === "string") {
+    const data = value.data
+    if (!data || data === "[DONE]") return undefined
+    try {
+      const parsed: unknown = JSON.parse(data)
+      if (
+        typeof parsed === "object"
+        && parsed !== null
+        && isChatCompletionChunkShape(parsed)
+      ) {
+        return parsed
+      }
+      return undefined
+    } catch {
+      return undefined
+    }
+  }
+  // 兼容测试 / 已解包路径直接给裸 chunk。
+  if (isChatCompletionChunkShape(value)) return value
+  return undefined
+}
+
 export async function handleResponsesViaChatCompletions(
   c: Context,
   options: {
@@ -110,7 +146,9 @@ export async function handleResponsesViaChatCompletions(
     let copilotUsage: CopilotUsageTokens = {}
 
     try {
-      for await (const chunk of chatResponse) {
+      for await (const rawEvent of chatResponse) {
+        const chunk = toChatCompletionChunk(rawEvent)
+        if (!chunk) continue
         if (chunk.usage) {
           usage = normalizeOpenAIUsage(chunk.usage)
         }
