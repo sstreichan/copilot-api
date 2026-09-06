@@ -626,7 +626,7 @@ test("messages Chat Completions stream preserves Copilot AIU across metadata and
   const usageEvents = await getTokenUsageEventsPage({
     page: 1,
     pageSize: 10,
-    period: "day",
+    period: "today",
   })
   expect(usageEvents.items).toHaveLength(1)
   expect(usageEvents.items[0]).toMatchObject({
@@ -717,7 +717,7 @@ test("messages Messages flow records Copilot AIU from streaming message delta", 
   const usageEvents = await getTokenUsageEventsPage({
     page: 1,
     pageSize: 10,
-    period: "day",
+    period: "today",
   })
 
   expect(capturedMessagesPayload?.model).toBe("claude-sonnet-4.6")
@@ -1002,7 +1002,7 @@ test("messages Messages flow records Copilot AIU from non-streaming response", a
   const usageEvents = await getTokenUsageEventsPage({
     page: 1,
     pageSize: 10,
-    period: "day",
+    period: "today",
   })
 
   expect(capturedMessagesPayload?.model).toBe("claude-sonnet-4.6")

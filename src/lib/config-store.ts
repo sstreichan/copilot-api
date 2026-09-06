@@ -97,7 +97,8 @@ export type ModelReasoningField = "reasoning" | "reasoning_content"
 export type CodexReasoningEffort =
   "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra"
 
-export type ProviderAuthType = "authorization" | "oauth2" | "x-api-key"
+export type ProviderAuthType =
+  "authorization" | "azure-entra" | "oauth2" | "x-api-key"
 export const SUPPORTED_PROVIDER_TYPES = [
   "anthropic",
   "openai-compatible",
