@@ -44,6 +44,7 @@
     "../src/lib/types/**/*.ts",
     "../src/lib/utils.ts",
     "../src/routes/responses/utils.ts",
+    "../src/routes/responses/messages-translation.ts",
     "../src/services/codex/**/*.ts",
     "../src/services/copilot/auto-session-retry.ts",
     "../src/services/copilot/create-responses.ts",
