@@ -1083,7 +1083,7 @@ function topCostHistory(history) {
         b.usd - a.usd || (b.item.ts || "").localeCompare(a.item.ts || ""),
     )
     .slice(0, PIP_TOP_REQUEST_LIMIT)
-    .sort((a, b) => (b.ts || "").localeCompare(a.ts || ""))
+    .sort((a, b) => (b.item.ts || "").localeCompare(a.item.ts || ""))
 }
 
 byId("pip-btn").addEventListener("click", async () => {
@@ -1094,8 +1094,8 @@ byId("pip-btn").addEventListener("click", async () => {
     return
   }
   const pipWindow = await documentPictureInPicture.requestWindow({
-    width: 240,
-    height: 180,
+    width: 200,
+    height: 96,
   })
   const doc = pipWindow.document
   doc.head.innerHTML = `<style>
@@ -1110,18 +1110,28 @@ byId("pip-btn").addEventListener("click", async () => {
     .danger { color: #f87171; }
     .warn { color: #fbbf24; }
     .ok { color: #4ade80; }
+    .collapsed-only { display: contents; }
+    .expanded .collapsed-only { display: none; }
+    .expandable { display: none; }
+    .expanded .expandable { display: contents; }
   </style>`
   const root = doc.createElement("div")
   root.className = "root"
   root.innerHTML = `
-    <span class="k">Used</span><span class="v" id="pip-used">-</span>
-    <span class="k">Total</span><span class="v" id="pip-total">-</span>
-    <span class="k">Pace/day</span><span class="v" id="pip-pace">-</span>
-    <span class="k">Forecast</span><span class="v" id="pip-forecast">-</span>
-    <span class="k">History</span><span class="v" id="pip-history">-</span>
-    <span class="k">Med/Avg</span><span class="v" id="pip-median">-</span>
-    <span class="section">Top requests</span>
-    <div id="pip-top-requests" class="top-list">-</div>`
+    <span class="collapsed-only">
+      <span class="k">Today left</span><span class="v" id="pip-today-budget">-</span>
+      <span class="k">Today used</span><span class="v" id="pip-today-used">-</span>
+    </span>
+    <span class="expandable">
+      <span class="k">Used</span><span class="v" id="pip-used">-</span>
+      <span class="k">Total</span><span class="v" id="pip-total">-</span>
+      <span class="k">Pace/day</span><span class="v" id="pip-pace">-</span>
+      <span class="k">Forecast</span><span class="v" id="pip-forecast">-</span>
+      <span class="k">History</span><span class="v" id="pip-history">-</span>
+      <span class="k">Med/Avg</span><span class="v" id="pip-median">-</span>
+      <span class="section">Top requests</span>
+      <div id="pip-top-requests" class="top-list">-</div>
+    </span>`
   doc.body.appendChild(root)
 
   const fmtUsd = (n) =>
@@ -1175,10 +1185,25 @@ byId("pip-btn").addEventListener("click", async () => {
       else if (ratio > 0.9) fcClass = "warn"
       const histUsd = Number(payload.totalNanoAiuSinceStart || 0) / 100000000000
 
+      const lastDay = new Date(
+        now.getFullYear(),
+        now.getMonth() + 1,
+        0,
+      ).getDate()
+      let workdaysLeft = 0
+      for (let d = now.getDate(); d <= lastDay; d++) {
+        const dow = new Date(now.getFullYear(), now.getMonth(), d).getDay()
+        if (dow !== 0 && dow !== 6) workdaysLeft++
+      }
+      workdaysLeft = Math.max(workdaysLeft, 1)
+      const todayBudgetUsd = (totalCapUsd - totalUsedUsd) / workdaysLeft
+      const todayUsedUsd = histUsd
       const set = (id, val) => {
         const el = doc.getElementById(id)
         if (el) el.textContent = val
       }
+      set("pip-today-budget", fmtUsd(todayBudgetUsd))
+      set("pip-today-used", fmtUsd(todayUsedUsd))
       set("pip-used", fmtUsd(totalUsedUsd))
       set("pip-total", fmtUsd(totalCapUsd))
       set("pip-pace", paceUsd > 0 ? fmtUsd(paceUsd) : "-")
@@ -1187,7 +1212,7 @@ byId("pip-btn").addEventListener("click", async () => {
         fcEl.textContent = forecastUsd > 0 ? fmtUsd(forecastUsd) : "-"
         fcEl.className = "v " + fcClass
       }
-      set("pip-history", fmtUsd(histUsd))
+      set("pip-history", `${fmtUsd(histUsd)} / ${fmtUsd(todayBudgetUsd)}`)
       const recent = Array.isArray(history) ? history : []
       const medianEl = doc.getElementById("pip-median")
       if (medianEl) {
@@ -1238,6 +1263,16 @@ byId("pip-btn").addEventListener("click", async () => {
   requestAnimationFrame(pipRefresh)
   const interval = setInterval(pipRefresh, 5000)
   pipWindow.addEventListener("pagehide", () => clearInterval(interval))
+  let pipExpanded = false
+  root.addEventListener("click", () => {
+    pipExpanded = !pipExpanded
+    root.classList.toggle("expanded", pipExpanded)
+    try {
+      pipWindow.resizeTo(pipExpanded ? 260 : 200, pipExpanded ? 190 : 96)
+    } catch {
+      // resizeTo may be missing or blocked (needs user activation); any failure just keeps the size
+    }
+  })
 })
 
 /* ---------- Event wiring ---------- */
