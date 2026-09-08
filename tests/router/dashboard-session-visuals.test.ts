@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { Script, createContext } from "node:vm"
 
 const dashboardPath = new URL("../../router/dashboard.html", import.meta.url)
+const dashboardV2Path = new URL("../../router/dashboard-v2.js", import.meta.url)
 
 function extractFunction(script: string, name: string): string {
   const start = script.indexOf(`function ${name}(`)
@@ -96,6 +97,98 @@ describe("route history session visuals", () => {
       "cost-3-oldest",
     ])
     expect(history[0]?.historyId).toBe("old-expensive")
+  })
+  test("does not show partial quota as exact or negative Today left", async () => {
+    const script = await Bun.file(dashboardV2Path).text()
+    const pipRefreshSource = extractFunction(script, "pipRefresh").replace(
+      "function pipRefresh(",
+      "async function pipRefresh(",
+    )
+
+    const render = async (instances: Array<Record<string, unknown>>) => {
+      const elements = new Map<string, Record<string, unknown>>()
+      const sandbox = {
+        budgetForecastRatio: () => 0,
+        console: { error: () => undefined },
+        doc: {
+          getElementById: (id: string) => {
+            const element = elements.get(id) ?? {
+              className: "",
+              innerHTML: "",
+              textContent: "",
+            }
+            elements.set(id, element)
+            return element
+          },
+        },
+        fetch: (url: string) => ({
+          json: () =>
+            url === "/api/status" ?
+              Promise.resolve({ instances, totalNanoAiuSinceStart: 3000000000 })
+            : Promise.resolve([]),
+        }),
+        fmtUsd: (value: number) => `$${value.toFixed(2)}`,
+        formatRelativeTime: () => ({ label: "-" }),
+        historyUsd: () => null,
+        pipRefresh: undefined as (() => Promise<void>) | undefined,
+        topCostHistory: () => [],
+      }
+      new Script(
+        `${pipRefreshSource}; globalThis.pipRefresh = pipRefresh`,
+      ).runInContext(createContext(sandbox))
+      if (!sandbox.pipRefresh) throw new TypeError("pipRefresh unavailable")
+      await sandbox.pipRefresh()
+      return elements
+    }
+
+    const partial = await render([
+      { headerSnapshot: { premiumUsage: { used: 10, total: 100 } } },
+      { headerSnapshot: { premiumUsage: null } },
+    ])
+    expect(partial.get("pip-today-budget")?.textContent).toBe("-")
+    expect(partial.get("pip-used")?.textContent).toBe("-")
+    expect(partial.get("pip-total")?.textContent).toBe("-")
+    expect(partial.get("pip-history")?.textContent).toBe("$0.03 / -")
+
+    const overage = await render([
+      { headerSnapshot: { premiumUsage: { used: 110, total: 100 } } },
+    ])
+    expect(overage.get("pip-today-budget")?.textContent).toBe("$0.00")
+    expect(overage.get("pip-history")?.textContent).toBe("$0.03 / $0.00")
+  })
+
+  test("keeps compact PiP state when resize is rejected", async () => {
+    const script = await Bun.file(dashboardV2Path).text()
+    const start = script.indexOf('root.addEventListener("click"')
+    const end = script.indexOf("\n  })", start)
+    if (start === -1 || end === -1)
+      throw new TypeError("PiP click handler missing")
+    const clickHandlerSource = script.slice(start, end + 5)
+    const toggles: Array<[string, boolean]> = []
+    let click: (() => void) | undefined
+    const sandbox = {
+      pipWindow: {
+        resizeTo: () => {
+          throw new TypeError("resize unavailable")
+        },
+      },
+      root: {
+        addEventListener: (_name: string, handler: () => void) => {
+          click = handler
+        },
+        classList: {
+          toggle: (name: string, value: boolean) => toggles.push([name, value]),
+        },
+      },
+    }
+    new Script(`let pipExpanded = false; ${clickHandlerSource}`).runInContext(
+      createContext(sandbox),
+    )
+    if (!click) throw new TypeError("PiP click handler unavailable")
+
+    click()
+
+    expect(toggles).toEqual([])
   })
 
   test("reads cached tokens from Responses, Chat Completions, and Anthropic usage", async () => {

@@ -1160,6 +1160,8 @@ byId("pip-btn").addEventListener("click", async () => {
           && Number.isFinite(Number(u.total))
         )
       })
+      const quotaComplete =
+        instances.length > 0 && reporting.length === instances.length
       const totalUsedCredits = reporting.reduce(
         (s, i) => s + Number(i.headerSnapshot.premiumUsage.used),
         0,
@@ -1196,23 +1198,33 @@ byId("pip-btn").addEventListener("click", async () => {
         if (dow !== 0 && dow !== 6) workdaysLeft++
       }
       workdaysLeft = Math.max(workdaysLeft, 1)
-      const todayBudgetUsd = (totalCapUsd - totalUsedUsd) / workdaysLeft
+      const todayBudgetUsd =
+        quotaComplete ?
+          Math.max(0, totalCapUsd - totalUsedUsd) / workdaysLeft
+        : null
       const todayUsedUsd = histUsd
       const set = (id, val) => {
         const el = doc.getElementById(id)
         if (el) el.textContent = val
       }
-      set("pip-today-budget", fmtUsd(todayBudgetUsd))
+      set(
+        "pip-today-budget",
+        todayBudgetUsd === null ? "-" : fmtUsd(todayBudgetUsd),
+      )
       set("pip-today-used", fmtUsd(todayUsedUsd))
-      set("pip-used", fmtUsd(totalUsedUsd))
-      set("pip-total", fmtUsd(totalCapUsd))
-      set("pip-pace", paceUsd > 0 ? fmtUsd(paceUsd) : "-")
+      set("pip-used", quotaComplete ? fmtUsd(totalUsedUsd) : "-")
+      set("pip-total", quotaComplete ? fmtUsd(totalCapUsd) : "-")
+      set("pip-pace", quotaComplete && paceUsd > 0 ? fmtUsd(paceUsd) : "-")
       const fcEl = doc.getElementById("pip-forecast")
       if (fcEl) {
-        fcEl.textContent = forecastUsd > 0 ? fmtUsd(forecastUsd) : "-"
-        fcEl.className = "v " + fcClass
+        fcEl.textContent =
+          quotaComplete && forecastUsd > 0 ? fmtUsd(forecastUsd) : "-"
+        fcEl.className = "v " + (quotaComplete ? fcClass : "")
       }
-      set("pip-history", `${fmtUsd(histUsd)} / ${fmtUsd(todayBudgetUsd)}`)
+      set(
+        "pip-history",
+        `${fmtUsd(histUsd)} / ${todayBudgetUsd === null ? "-" : fmtUsd(todayBudgetUsd)}`,
+      )
       const recent = Array.isArray(history) ? history : []
       const medianEl = doc.getElementById("pip-median")
       if (medianEl) {
@@ -1265,12 +1277,13 @@ byId("pip-btn").addEventListener("click", async () => {
   pipWindow.addEventListener("pagehide", () => clearInterval(interval))
   let pipExpanded = false
   root.addEventListener("click", () => {
-    pipExpanded = !pipExpanded
-    root.classList.toggle("expanded", pipExpanded)
+    const nextExpanded = !pipExpanded
     try {
-      pipWindow.resizeTo(pipExpanded ? 260 : 200, pipExpanded ? 190 : 96)
+      pipWindow.resizeTo(nextExpanded ? 260 : 200, nextExpanded ? 190 : 96)
+      pipExpanded = nextExpanded
+      root.classList.toggle("expanded", pipExpanded)
     } catch {
-      // resizeTo may be missing or blocked (needs user activation); any failure just keeps the size
+      // resizeTo may be missing or blocked; keep the previous size and display state
     }
   })
 })
